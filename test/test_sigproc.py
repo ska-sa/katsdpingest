@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Silly script to demonstrate basic functionality of the sigproc classes in the katsdisp package.
 # This really needs to move to it's own package soon :)
 #
@@ -12,7 +14,6 @@
 # which updates history and then calls the proc method on each block in turn.
 #
 
-#!/usr/bin/env python
 import katcapture.sigproc as sp
 import numpy as np
 
