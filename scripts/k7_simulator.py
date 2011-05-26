@@ -80,6 +80,13 @@ class SimulatorDeviceServer(DeviceServer):
         self.c.noise_diode = duration
         return ("ok","Fired")
 
+    @request(Float(optional=True, default=0.5))
+    @return_reply(Str())
+    def request_cycle_nd(self, sock, duty_cycle):
+        """Fire the noise diode with the requested duty cycle. Set to 0 to disable."""
+        self.c.nd_duty_cycle = duty_cycle
+        return("ok","Duty cycle firing enabled")
+
     @request(Str(), Str())
     @return_reply(Str())
     def request_poco_gain(self, sock, msg1, msg2):
@@ -162,11 +169,14 @@ class K7Correlator(threading.Thread):
         self.sample_rate = 800e6
         self.tone_freq = 302e6
         self.noise_diode = 0
+        self.nd_duty_cycle = 0
+        self._nd_cycles = 0
         self.target_az = 0
         self.target_el = 0
         self.target_flux = 0
         self.test_az = 0
         self.test_el = 0
+        self.nd = 0
         self.multiplier = 100
         self.data = self.generate_data()
         self._thread_runnable = True
@@ -202,7 +212,7 @@ class K7Correlator(threading.Thread):
         while self._thread_runnable:
             if not self._thread_paused:
                 self.send_dump()
-                status = "\rSending correlator dump at %s (dump period: %f s, multiplier: %i)" % (time.ctime(), self.dump_period, self.multiplier)
+                status = "\rSending correlator dump at %s (dump period: %f s, multiplier: %i, noise_diode: %s)" % (time.ctime(), self.dump_period, self.multiplier, (self.nd > 0 and 'On' or 'Off'))
                 sys.stdout.write(status)
                 sys.stdout.flush()
             st = time.time()
@@ -221,11 +231,18 @@ class K7Correlator(threading.Thread):
         source_value = self.target_flux * self.gaussian(self.target_az - self.test_az, self.target_el - self.test_el)
          # generate a flux contribution from the synthetic source (if any)
         tsys_elev_value = 25 - np.log(self.test_el + 1) * 5
-        nd = 0
+        self.nd = 0
         if self.noise_diode > 0:
             self.noise_diode -= 1
-            nd = 100
-        self.multiplier = 100 + source_value + tsys_elev_value + nd
+            self.nd = 100
+
+        if self.nd_duty_cycle > 0:
+            self._nd_cycles += 1
+            if self._nd_cycles >= (1.0/self.nd_duty_cycle):
+                self.nd = 100
+                self._nd_cycles = 0
+
+        self.multiplier = 100 + source_value + tsys_elev_value + self.nd
         samples_per_dump = self.config['n_chans'] * 8
          # not related to actual value. just for calculation purposes
         n = np.arange(samples_per_dump)
