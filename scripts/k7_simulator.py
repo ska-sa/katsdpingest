@@ -3,8 +3,6 @@
 Some of this hacked from Jason's correlator package.
 """
 
-
-import corr
 import copy
 import time
 import numpy as np
@@ -36,7 +34,7 @@ class SimulatorDeviceServer(DeviceServer):
         self._sensors["tone_freq"] = Sensor(Sensor.INTEGER, "tone_freq", "The frequency of the injected tone in Hz.","",default=0, params=[0,2**32])
         self._sensors["destination_ip"] = Sensor(Sensor.STRING, "destination_ip","The current destination address for data and metadata.","","")
         self.c = K7Correlator(kwargs['config_file'])
-        self._sensors["destination_ip"].set_value(self.c.config['rx_meta_ip_str'])
+        self._sensors["destination_ip"].set_value(self.c.config['rx_meta_ip'])
         del kwargs['config_file']
         self.c.setDaemon(True)
         self.c.start()
@@ -51,7 +49,7 @@ class SimulatorDeviceServer(DeviceServer):
     def request_spead_issue(self, sock, msg):
         """Issue the SPEAD meta packets..."""
         self.c.spead_issue()
-        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip_str']))
+        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip']))
 
     @return_reply(Str())
     def request_start_tx(self, sock, msg):
@@ -137,7 +135,7 @@ class SimulatorDeviceServer(DeviceServer):
     def request_capture_start(self, sock, destination):
         """For compatibility with dbe_proxy. Same as spead_issue."""
         self.c.spead_issue()
-        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip_str']))
+        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip']))
 
     @request(Str(optional=True))
     @return_reply(Str())
@@ -155,13 +153,13 @@ class SimulatorDeviceServer(DeviceServer):
 
 class K7Correlator(threading.Thread):
     def __init__(self, config_file):
-        self.config = corr.cn_conf.CorrConf(config_file)
+        self.config = self.read_config(config_file)
         self.labels = dict([[str(x)+y,str(x)+y] for x in range(8) for y in ['x','y']])
          # in np form so it will work as a spead item descriptor
         self.sync_time = int(time.time())
         self.adc_value = 0
         self.update_bls_ordering()
-        self.tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
+        self.tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip'],self.config['rx_udp_port']))
         self.data_ig=spead.ItemGroup()
         self._data_meta_descriptor = None
         self.init_data_descriptor()
@@ -182,6 +180,40 @@ class K7Correlator(threading.Thread):
         self._thread_runnable = True
         self._thread_paused = False
         threading.Thread.__init__(self)
+
+    def read_config(self, config_file):
+        config = {}
+        try:
+            f = open(config_file)
+        except IOError:
+            print "Specified config file (%s) not found. Unable to start simulator." % config_file
+            sys.exit(0)
+        for s in f.readlines():
+            try:
+                if s.index(' = ') > 0:
+                    (k,v) = s[:-1].split(' = ')
+                    try:
+                        config[k] = int(v)
+                    except ValueError:
+                        config[k] = v
+            except ValueError:
+                pass
+        f.close()
+        config['xeng_sample_bits']=32
+        config['n_xfpgas']=len(config['servers_x'])
+        config['n_xeng']=config['x_per_fpga']*config['n_xfpgas']
+        config['n_bls']=config['n_ants']*(config['n_ants']+1)/2
+        config['n_chans_per_x']=config['n_chans']/config['n_xeng']
+        config['bandwidth']=config['adc_clk']/2.
+        config['center_freq']=config['adc_clk']/4.
+        config['pcnt_scale_factor']=config['bandwidth']/config['xeng_acc_len']
+        config['spead_timestamp_scale_factor']=(config['pcnt_scale_factor']/config['n_chans'])
+        config['10gbe_ip']=12
+        config['n_accs']=config['acc_len']*config['xeng_acc_len']
+        config['int_time']= float(config['n_chans'])*config['n_accs']/config['bandwidth']
+        config['pols']=['x','y']
+        config['n_pols'] = 2
+        return config
 
     def update_bls_ordering(self):
         """Update the mapping based on the specified input labelling."""
@@ -242,7 +274,7 @@ class K7Correlator(threading.Thread):
                 self.nd = 100
                 self._nd_cycles = 0
 
-        self.multiplier = 100 + source_value + tsys_elev_value + self.nd
+        self.multiplier = 50 + source_value + tsys_elev_value
         samples_per_dump = self.config['n_chans'] * 8
          # not related to actual value. just for calculation purposes
         n = np.arange(samples_per_dump)
@@ -254,12 +286,12 @@ class K7Correlator(threading.Thread):
         for ib in range (self.config['n_bls'] * self.config['n_stokes']):#for different baselines
             (a1,a2)= self.bls_ordering[ib]
             if a1[:-1] == a2[:-1]:
-                auto_d=np.abs(data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*200.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*500.0) + 1000
+                auto_d=np.abs(data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*20.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*10.0) + 50
                 auto_d[:,1] = 0
                 data[:,ib,:]=auto_d
             else:
-                data[:,ib,:]=data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*200.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*500.0
-        data = data.astype(np.float32)
+                data[:,ib,:]=data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*20.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*10.0
+        data = data.astype(np.float32) + self.nd
         return data
 
     def get_crosspol_order(self):
@@ -269,7 +301,7 @@ class K7Correlator(threading.Thread):
         return (pol1+pol1,pol2+pol2,pol1+pol2,pol2+pol1)
 
     def spead_issue(self):
-        print "Issuing SPEAD meta data to %s\n" % self.config['rx_meta_ip_str']
+        print "Issuing SPEAD meta data to %s\n" % self.config['rx_meta_ip']
         self.spead_static_meta_issue()
         self.spead_time_meta_issue()
         self.spead_data_descriptor_issue()
@@ -357,10 +389,10 @@ class K7Correlator(threading.Thread):
             shape=[],fmt=spead.mkfmt(('u',spead.ADDRSIZE)),
             init_val=self.config['10gbe_port'])
 
-        ig.add_item(name="rx_udp_ip_str",id=0x1024,
+        ig.add_item(name="rx_udp_ip",id=0x1024,
             description="Destination IP address for X engine output UDP packets.",
             shape=[-1],fmt=spead.STR_FMT,
-            init_val=self.config['rx_udp_ip_str'])
+            init_val=self.config['rx_udp_ip'])
 
         ig.add_item(name="feng_start_ip",id=0x1025,
             description="F engine starting IP address.",
