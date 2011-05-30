@@ -58,7 +58,7 @@ def small_build(system):
 def parse_opts(argv):
     parser = optparse.OptionParser()
     parser.add_option('--include_cfg', action='store_true', default=False, help='pull configuration information via katcp from the configuration server')
-    #parser.add_option('--ip', default='127.0.0.1', help='signal display ip')
+    parser.add_option('--ip', default='127.0.0.1', help='default signal display ip (typically in addition to localhost)')
     parser.add_option('--data-port', default=7148, type=int, help='port to receive data on')
     parser.add_option("-s", "--system", default="systems/local.conf", help="system configuration file to use. [default=%default]")
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='attach to port N (default=2040)')
@@ -299,12 +299,14 @@ class CaptureDeviceServer(DeviceServer):
     VERSION_INFO = ("k7-capture", 0, 1)
     BUILD_INFO = ("k7-capture", 0, 1, "rc1")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, ip, *args, **kwargs):
         self.rec_thread = None
         self.current_file = None
         self.sdisp_ips = {}
         self.sdisp_ips['127.0.0.1'] = 7149
          # add default signal display destination
+        self.sdisp_ips[ip] = 7149
+         # add additional user specified ip
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
@@ -493,7 +495,7 @@ if __name__ == '__main__':
         cfg = small_build(opts.system)
 
     restart_queue = Queue.Queue()
-    server = CaptureDeviceServer(opts.host, opts.port)
+    server = CaptureDeviceServer(opts.ip, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     print "Started k7-capture server."
