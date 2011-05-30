@@ -1,0 +1,1 @@
+"""Katcapture library."""
