@@ -209,7 +209,7 @@ class K7Correlator(threading.Thread):
         config['xeng_sample_bits']=32
         config['n_xfpgas']=len(config['servers_x'])
         config['n_xeng']=config['x_per_fpga']*config['n_xfpgas']
-        config['n_bls']=config['n_ants']*(config['n_ants']+1)/2
+        config['n_bls']=config['n_ants']*(config['n_ants']+1)/2 * config['n_stokes']
         config['n_chans_per_x']=config['n_chans']/config['n_xeng']
         config['bandwidth']=config['adc_clk']/2.
         config['center_freq']=config['adc_clk']/4.
@@ -287,9 +287,9 @@ class K7Correlator(threading.Thread):
         x = np.cos(2 * np.pi * self.tone_freq / self.sample_rate * n)
         data = np.fft.fft(x, self.config['n_chans'])[:self.config['n_chans']]
         data = (data.view(np.float64)*self.multiplier).astype(np.int32).reshape((512,2))
-        data = np.tile(data, self.config['n_bls'] * self.config['n_stokes'])
-        data = data.reshape((self.config['n_chans'],self.config['n_bls'] * self.config['n_stokes'],2), order='C')
-        for ib in range (self.config['n_bls'] * self.config['n_stokes']):#for different baselines
+        data = np.tile(data, self.config['n_bls'])
+        data = data.reshape((self.config['n_chans'],self.config['n_bls'],2), order='C')
+        for ib in range (self.config['n_bls']):#for different baselines
             (a1,a2)= self.bls_ordering[ib]
             if a1[:-1] == a2[:-1]:
                 auto_d=np.abs(data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*20.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*10.0) + 50
@@ -345,13 +345,6 @@ class K7Correlator(threading.Thread):
         ig.add_item(name="bls_ordering",id=0x100C,
             description="The output ordering of the baselines from each X engine. Packed as a pair of unsigned integers, ant1,ant2 where ant1 < ant2.",
             init_val=self.bls_ordering)
-#            shape=[self.config['n_bls'],2],fmt=spead.mkfmt(('u',16)),
-#            init_val=[[bl[0],bl[1]] for bl in self.get_bl_order()])
-
-#        ig.add_item(name="crosspol_ordering",id=0x100D,
-#            description="The output ordering of the cross-pol terms. Packed as a pair of characters, pol1,pol2.",
-#            shape=[self.config['n_stokes'],self.config['n_pols']],fmt=spead.mkfmt(('c',8)),
-#            init_val=[[bl[0],bl[1]] for bl in self.get_crosspol_order()])
 
         ig.add_item(name="center_freq",id=0x1011,
             description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
@@ -409,11 +402,6 @@ class K7Correlator(threading.Thread):
             description="Target clock rate of processing engines (xeng).",
             shape=[],fmt=spead.mkfmt(('u',spead.ADDRSIZE)),
             init_val=self.config['xeng_clk'])
-
-        ig.add_item(name="n_stokes",id=0x1040,
-            description="Number of Stokes parameters in output.",
-            shape=[],fmt=spead.mkfmt(('u',spead.ADDRSIZE)),
-            init_val=self.config['n_stokes'])
 
         ig.add_item(name="x_per_fpga",id=0x1041,
             description="Number of X engines per FPGA.",
@@ -516,7 +504,7 @@ class K7Correlator(threading.Thread):
 
         self.data_ig.add_item(name=("xeng_raw"),id=0x1800,
             description="Raw data for %i xengines in the system. This item represents a full spectrum (all frequency channels) assembled from lowest frequency to highest frequency. Each frequency channel contains the data for all baselines (n_bls given by SPEAD ID 0x100B). For a given baseline, -SPEAD ID 0x1040- stokes parameters are calculated (nominally 4 since xengines are natively dual-polarisation; software remapping is required for single-baseline designs). Each stokes parameter consists of a complex number (two real and imaginary unsigned integers)."%(self.config['n_xeng']),
-            ndarray=(np.dtype(np.float32),(self.config['n_chans'],self.config['n_bls']*self.config['n_stokes'],2)))
+            ndarray=(np.dtype(np.float32),(self.config['n_chans'],self.config['n_bls'],2)))
 
         self._data_meta_descriptor = self.data_ig.get_heap()
 
