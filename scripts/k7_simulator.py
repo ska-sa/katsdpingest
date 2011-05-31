@@ -115,10 +115,17 @@ class SimulatorDeviceServer(DeviceServer):
         return ("ok","Azimuth set to %f" % az)
 
 
-    @request(Str(),Str())
     @return_reply(Str())
-    def request_label_input(self, sock, inp, label):
+    def request_label_input(self, sock, msg):
         """Label the specified input with a string."""
+        if not msg.arguments:
+            for (inp,label) in self.c.labels.iteritems():
+                self.reply_inform(sock, Message.inform("label-input", inp, label,'roachXXXX'), msg)
+            return ("ok",str(len(self.c.labels)))
+        else:
+            inp = msg.arguments[0]
+            label = msg.arguments[1]
+
         if self.c.labels.has_key(inp):
             self.c.labels[inp] = label
             self.c.update_bls_ordering()
@@ -154,7 +161,7 @@ class SimulatorDeviceServer(DeviceServer):
 class K7Correlator(threading.Thread):
     def __init__(self, config_file):
         self.config = self.read_config(config_file)
-        self.labels = dict([[str(x)+y,str(x)+y] for x in range(8) for y in ['x','y']])
+        self.labels = dict([[str(x)+y,'ant' + str(x+1)+{'x':'H','y':'V'}[y]] for x in range(8) for y in ['x','y']])
          # in np form so it will work as a spead item descriptor
         self.sync_time = int(time.time())
         self.adc_value = 0
@@ -225,7 +232,6 @@ class K7Correlator(threading.Thread):
         for b in self.get_bl_order():
             for p in ['xx','yy','xy','yx']:
                 bls.append([self.labels[str(b[0])+p[0]], self.labels[str(b[1])+p[1]]])
-        print bls
         return bls
 
     def get_bl_order(self):
