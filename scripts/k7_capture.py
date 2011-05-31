@@ -58,11 +58,12 @@ def small_build(system):
 def parse_opts(argv):
     parser = optparse.OptionParser()
     parser.add_option('--include_cfg', action='store_true', default=False, help='pull configuration information via katcp from the configuration server')
-    parser.add_option('--ip', default='127.0.0.1', help='default signal display ip (typically in addition to localhost)')
-    parser.add_option('--data-port', default=7148, type=int, help='port to receive data on')
-    parser.add_option("-s", "--system", default="systems/local.conf", help="system configuration file to use. [default=%default]")
-    parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='attach to port N (default=2040)')
-    parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='listen to HOST (default="" - all hosts)')
+    parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma seperated list. [default=%default]')
+    parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
+    parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and metadata on')
+    parser.add_option('-s', '--system', default='systems/local.conf', help='system configuration file to use. [default=%default]')
+    parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
+    parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
     return parser.parse_args(argv)
 
 class k7Capture(threading.Thread):
@@ -299,13 +300,14 @@ class CaptureDeviceServer(DeviceServer):
     VERSION_INFO = ("k7-capture", 0, 1)
     BUILD_INFO = ("k7-capture", 0, 1, "rc1")
 
-    def __init__(self, ip, *args, **kwargs):
+    def __init__(self, sdisp_ips, sdisp_port, *args, **kwargs):
         self.rec_thread = None
         self.current_file = None
         self.sdisp_ips = {}
-        self.sdisp_ips['127.0.0.1'] = 7149
+        self.sdisp_ips['127.0.0.1'] = sdisp_port
          # add default signal display destination
-        self.sdisp_ips[ip] = 7149
+        for ip in sdisp_ips.split(","):
+            self.sdisp_ips[ip] = sdisp_port
          # add additional user specified ip
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
@@ -495,7 +497,7 @@ if __name__ == '__main__':
         cfg = small_build(opts.system)
 
     restart_queue = Queue.Queue()
-    server = CaptureDeviceServer(opts.ip, opts.host, opts.port)
+    server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     print "Started k7-capture server."

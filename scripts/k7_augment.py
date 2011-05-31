@@ -268,7 +268,7 @@ parser.add_option("-d", "--dir", default=katuilib.defaults.kat_directories["data
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
 parser.add_option("-s", "--system", default="systems/local.conf", help="System configuration file to use. [default=%default]")
 parser.add_option("-o", "--override", dest="force", action="store_true", default=False, help="If set, previously augmented files will be re-augmented. Only useful in conjunction with a single specified file.")
-parser.add_option("--dbe", dest="dbe_name", default="dbe", help="Name of kat device to use as the correlator proxy.")
+parser.add_option("--dbe", dest="dbe_name", default="dbe7", help="Name of kat device to use as the correlator proxy. [default=%default]")
 parser.add_option("-v", "--verbose", action="store_true", default=False, help="Verbose output.")
 
 options, args = parser.parse_args()
@@ -319,8 +319,10 @@ print "Creating KAT connections..."
 kat = katuilib.tbuild(options.system, log_level=logging.ERROR, central_monitor_url=options.central_monitor_url)
  # check that we have basic connectivity (i.e. two antennas and pedestals)
 time.sleep(1)
-while not kat.ant1.katcpobj.is_connected() or not kat.ant2.katcpobj.is_connected() or not kat.ped1.katcpobj.is_connected() or not kat.ped2.katcpobj.is_connected():
-    status = "\r%s Connections to basic system of two antennas and two pedestals not available. Waiting for these to appear (possibly futile)..." % str(state[batch_count % 4])
+while not kat.rfe7.katcpobj.is_connected():
+     # wait for at least rfe7 to become stable as we query it straight away.
+     # also serves as a basic connectivity check.
+    status = "\r%s Connection to RFE7 not yet established. Waiting for connection (possibly futile)..." % str(state[batch_count % 4])
     sys.stdout.write(status)
     sys.stdout.flush()
     time.sleep(30)
