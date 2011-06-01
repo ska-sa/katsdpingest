@@ -255,7 +255,7 @@ class K7Correlator(threading.Thread):
                 sys.stdout.flush()
             st = time.time()
             self.data = self.generate_data()
-            time.sleep(self.dump_period - (time.time() - st))
+            time.sleep(max(self.dump_period - (time.time() - st), 0.))
         self.send_stop()
         print "Correlator tx halted."
 
