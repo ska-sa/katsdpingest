@@ -292,7 +292,7 @@ class K7Correlator(threading.Thread):
         for ib in range (self.config['n_bls']):#for different baselines
             (a1,a2)= self.bls_ordering[ib]
             if a1[:-1] == a2[:-1]:
-                auto_d=np.abs(data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*20.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*10.0) + 50
+                auto_d=np.abs(data[:,ib,:]+((ib*32131+48272)%1432)/1432.0*20.0+np.random.randn(self.config['n_chans']*2).reshape([self.config['n_chans'],2])*10.0) + 200
                 auto_d[:,1] = 0
                 data[:,ib,:]=auto_d
             else:
