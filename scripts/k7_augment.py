@@ -435,7 +435,7 @@ while(len(files) > 0 or options.batch):
                 insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
 
             for sensor in rfe_sensors:
-                sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, default=initial_lo1)
+                sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=True, default=initial_lo1)
                 try:
                     rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [initial_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
                 except Exception:
