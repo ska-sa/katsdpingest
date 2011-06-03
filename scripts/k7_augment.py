@@ -318,7 +318,7 @@ print "Found",len(files),"files to process"
 print "Creating KAT connections..."
 kat = katuilib.tbuild(options.system, log_level=logging.ERROR, central_monitor_url=options.central_monitor_url)
  # check that we have basic connectivity (i.e. two antennas and pedestals)
-time.sleep(1)
+time.sleep(2)
 while not kat.rfe7.katcpobj.is_connected():
      # wait for at least rfe7 to become stable as we query it straight away.
      # also serves as a basic connectivity check.
@@ -327,8 +327,7 @@ while not kat.rfe7.katcpobj.is_connected():
     sys.stdout.flush()
     time.sleep(30)
     batch_count += 1
-initial_lo1 = kat.rfe7.sensor.rfe7_lo1_frequency.get_value()
- # get initial lo1 frequency value (mostly due to simulated system not providing it...)
+initial_lo1 = 0
 dbe_device = getattr(kat, options.dbe_name)
 array_config = dbe_device.sensor.array_config.get_value()
  # get array config from the correlator we're using
