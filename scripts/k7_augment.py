@@ -437,7 +437,9 @@ while(len(files) > 0 or options.batch):
             for sensor in rfe_sensors:
                 sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=True, default=initial_lo1)
                 try:
-                    rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [initial_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
+                    conv_lo1 = rfeg[kat.sensors.__dict__["rfe7_"+sensor].name].value[-1][1]
+                     # get the value of the last known good rfe7 lo1 frequency
+                    rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
                 except Exception:
                     print_tb()
                     print "Centre frequency already saved. Not replacing existing center-frequency."
