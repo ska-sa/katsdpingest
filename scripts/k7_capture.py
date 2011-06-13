@@ -166,6 +166,14 @@ class k7Capture(threading.Thread):
         self._current_hdf5 = f
         return f
 
+    def close_file(self):
+        """Close file handle reference and mark file is not current."""
+        if self._current_hdf5 is not None:
+            self._current_hdf5.flush()
+            self._current_hdf5.close()
+             # we may have ended capture before receiving any data packets and thus not have a current file
+        self._current_hdf5 = None
+
     def add_sdisp_ip(self, ip, port):
         print "Adding %s:%s to signal display list. Starting transport..." % (ip,port)
         self.sdisp_ips[ip] = spead.Transmitter(spead.TransportUDPtx(ip, port))
@@ -175,7 +183,7 @@ class k7Capture(threading.Thread):
              # new connection requires headers...
 
     def run(self):
-        print 'Initalising SPEAD transports...'
+        print "Initalising SPEAD transports at %f" % time.time()
         print "Data reception on port", self.data_port
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
         #print "Sending Signal Display data to", self.sd_ip
@@ -241,15 +249,12 @@ class k7Capture(threading.Thread):
                 else:
                     if not item._changed:
                         continue
-                    print "Adding",name,"to dataset. New size is",datasets_index[name]+1
                     f[self.remap(name)].resize(datasets_index[name]+1, axis=0)
                     if name == 'timestamp':
-                        print "Timestamp:",ig[name]
                         f[timestamps].resize(datasets_index[name]+1, axis=0)
                 data_scale_factor = np.float32(self.meta['n_accs'] if self.meta.has_key('n_accs') else 1)
                 if self.sd_frame is not None and name.startswith("xeng_raw"):
                     sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
-                    print "SD Timestamp:", sd_timestamp," (",time.ctime(sd_timestamp),")"
                     if sd_slots is None:
                         self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
                          # make sure we have the right dtype for the sd data
@@ -261,7 +266,7 @@ class k7Capture(threading.Thread):
                         t_it = self.ig_sd.get_item('sd_data')
                         print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
                     scaled_data = np.float32(ig[name]) / data_scale_factor
-                    print "Sending signal display frame with timestamp %i. %s. Max: %f, Mean: %f" % (sd_timestamp, "Unscaled" if not self.acc_scale else "Scaled by %i" % (data_scale_factor,), np.max(scaled_data), np.mean(scaled_data))
+                    print "Sending signal display frame with timestamp %i (local: %f). %s. Max: %f, Mean: %f" % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % (data_scale_factor,), np.max(scaled_data), np.mean(scaled_data))
                     self.ig_sd['sd_data'] = scaled_data
                     self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
                     self.send_sd_data(self.ig_sd.get_heap())
@@ -287,13 +292,8 @@ class k7Capture(threading.Thread):
                 print "Repacking dataset",name,"as an attribute as it is singular."
                 f[correlator_map].attrs[name] = f[self.remap(name)].value[0]
                 del f[self.remap(name)]
-        print "Capture complete."
+        print "Capture complete at %f" % time.time()
         self.status_sensor.set_value("complete")
-        if f is not None:
-            f.flush()
-            f.close()
-             # we may have ended capture before receiving any data packets and thus not have a current file
-        self._current_hdf5 = None
 
 class CaptureDeviceServer(DeviceServer):
 
@@ -358,6 +358,7 @@ class CaptureDeviceServer(DeviceServer):
          # add in existing signal display recipients...
         for (ip,port) in self.sdisp_ips.iteritems():
             self.rec_thread.add_sdisp_ip(ip,port)
+        self.current_file = self.rec_thread.fname
         return ("ok", "Capture initialised at %s" % time.ctime())
 
     @request(Int())
@@ -452,34 +453,43 @@ class CaptureDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_capture_stop(self, sock, msg):
         """Attempts to gracefully shut down current capture thread by sending a SPEAD stop packet to local receiver."""
+        print "Forceable capture stop called (%f)" % (time.time())
         if self.rec_thread is None:
             return ("ok","Thread was already stopped.")
-        self.current_file = self.rec_thread.fname
-         # preserve current file before shutting thread for use in get_current_file
         tx = spead.Transmitter(spead.TransportUDPtx('localhost',7148))
         tx.end()
         time.sleep(2)
          # wait for thread to settle...
         self.rec_thread.join()
-        self.rec_thread = None
         self._my_sensors["capture-active"].set_value(0)
         return ("ok", "Capture stoppped at %s" % time.ctime())
 
     @return_reply(Str())
     def request_capture_done(self, sock, msg):
         """Closes the current capture file and renames it for use by augment."""
-        markup = ""
-        if self.rec_thread is not None:
-            print "Capture done is killing thread..."
-            self.request_capture_stop(sock, msg)
-             # perform a hard stop if we have not stopped yet.
-            markup = "(Capture thread was killed.)"
+        print "Capture done called at",time.time()
+        if self.rec_thread is None:
+            return ("fail","No existing capture session.")
+        self.rec_thread.close_file()
+         # no further correspondence will be entered into
+        self.current_file = self.rec_thread.fname
+        if self.rec_thread.is_alive():
+            time.sleep(1)
+            if self.rec_thread.is_alive():
+                 # capture thread is persistent...
+                print "Capture done is killing thread..."
+                self.request_capture_stop(sock, msg)
+                 # perform a hard stop if we have not stopped yet.
+        self.rec_thread = None
+         # we are done with the capture thread
         if self.current_file is None:
+            print "File was already closed. Not renaming..."
             return ("ok","File was already closed.")
         output_file = self.current_file[:self.current_file.find(".writing.h5")] + ".unaugmented.h5"
         try:
             os.rename(self.current_file, output_file)
         except Exception, e:
+            print "Failed to rename output file",e
             return ("fail","Failed to rename output file from %s to %s." % (self.current_file, output_file))
         finally:
             self.current_file = None
