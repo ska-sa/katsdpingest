@@ -289,9 +289,12 @@ class k7Capture(threading.Thread):
             self.pkt_sensor.set_value(idx)
         for (name,idx) in datasets_index.iteritems():
             if idx == 1:
-                print "Repacking dataset",name,"as an attribute as it is singular."
-                f[correlator_map].attrs[name] = f[self.remap(name)].value[0]
-                del f[self.remap(name)]
+                try:
+                    print "Repacking dataset",name,"as an attribute as it is singular."
+                    f[correlator_map].attrs[name] = f[self.remap(name)].value[0]
+                    del f[self.remap(name)]
+                except ValueError:
+                    print "Failed to repack %s." % name
         print "Capture complete at %f" % time.time()
         self.status_sensor.set_value("complete")
 
@@ -470,8 +473,6 @@ class CaptureDeviceServer(DeviceServer):
         print "Capture done called at",time.time()
         if self.rec_thread is None:
             return ("fail","No existing capture session.")
-        self.rec_thread.close_file()
-         # no further correspondence will be entered into
         self.current_file = self.rec_thread.fname
         if self.rec_thread.is_alive():
             time.sleep(1)
@@ -480,6 +481,8 @@ class CaptureDeviceServer(DeviceServer):
                 print "Capture done is killing thread..."
                 self.request_capture_stop(sock, msg)
                  # perform a hard stop if we have not stopped yet.
+        self.rec_thread.close_file()
+         # no further correspondence will be entered into
         self.rec_thread = None
          # we are done with the capture thread
         if self.current_file is None:
