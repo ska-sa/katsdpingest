@@ -245,6 +245,10 @@ class k7Capture(threading.Thread):
                         sd_slots = None
                 if not name in datasets:
                  # check to see if we have encountered this type before
+                    if name == 'xeng_raw' and self._script_ants is not None and self.baseline_mask is None:
+                      # we are supposed to set a baseline mask, but this has not been done yet as the desired meta_data
+                      # has not yet arrived (bls_ordering). Defer creation of xeng_raw dataset until this is available.
+                        continue
                     shape = ig[name].shape if item.shape == -1 else item.shape
                     dtype = np.dtype(type(ig[name])) if shape == [] else item.dtype
                     if dtype is None:
