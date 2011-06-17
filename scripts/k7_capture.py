@@ -86,6 +86,10 @@ class k7Capture(threading.Thread):
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
         self.sd_frame = None
+        self.baseline_mask = None
+         # by default record all baselines
+        self._script_ants = None
+         # a reference to the antennas requested from the current script
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
@@ -106,14 +110,28 @@ class k7Capture(threading.Thread):
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
+        print "Update metadata. Bls ordering:",self.meta['bls_ordering']
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
-        print "Updating sd metadata. Center freq is %i" % self.center_freq
         self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.meta['bandwidth'])
         self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.meta['n_chans'])
         return copy.deepcopy(self.ig_sd.get_heap())
+
+    def set_baseline_mask(self):
+        """Uses the _script_ants variable to set a baseline mask.
+        This only works if script_ants has been set by an external process between capture_done and capture_start."""
+        self.baseline_mask = range(self.meta['n_bls'])
+         # by default we send all baselines...
+        if self._script_ants is not None and self.meta.has_key('bls_ordering'):
+            print "Using script-ants (%s) as a custom baseline mask..." % self._script_ants
+            ants = self._script_ants.replace(" ","").split(",")
+            if len(ants) > 0:
+                b = self.meta['bls_ordering'].tolist()
+                self.baseline_mask = [b.index(pair) for pair in b if pair[0][:-1] in ants and pair[1][:-1] in ants]
+                self.meta['bls_ordering'] = np.array([b[idx] for idx in self.baseline_mask])
+                 # we need to recalculate the bls ordering as well...
 
     def send_sd_metadata(self):
         self._sd_metadata = self._update_sd_metadata()
@@ -219,7 +237,9 @@ class k7Capture(threading.Thread):
                     self.meta[name] = ig[name]
                     meta_required.remove(name)
                     if not meta_required:
-                        self.sd_frame = np.zeros((self.meta['n_chans'],self.meta['n_bls'],2),dtype=np.float32)
+                        self.set_baseline_mask()
+                         # we first set the baseline mask in order to have the correct number of baselines
+                        self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
                         print "Initialised sd frame to shape",self.sd_frame.shape
                         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
                         sd_slots = None
@@ -230,10 +250,12 @@ class k7Capture(threading.Thread):
                     if dtype is None:
                         dtype = ig[name].dtype
                      # if we can't get a dtype from the descriptor try and get one from the value
-                    if name == 'xeng_raw':
-                        dtype = np.dtype(np.float32)
-                    print "Creating dataset for name:",name,", shape:",shape,", dtype:",dtype
                     new_shape = list(shape)
+                    if name == 'xeng_raw':
+                        if self.baseline_mask is not None:
+                            new_shape[-2] = len(self.baseline_mask)
+                        dtype = np.dtype(np.float32)
+                    print "Creating dataset for name:",name,", shape:",new_shape,", dtype:",dtype
                     if new_shape == [1]:
                         new_shape = []
                     f.create_dataset(self.remap(name),[1] + new_shape, maxshape=[None] + new_shape, dtype=dtype)
@@ -264,13 +286,17 @@ class k7Capture(threading.Thread):
                         f[correlator_map].attrs['n_xeng'] = n_xeng
                         self.send_sd_metadata()
                         t_it = self.ig_sd.get_item('sd_data')
-                        print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
+                        #print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
                     scaled_data = np.float32(ig[name]) / data_scale_factor
                     print "Sending signal display frame with timestamp %i (local: %f). %s. Max: %f, Mean: %f" % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % (data_scale_factor,), np.max(scaled_data), np.mean(scaled_data))
-                    self.ig_sd['sd_data'] = scaled_data
+                    self.ig_sd['sd_data'] = scaled_data[...,self.baseline_mask,:]
+                     # only send signal display data specified by baseline mask
                     self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
                     self.send_sd_data(self.ig_sd.get_heap())
-                f[self.remap(name)][datasets_index[name]] = ig[name] if not (name.startswith("xeng_raw") and self.acc_scale) else (np.float32(ig[name]) / data_scale_factor)
+                if name.startswith("xeng_raw"):
+                    f[self.remap(name)][datasets_index[name]] = ig[name][...,self.baseline_mask,:] if not self.acc_scale else (np.float32(ig[name][...,self.baseline_mask,:]) / data_scale_factor)
+                else:
+                    f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
                     try:
                         f[timestamps][datasets_index[name]] = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
@@ -287,12 +313,21 @@ class k7Capture(threading.Thread):
                 print "Added initial observation sensor values...\n"
             idx+=1
             self.pkt_sensor.set_value(idx)
+
+        if self.baseline_mask is not None:
+            del f[self.remap('bls_ordering')]
+            del datasets_index['bls_ordering']
+            f[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
+             # we have generated a new baseline mask, so fix bls_ordering attribute...
+
+        print "Repacking correlator metadata into attributes..."
         for (name,idx) in datasets_index.iteritems():
-            if idx == 1:
+            if name not in mapping:
                 try:
-                    print "Repacking dataset",name,"as an attribute as it is singular."
-                    f[correlator_map].attrs[name] = f[self.remap(name)].value[0]
-                    del f[self.remap(name)]
+                    f[correlator_map].attrs[name] = f[self.remap(name)].value[-1]
+                    if idx == 1:
+                        del f[self.remap(name)]
+                         # throw away any history for single valued items...
                 except ValueError:
                     print "Failed to repack %s." % name
         print "Capture complete at %f" % time.time()
@@ -378,6 +413,24 @@ class CaptureDeviceServer(DeviceServer):
         self.rec_thread.center_freq = center_freq_hz
         return ("ok","set")
 
+    @request(Str())
+    @return_reply(Str())
+    def request_set_antenna_mask(self, sock, ant_mask):
+        """Set the antennas to be used to select which baseline are recorded (and sent to signal display targets).
+        This must be done after a capture_init and before data starts being recorded.
+
+        Note: This is not a persistent setting and must be reset for each new capture session.
+
+        Parameters
+        ----------
+        ant_mask : str
+            Comma delimited string of antenna names. e.g. 'ant1,ant2'. An empty string clears the mask.
+        """
+        if self.rec_thread is None: return ("fail","This mask must be set after issuing capture_init and before data transmission begins...")
+        if ant_mask == '': return ("ok","Antenna mask cleared.")
+        self.rec_thread._script_ants = ant_mask
+        return ("ok", "Only data for the following antennas will be produced: %s" % ant_mask)
+
     @request(Str(), Str())
     @return_reply(Str())
     def request_set_script_param(self, sock, sensor_string, value_string):
@@ -409,6 +462,7 @@ class CaptureDeviceServer(DeviceServer):
         try:
             self._my_sensors[sensor_string].set_value(value_string)
             self.rec_thread.write_obs_param(sensor_string, value_string)
+            if sensor_string == 'script-ants': self.rec_thread._script_ants = value_string
         except ValueError, e:
             return ("fail", "Could not parse sensor name or value string '%s=%s': %s" % (sensor_string, value_string, e))
         return ("ok", "%s=%s" % (sensor_string, value_string))
