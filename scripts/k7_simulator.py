@@ -119,8 +119,8 @@ class SimulatorDeviceServer(DeviceServer):
     def request_label_input(self, sock, msg):
         """Label the specified input with a string."""
         if not msg.arguments:
-            for (inp,label) in self.c.labels.iteritems():
-                self.reply_inform(sock, Message.inform("label-input", inp, label,'roachXXXX'), msg)
+            for (inp,label) in sorted(self.c.labels.iteritems()):
+                self.reply_inform(sock, Message.inform("label-input", label, inp,'roachXXXXXX'), msg)
             return ("ok",str(len(self.c.labels)))
         else:
             inp = msg.arguments[0]
@@ -345,6 +345,10 @@ class K7Correlator(threading.Thread):
         ig.add_item(name="bls_ordering",id=0x100C,
             description="The output ordering of the baselines from each X engine. Packed as a pair of unsigned integers, ant1,ant2 where ant1 < ant2.",
             init_val=self.bls_ordering)
+
+        ig.add_item(name="input_labelling",id=0x100E,
+           description="The physical location of each antenna connection.",
+           init_val=np.array([[label, str(inp), 'roachXXXXXX', str(inp%2)] for (inp, label) in enumerate(sorted(self.labels.itervalues()))]))
 
         ig.add_item(name="center_freq",id=0x1011,
             description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
