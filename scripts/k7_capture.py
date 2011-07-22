@@ -354,10 +354,10 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
-        self._my_sensors["status"] = Sensor(Sensor.STRING, "status", "The current status of the capture thread.","","")
-        self._my_sensors["label"] = Sensor(Sensor.STRING, "label", "The label applied to the data as currently captured.","","")
-        self._my_sensors["script-ants"] = Sensor(Sensor.STRING, "script-ants","The antennas specified by the user for use by the executed script.","","")
-        self._my_sensors["script-log"] = Sensor(Sensor.STRING, "script-log", "The most recent script log entry.","","")
+        self._my_sensors["status"] = Sensor(Sensor.STRING, "status", "The current status of the capture thread.","")
+        self._my_sensors["label"] = Sensor(Sensor.STRING, "label", "The label applied to the data as currently captured.","")
+        self._my_sensors["script-ants"] = Sensor(Sensor.STRING, "script-ants","The antennas specified by the user for use by the executed script.","")
+        self._my_sensors["script-log"] = Sensor(Sensor.STRING, "script-log", "The most recent script log entry.","")
         self._my_sensors["script-name"] = Sensor(Sensor.STRING, "script-name", "Current script name", "")
         self._my_sensors["script-experiment-id"] = Sensor(Sensor.STRING, "script-experiment-id", "Current experiment id", "")
         self._my_sensors["script-observer"] = Sensor(Sensor.STRING, "script-observer", "Current experiment observer", "")
@@ -365,7 +365,7 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["script-rf-params"] = Sensor(Sensor.STRING, "script-rf-params", "Current experiment RF parameters", "")
         self._my_sensors["script-nd-params"] = Sensor(Sensor.STRING, "script-nd-params", "Current experiment Noise Diode parameters", "")
         self._my_sensors["script-arguments"] = Sensor(Sensor.STRING, "script-arguments", "Options and parameters of script - from sys.argv", "")
-        self._my_sensors["script-status"] = Sensor(Sensor.STRING, "script-status", "Current status reported by running script", "idle")
+        self._my_sensors["script-status"] = Sensor(Sensor.STRING, "script-status", "Current status reported by running script", "")
         self._my_sensors["script-starttime"] = Sensor(Sensor.STRING, "script-starttime", "Start time of current script", "")
         self._my_sensors["script-endtime"] = Sensor(Sensor.STRING, "script-endtime", "End time of current script", "")
 
@@ -374,6 +374,11 @@ class CaptureDeviceServer(DeviceServer):
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
+            if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
+                self._my_sensors[sensor].set_value("")
+            if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
+                self._my_sensors[sensor].set_value(0)
+             # take care of basic defaults to ensure sensor status is 'nominal'
         self._my_sensors["label"].set_value("no_thread")
 
     @return_reply(Str())
