@@ -59,9 +59,9 @@ def get_input_info(array_cfg):
     for k, v in array_cfg.correlator.inputs.iteritems():
         # Connection on DBE side is labelled '0x', '1y', etc.
         dbe = '%d%s' % k
-        # Connection on antenna side is labelled '1H', '2V', etc.
+        # Connection on antenna side is labelled '1h', '2h', etc.
         # This assumes the antenna name is 'antX', where X is the antenna number
-        ant_num, pol, delay = int(v[0][3:]), v[1].capitalize(), v[2]
+        ant_num, pol, delay = int(v[0][3:]), v[1], v[2]
         real = '%d%s' % (ant_num, pol)
         config_antennas.add(ant_num)
         dbe_delay[dbe] = '%.16e' % delay
@@ -345,7 +345,7 @@ antennas, antenna_positions, antenna_diameter, noise_diode_models = get_antenna_
 diodes = set([name.split('_')[1] for name in noise_diode_models])
  # map of noise diode model names to filenames
 input_map = sorted(('ant' + real, dbe) for real, dbe in real_to_dbe.items())
- # map of antenna inputs (e.g. ant1H) to dbe inputs (e.g. 0x)
+ # map of antenna inputs (e.g. ant1h) to dbe inputs (e.g. 0x)
 
 while(len(files) > 0 or options.batch):
     for fname in files:
