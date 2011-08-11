@@ -26,7 +26,7 @@ def parse_opts(argv):
 class SimulatorDeviceServer(DeviceServer):
 
     VERSION_INFO = ("k7-simulator",0,1)
-    BUILD_INFO = ("k7-capture",0,1,"rc1")
+    BUILD_INFO = ("k7-simulator",0,1,"rc1")
 
     def __init__(self, *args, **kwargs):
         self._sensors = {}
