@@ -486,8 +486,7 @@ while(len(files) > 0 or options.batch):
             #Drop the last two extensions of the file 123456789.xxxxx.h5 becomes 123456789.
             #And then add the new extension in its place thus 123456789.unaugmented.h5 becomes 123456789.h5 or 123456789.failed.h5
             lst = fname.split(".")
-            y = ".".join(l for l in lst[:-2]) + "."
-            renfile = y + new_extension
+            renfile = lst[0] + "." + new_extension
             os.rename(fname, renfile)
             print "File has been renamed to " + str(renfile) + "\n"
         except Exception:
