@@ -202,7 +202,8 @@ def insert_sensor(name, dataset, obs_start, obs_end, int_time, iv=False, default
             errors += 1
         else:
             section_reports[name] = "Success (Note: Existing data for this sensor was not changed.)"
-    if options.verbose: print "Creation of dataset for sensor " + name + " took " + str(time.time() - pstime) + "s"
+    smsg = "Creation of dataset for sensor " + name + " took " + str(time.time() - pstime) + "s"
+    if options.verbose: print smsg
     return sensor_len
 
 def create_group(f, name):
@@ -262,7 +263,7 @@ def print_tb():
 
 parser = OptionParser()
 parser.add_option("-b", "--batch", action="store_true", default=False, help="If set augment will process all unaugmented files in the directory specified by -d, and then continue to monitor this directory. Any new files that get created will be augmented in sequence.")
-parser.add_option("-c", "--config", dest='config', default='/var/kat/conf', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/conf]')
+parser.add_option("-c", "--config", dest='config', default='/var/kat/katconfig', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/katconfig]')
 parser.add_option("-u", "--central_monitor_url", default=None, help="Override the central monitor url in the configuration with the one specified.")
 parser.add_option("-d", "--dir", default=katuilib.defaults.kat_directories["data"], help="Process all unaugmented files in the specified directory. [default=%default]")
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
@@ -270,6 +271,9 @@ parser.add_option("-s", "--system", default="systems/local.conf", help="System c
 parser.add_option("-o", "--override", dest="force", action="store_true", default=False, help="If set, previously augmented files will be re-augmented. Only useful in conjunction with a single specified file.")
 parser.add_option("--dbe", dest="dbe_name", default="dbe7", help="Name of kat device to use as the correlator proxy. [default=%default]")
 parser.add_option("-v", "--verbose", action="store_true", default=False, help="Verbose output.")
+parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
+            help='level to use for basic logging or name of logging configuration file; ' \
+            'default is /log/log.<SITENAME>.conf')
 
 options, args = parser.parse_args()
 
@@ -278,6 +282,16 @@ signal.signal(signal.SIGINT, terminate)
 
 # Setup configuration source
 katconf.set_config(katconf.environ(options.config))
+    
+# set up Python logging
+katconf.configure_logging(options.logging)
+
+log_name = 'kat.k7aug'
+logger = logging.getLogger(log_name)
+logger.info("Logging started")
+activitylogger = logging.getLogger('activity')
+activitylogger.setLevel(logging.INFO)
+activitylogger.info("Activity logging started")
 
 state = ["|","/","-","\\"]
 batch_count = 0
@@ -312,11 +326,13 @@ if len(files) == 0 and not options.batch:
     print "No files matching the specified criteria where found..."
     sys.exit(0)
 
-print "Found",len(files),"files to process"
+smsg = "Found %d files to process" % len(files)
+print smsg
+activitylogger.info(smsg)
 
  # build an kat object for history gathering purposes
 print "Creating KAT connections..."
-kat = katuilib.tbuild(options.system, log_level=logging.ERROR, central_monitor_url=options.central_monitor_url)
+kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR, central_monitor_url=options.central_monitor_url)
  # check that we have basic connectivity (i.e. two antennas and pedestals)
 time.sleep(2)
 while not kat.rfe7.katcpobj.is_connected():
@@ -351,20 +367,30 @@ while(len(files) > 0 or options.batch):
     for fname in files:
         errors = 0
         fst = time.time()
-        print "\nStarting augment of file",fname
+        smsg = "Starting augment of file %s" % fname
+        print "\n%s" % smsg
+        logger.info(smsg)
+        activitylogger.info(smsg)
         new_extension = "h5"
         try:
             f = File(fname, 'r+')
             current_version = f['/'].attrs.get('version', "0.0").split('.', 1)
             if current_version[0] != str(major_version):
-                print "This version of augment required HDF5 files of version %i to augment. Your file has major version %s\n" % (major_version, current_version[0])
+                smsg = "This version of augment required HDF5 files of version %i to augment. Your file has major version %s\n" % (major_version, current_version[0])
+                print smsg
+                logger.info(smsg)
                 continue
             last_run = f['/'].attrs.get('augment_ts',None)
             f['/'].attrs['augment_errors'] = 0
             if last_run:
-                print "Warning: This file has already been augmented: " + str(last_run)
+                smsg = "Warning: This file has already been augmented: " + str(last_run)
+                print smsg
+                logger.warn(smsg)
+                activitylogger.warn(smsg)
                 if not options.force:
-                    print "To force reprocessing, please use the -o option."
+                    smsg = "To force reprocessing, please use the -o option."
+                    print smsg
+                    logger.info(smsg)
                     continue
                 else:
                     section_reports['reaugment'] = "Augment was previously done in this file on " + str(last_run)
@@ -374,7 +400,9 @@ while(len(files) > 0 or options.batch):
              # first timestamp is currently suspect
             f['/Data'].attrs['ts_of_first_timeslot'] = obs_start
             obs_end = f['/Data/timestamps'].value[-1]
-            print "Observation session runs from %s to %s\n" % (time.ctime(obs_start), time.ctime(obs_end))
+            smsg = "Observation session runs from %s to %s\n" % (time.ctime(obs_start), time.ctime(obs_end))
+            print smsg
+            logger.info(smsg)
             int_time = get_single_value(f['/MetaData/Configuration/Correlator'], 'int_time')
             f['/MetaData/Configuration/Correlator'].attrs['input_map'] = input_map
 
@@ -395,7 +423,10 @@ while(len(files) > 0 or options.batch):
                 stime = time.time()
                 for sensor in pointing_sensors:
                     insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
-                if options.verbose: print "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
+                if options.verbose:
+                    smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
+                    print smsg
+                    logger.debug(smsg)
                 # noise diode models
                 try:
                     ac.attrs['description'] = antennas[ant_name].description
@@ -413,13 +444,17 @@ while(len(files) > 0 or options.batch):
                             model, attrs = load_csv_with_header(katconf.resource_stream(nd_fname))
                         except Exception, e:
                             print_tb()
-                            print "Failed to open noise diode model file %s (for %s). Inserting null noise diode model. (%s)" % (nd_fname, nd_name, e)
+                            smsg = "Failed to open noise diode model file %s (for %s). Inserting null noise diode model. (%s)" % (nd_fname, nd_name, e)
+                            print smsg
+                            logger.error(smsg)
                         try:
                             nd = ac.create_dataset("%s_%s_noise_diode_model" % (pol, nd), data=model)
                             for key,val in attrs.iteritems(): nd.attrs[key] = val
                         except Exception:
                             print_tb()
-                            print "Dataset %s.%s_%s_noise_diode_model already exists. Not replacing existing model." % (ac.name, pol, nd)
+                            smsg = "Dataset %s.%s_%s_noise_diode_model already exists. Not replacing existing model." % (ac.name, pol, nd)
+                            print smsg
+                            logger.info(smsg)
 
             for ped in range(1,8):
                 ped = str(ped)
@@ -428,7 +463,10 @@ while(len(files) > 0 or options.batch):
                 stime = time.time()
                 for sensor in pedestal_sensors:
                     insert_sensor(ped_name + "_" + sensor, p, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
-                if options.verbose: print "Overall creation of sensor table for pedestal " + ped + " took " + str(time.time()-stime) + "s"
+                if options.verbose:
+                    smsg = "Overall creation of sensor table for pedestal " + ped + " took " + str(time.time()-stime) + "s"
+                    print smsg
+                    logger.debug(smsg)
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
@@ -442,12 +480,17 @@ while(len(files) > 0 or options.batch):
                     rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
                 except Exception:
                     print_tb()
-                    print "Centre frequency already saved. Not replacing existing center-frequency."
+                    smsg = "Centre frequency already saved. Not replacing existing center-frequency."
+                    print smsg
+                    logger.info(smsg)
 
             stime = time.time()
             for sensor in enviro_sensors:
                 insert_sensor("anc_" + sensor, eg, obs_start, obs_end, int_time)
-            if options.verbose: print "Overall creation of enviro sensor table took " + str(time.time()-stime) + "s"
+            if options.verbose:
+                smsg = "Overall creation of enviro sensor table took " + str(time.time()-stime) + "s"
+                print smsg
+                logger.debug(smsg)
              # end of antenna loop
             f['/'].attrs['augment_ts'] = time.time()
 
@@ -455,7 +498,10 @@ while(len(files) > 0 or options.batch):
             print_tb()
             section_reports["general"] = "Exception: " + str(err)
             errors += 1
-            print "Failed to run augment. File will be  marked as 'failed' and ignored:  (" + str(err) + ")"
+            smsg = "Failed to run augment. File will be  marked as 'failed' and ignored:  (" + str(err) + ")"
+            print smsg
+            logger.error(smsg)
+            activitylogger.error(smsg)
             new_extension = "failed.h5"
 
         try:
@@ -472,28 +518,45 @@ while(len(files) > 0 or options.batch):
                 hist['augment_log'].write_direct(log)
         except Exception, err:
             print_tb()
-            print "Warning: Unable to create augment_log dataset. (" + str(err) + ")"
+            smsg = "Warning: Unable to create augment_log dataset. (" + str(err) + ")"
+            print smsg
+            logger.error(smsg)
+            activitylogger.error(smsg)
         f.close()
 
         if options.verbose:
             print "\n\nReport"
             print "======"
+            logger.debug("=====Report")
             keys = section_reports.keys()
             keys.sort()
             for k in keys:
                 print k.ljust(50),section_reports[k]
+                logger.debug("%s %s" % (k.ljust(50), section_reports[k]))
         try:
             #Drop the last two extensions of the file 123456789.xxxxx.h5 becomes 123456789.
             #And then add the new extension in its place thus 123456789.unaugmented.h5 becomes 123456789.h5 or 123456789.failed.h5
             lst = fname.split(".")
             renfile = lst[0] + "." + new_extension
             os.rename(fname, renfile)
-            print "File has been renamed to " + str(renfile) + "\n"
+            smsg = "File has been renamed to " + str(renfile) + "\n"
+            print smsg
+            logger.info(smsg)
         except Exception:
             print_tb()
-            print "Failed to rename " + str(fname) + " to " + str(renfile) + ". This is most likely a permissions issue. Please resolve these and either manually rename the file or rerun augment with the -o option."
+            smsg = "Failed to rename " + str(fname) + " to " + str(renfile)
+            print smsg + ". This is most likely a permissions issue. Please resolve these and either manually rename the file or rerun augment with the -o option."
+            logger.error(smsg)
+            activitylogger.error(smsg)
             continue
-        print (errors == 0 and "No errors found." or str(errors) + " potential errors found. Please inspect the augment log by running 'h5dump -d /History/augment_log " + str(renfile) + "'.")
+        smsg = (errors == 0 and "No errors found." or str(errors) + " potential errors found. Please inspect the augment log by running 'h5dump -d /History/augment_log " + str(renfile) + "'.")
+        print smsg
+        if errors == 0:
+            logger.info(smsg)
+            activitylogger.info(smsg)
+        else:
+            logger.error(smsg)
+            activitylogger.error(smsg)
 
     # if in batch mode check for more files...
     files = []
@@ -504,3 +567,4 @@ while(len(files) > 0 or options.batch):
         sys.stdout.flush()
         files = get_files_in_dir(options.dir)
         batch_count += 1
+

@@ -11,9 +11,12 @@ import Queue
 import threading
 import sys
 import optparse
+import logging
+from pkg_resources import resource_filename
+
 from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int, Float
-from pkg_resources import resource_filename
+import katconf
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
@@ -21,6 +24,11 @@ def parse_opts(argv):
     parser.add_option('-c', '--config', dest='config', type="string", default=default_conf, help='k7 correlator config file to use.')
     parser.add_option('-p', '--port', dest='port', type=long, default=2041, metavar='N', help='attach to port N (default=2041)')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='listen to HOST (default="" - all hosts)')
+    parser.add_option('-s', '--system', default='systems/local.conf', help='system configuration file to use. [default=%default]')
+    parser.add_option('-f', '--sysconfig', dest='sysconfig', default='/var/kat/katconfig', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/katconfig]')
+    parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
+            help='level to use for basic logging or name of logging configuration file; ' \
+            'default is /log/log.<SITENAME>.conf')
     return parser.parse_args(argv)
 
 class SimulatorDeviceServer(DeviceServer):
@@ -49,27 +57,35 @@ class SimulatorDeviceServer(DeviceServer):
     def request_spead_issue(self, sock, msg):
         """Issue the SPEAD meta packets..."""
         self.c.spead_issue()
-        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip']))
+        smgs = "SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip'])
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_start_tx(self, sock, msg):
         """Start the data stream."""
         self.c._thread_paused = False
-        return ("ok","Data stream started.")
+        smsg = "Data stream started."
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Int())
     @return_reply(Str())
     def request_set_dump_rate(self, sock, rate):
         """Set the dump rate in Hz. Default is 1."""
         self.c.dump_period = 1.0 / int(rate)
-        return ("ok","Dump rate set to %i Hz" % rate)
+        smsg = "Dump rate set to %i Hz" % rate
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Str())
     @return_reply(Str())
     def request_poco_accumulation_length(self, sock, period):
         """Set the period in ms. Default is 1000."""
         self.c.dump_period = 1000.0 / float(period)
-        return ("ok","Dump period set to %s ms" % period)
+        smsg = "Dump period set to %s ms" % period
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Float(optional=True, default=5.0))
     @return_reply(Str())
@@ -98,7 +114,9 @@ class SimulatorDeviceServer(DeviceServer):
         self.c.target_az = az
         self.c.target_el = el
         self.c.target_flux = flux
-        return ("ok","Target set to (%f, %f, %f)" % (az, el, flux))
+        smsg = "Target set to (%f, %f, %f)" % (az, el, flux)
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Float())
     @return_reply(Str())
@@ -142,21 +160,27 @@ class SimulatorDeviceServer(DeviceServer):
     def request_capture_start(self, sock, destination):
         """For compatibility with dbe_proxy. Same as spead_issue."""
         self.c.spead_issue()
-        return ("ok","SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip']))
+        smsg = "SPEAD meta packets sent to %s" % (self.c.config['rx_meta_ip'])
+        activitylogger.info("k7simulator: %s" % smsg)
+        return ("ok",smsg)
 
     @request(Str(optional=True))
     @return_reply(Str())
     def request_capture_stop(self, sock, destination):
         """For compatibility with dbe_proxy. Does nothing :)."""
         self.c.send_stop()
-        return ("ok","Capture stopped. (dummy)")
+        smsg = "Capture stopped. (dummy)"
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_stop_tx(self, sock, msg):
         """Stop the data stream."""
         self.c._thread_paused = True
         self.c.send_stop()
-        return ("ok","Data stream stopped.")
+        smsg = "Data stream stopped."
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
 class K7Correlator(threading.Thread):
     def __init__(self, config_file):
@@ -518,11 +542,26 @@ class K7Correlator(threading.Thread):
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
+
+    # Setup configuration source
+    katconf.set_config(katconf.environ(opts.sysconfig))
+
+    # set up Python logging
+    katconf.configure_logging(opts.logging)
+    log_name = 'kat.k7simulator'
+    logger = logging.getLogger(log_name)
+    logger.info("Logging started")
+    activitylogger = logging.getLogger('activity')
+    activitylogger.setLevel(logging.INFO)
+    activitylogger.info("Activity logging started")
+    
     restart_queue = Queue.Queue()
     server = SimulatorDeviceServer(opts.host, opts.port, config_file=opts.config)
     server.set_restart_queue(restart_queue)
     server.start()
-    print "Started k7-capture server."
+    smsg = "Started k7-capture server."
+    print smsg
+    activitylogger.info(smsg)
     try:
         while True:
             try:
@@ -530,14 +569,22 @@ if __name__ == '__main__':
             except Queue.Empty:
                 device = None
             if device is not None:
-                print "Stopping ..."
+                smsg = "Stopping ..."
+                print smsg
+                activitylogger.info(smsg)
                 device.stop()
                 device.join()
-                print "Restarting ..."
+                smsg = "Restarting ..."
+                print smsg
+                activitylogger.info(smsg)
                 device.start()
-                print "Started."
+                smsg = "Started."
+                print smsg
+                activitylogger.info(smsg)
     except KeyboardInterrupt:
-        print "Shutting down ..."
+        smsg = "Shutting down ..."
+        print smsg
+        activitylogger.info(smsg)
         server.stop()
         server.join()
 

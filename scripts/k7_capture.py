@@ -22,11 +22,15 @@ import os
 import logging
 from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int
-
-logging.basicConfig(level=logging.WARNING)
+try:
+    import katconf
+    found_katconf = True
+except ImportError:
+    found_katconf = False
 
 hdf5_version = "2.0"
  # initial version describing indicating compatibility with our HDF5v2 spec. Minor revision may be incremented by augment at a later stage.
+
 
 mapping = {'xeng_raw':'/Data/correlator_data',
            'timestamp':'/Data/raw_timestamps'}
@@ -64,6 +68,10 @@ def parse_opts(argv):
     parser.add_option('-s', '--system', default='systems/local.conf', help='system configuration file to use. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
+    parser.add_option("-f", "--sysconfig", dest='sysconfig', default='/var/kat/katconfig', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/conf]')
+    parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
+            help='level to use for basic logging or name of logging configuration file; ' \
+            'default is /log/log.<SITENAME>.conf')
     return parser.parse_args(argv)
 
 class k7Capture(threading.Thread):
@@ -201,6 +209,7 @@ class k7Capture(threading.Thread):
              # new connection requires headers...
 
     def run(self):
+        activitylogger.info("Capture started")
         print "Initalising SPEAD transports at %f" % time.time()
         print "Data reception on port", self.data_port
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
@@ -336,6 +345,7 @@ class k7Capture(threading.Thread):
                     print "Failed to repack %s." % name
         print "Capture complete at %f" % time.time()
         self.status_sensor.set_value("complete")
+        activitylogger.info("Capture complete")
 
 class CaptureDeviceServer(DeviceServer):
 
@@ -385,13 +395,17 @@ class CaptureDeviceServer(DeviceServer):
     def request_sd_metadata_issue(self, sock, msg):
         """Resend the signal display metadata packets..."""
         self.rec_thread.send_sd_metadata()
-        return ("ok", "SD Metadata resent")
+        smsg = "SD Metadata resent"
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_capture_start(self, sock, msg):
         """Dummy capture start command - calls capture init."""
         self.request_capture_init(sock, msg)
-        return ("ok", "Capture initialised at %s" % time.ctime())
+        smsg = "Capture initialised at %s" % time.ctime()
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_capture_init(self, sock, msg):
@@ -406,7 +420,9 @@ class CaptureDeviceServer(DeviceServer):
         for (ip,port) in self.sdisp_ips.iteritems():
             self.rec_thread.add_sdisp_ip(ip,port)
         self.current_file = self.rec_thread.fname
-        return ("ok", "Capture initialised at %s" % time.ctime())
+        smsg =  "Capture initialised at %s" % time.ctime()
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Int())
     @return_reply(Str())
@@ -474,7 +490,9 @@ class CaptureDeviceServer(DeviceServer):
             if sensor_string == 'script-ants': self.rec_thread._script_ants = value_string
         except ValueError, e:
             return ("fail", "Could not parse sensor name or value string '%s=%s': %s" % (sensor_string, value_string, e))
-        return ("ok", "%s=%s" % (sensor_string, value_string))
+        smsg = "%s=%s" % (sensor_string, value_string)
+        activitylogger.info("Set script param %s" % smsg)
+        return ("ok", smsg)
 
     @request(Str())
     @return_reply(Str())
@@ -483,7 +501,9 @@ class CaptureDeviceServer(DeviceServer):
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
         self._my_sensors["script-log"].set_value(log)
         self.rec_thread.write_log(log)
-        return ("ok","Log entry written")
+        smsg = "Script log entry added (%s)" % log
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @request(Str())
     @return_reply(Str())
@@ -528,7 +548,9 @@ class CaptureDeviceServer(DeviceServer):
          # wait for thread to settle...
         self.rec_thread.join()
         self._my_sensors["capture-active"].set_value(0)
-        return ("ok", "Capture stoppped at %s" % time.ctime())
+        smsg = "Capture stoppped at %s" % time.ctime()
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_capture_done(self, sock, msg):
@@ -559,7 +581,9 @@ class CaptureDeviceServer(DeviceServer):
             return ("fail","Failed to rename output file from %s to %s." % (self.current_file, output_file))
         finally:
             self.current_file = None
-        return ("ok","File renamed to %s" % (output_file))
+        smsg = "File renamed to %s" % (output_file)
+        activitylogger.info(smsg)
+        return ("ok", smsg)
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
@@ -572,11 +596,28 @@ if __name__ == '__main__':
             sys.exit(0)
         cfg = small_build(opts.system)
 
+    if found_katconf:
+        # Setup configuration source
+        katconf.set_config(katconf.environ(opts.sysconfig))
+        # set up Python logging
+        katconf.configure_logging(opts.logging)
+    else:
+        logging.basicConfig(level=logging.WARNING)
+        
+    log_name = 'kat.k7capture'
+    logger = logging.getLogger(log_name)
+    logger.info("Logging started")
+    activitylogger = logging.getLogger('activity')
+    activitylogger.setLevel(logging.INFO)
+    activitylogger.info("Activity logging started")
+
     restart_queue = Queue.Queue()
     server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
-    print "Started k7-capture server."
+    smsg = "Started k7_capture server."
+    print smsg
+    logger.info(smsg)
     try:
         while True:
             try:
@@ -584,14 +625,23 @@ if __name__ == '__main__':
             except Queue.Empty:
                 device = None
             if device is not None:
-                print "Stopping ..."
+                smsg = "Stopping ..."
+                print smsg
+                logger.info(smsg)
                 device.stop()
                 device.join()
-                print "Restarting ..."
+                smsg = "Restarting ..."
+                print smsg
+                logger.info(smsg)
                 device.start()
-                print "Started."
+                smsg = "Started."
+                print smsg
+                logger.info(smsg)
     except KeyboardInterrupt:
-        print "Shutting down ..."
+        smsg =  "Shutting down ..."
+        print smsg
+        logger.info(smsg)
+        activitylogger.info("Activity logging stopped")
         server.stop()
         server.join()
 
@@ -604,6 +654,5 @@ if __name__ == '__main__':
 #            time.sleep(1)
 #        #fname = receive(opts.data_port, opts.acc_scale, opts.ip, cfg)
 #        print "Capture complete. Data recored to file."
-
 
 
