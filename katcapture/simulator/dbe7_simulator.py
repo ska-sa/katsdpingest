@@ -64,7 +64,10 @@ class SimulatorDeviceServer(DeviceServer):
             activitylogger.error(smsg)
             return ('fail', smsg)
         logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
-        time.sleep(mode_delay)
+        for i in range(mode_delay):
+            time.sleep(1)
+            smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
+            self.log.info(smsg)
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
         smsg = 'Correlator mode changed to ' + mode
         activitylogger.info(smsg)
