@@ -353,7 +353,7 @@ class K7Correlator(threading.Thread):
                 data[:,ib,:]=data[:,ib,:]+(((ib*32131+48272)%1432)/1432.0*20.0 +
                 np.random.randn(self.config['n_chans']*2).reshape(
                     [self.config['n_chans'],2])*10.0)
-        data = data.astype(np.float32) + self.nd
+        data = data.astype(np.int32) + self.nd
         return data
 
     def get_crosspol_order(self):
@@ -566,7 +566,7 @@ class K7Correlator(threading.Thread):
 
         self.data_ig.add_item(name=("xeng_raw"),id=0x1800,
             description="Raw data for %i xengines in the system. This item represents a full spectrum (all frequency channels) assembled from lowest frequency to highest frequency. Each frequency channel contains the data for all baselines (n_bls given by SPEAD ID 0x100B). For a given baseline, -SPEAD ID 0x1040- stokes parameters are calculated (nominally 4 since xengines are natively dual-polarisation; software remapping is required for single-baseline designs). Each stokes parameter consists of a complex number (two real and imaginary unsigned integers)."%(self.config['n_xeng']),
-            ndarray=(np.dtype(np.float32),(self.config['n_chans'],self.config['n_bls'],2)))
+            ndarray=(np.dtype(np.int32),(self.config['n_chans'],self.config['n_bls'],2)))
 
         self._data_meta_descriptor = self.data_ig.get_heap()
 
