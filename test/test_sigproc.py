@@ -28,7 +28,7 @@ rfi_sigma = 2
 
 history = []
 for t in range(n_timestamps):
-    history.append(np.random.random((1024,144)).astype(np.complex64) * 1000)
+    history.append(np.random.random((1024,144,2)).astype(np.float32) * 1000)
 history = np.array(history)
  # create some random data
 
@@ -45,9 +45,14 @@ print "Pre scale value",history[0][0][0]
 scale.proc()
 print "Post scale value",history[0][0][0],"\n"
 
-history[0][0][5] = 20000+0j
+history[0][0][5][0] = 20000
  # add a single rfi spike
-print "RFI should be at 0,0,5"
+
+sp.ProcBlock.history = history.view(np.complex64).squeeze()
+sp.ProcBlock.current = sp.ProcBlock.history[0]
+ # redo pointers with complex data
+
+print "RFI should be at bit 6"
 mask = rfi.proc()
 print "First 8 flags in mask are:",np.unpackbits(mask)[:8]
 
