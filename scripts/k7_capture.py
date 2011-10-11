@@ -22,6 +22,8 @@ import os
 import logging
 from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int
+import katcapture.sigproc as sp
+
 try:
     import katconf
     found_katconf = True
@@ -77,6 +79,7 @@ def parse_opts(argv):
 class k7Capture(threading.Thread):
     def __init__(self, data_port, cfg, pkt_sensor, status_sensor):
         self.data_port = data_port
+        self.data_scale_factor = 1.0
         self.acc_scale = True
         self.cfg = cfg
         self._label_idx = 0
@@ -100,11 +103,15 @@ class k7Capture(threading.Thread):
          # by default record all baselines
         self._script_ants = None
          # a reference to the antennas requested from the current script
+        #### Initialise processing blocks used
+        self.scale = sp.Scale(self.data_scale_factor)
+         # at this stage the scale factor is unknown
+        #### Done with blocks
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
         if self._sd_count % 10 == 0:
-            print "Sending metadata heartbeat..."
+            logger.debug("Sending metadata heartbeat...")
             self.send_sd_metadata()
 
         for tx in self.sdisp_ips.itervalues():
@@ -120,7 +127,7 @@ class k7Capture(threading.Thread):
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
-        print "Update metadata. Bls ordering:",self.meta['bls_ordering']
+        logger.debug("Update metadata. Bls ordering: %s" % self.meta['bls_ordering'])
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
         self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
@@ -135,7 +142,7 @@ class k7Capture(threading.Thread):
         self.baseline_mask = range(self.meta['n_bls'])
          # by default we send all baselines...
         if self._script_ants is not None and self.meta.has_key('bls_ordering'):
-            print "Using script-ants (%s) as a custom baseline mask..." % self._script_ants
+            logger.info("Using script-ants (%s) as a custom baseline mask..." % self._script_ants)
             ants = self._script_ants.replace(" ","").split(",")
             if len(ants) > 0:
                 b = self.meta['bls_ordering'].tolist()
@@ -203,7 +210,7 @@ class k7Capture(threading.Thread):
         self._current_hdf5 = None
 
     def add_sdisp_ip(self, ip, port):
-        print "Adding %s:%s to signal display list. Starting transport..." % (ip,port)
+        logger.info("Adding %s:%s to signal display list. Starting transport..." % (ip,port))
         self.sdisp_ips[ip] = spead.Transmitter(spead.TransportUDPtx(ip, port))
         if self._sd_metadata is not None:
             mdata = copy.deepcopy(self._sd_metadata)
@@ -212,8 +219,8 @@ class k7Capture(threading.Thread):
 
     def run(self):
         activitylogger.info("Capture started")
-        print "Initalising SPEAD transports at %f" % time.time()
-        print "Data reception on port", self.data_port
+        logger.info("Initalising SPEAD transports at %f" % time.time())
+        logger.info("Data reception on port %i" % self.data_port)
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
         #print "Sending Signal Display data to", self.sd_ip
         #tx_sd = spead.Transmitter(spead.TransportUDPtx(self.sd_ip, 7149))
@@ -246,6 +253,10 @@ class k7Capture(threading.Thread):
                         self.center_freq = self.meta[name]
                     if name == 'int_time' and self.int_time == 1:
                         self.int_time = self.meta[name]
+                    if name == 'n_accs':
+                        self.data_scale_factor = np.float32(ig[name])
+                        self.scale.scale_factor = self.data_scale_factor
+                        logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
                 if name in meta_required:
                     self.meta[name] = ig[name]
                     meta_required.remove(name)
@@ -253,7 +264,7 @@ class k7Capture(threading.Thread):
                         self.set_baseline_mask()
                          # we first set the baseline mask in order to have the correct number of baselines
                         self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
-                        print "Initialised sd frame to shape",self.sd_frame.shape
+                        logger.debug("Initialised sd frame to shape %s" % str(self.sd_frame.shape))
                         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
                         sd_slots = None
                 if not name in datasets:
@@ -272,7 +283,7 @@ class k7Capture(threading.Thread):
                         if self.baseline_mask is not None:
                             new_shape[-2] = len(self.baseline_mask)
                         dtype = np.dtype(np.float32)
-                    print "Creating dataset for name:",name,", shape:",new_shape,", dtype:",dtype
+                    logger.debug("Creating dataset for name: %s, shape: %s, dtype: %s" % (name, str(new_shape), dtype))
                     if new_shape == [1]:
                         new_shape = []
                     f.create_dataset(self.remap(name),[1] + new_shape, maxshape=[None] + new_shape, dtype=dtype)
@@ -291,7 +302,6 @@ class k7Capture(threading.Thread):
                     f[self.remap(name)].resize(datasets_index[name]+1, axis=0)
                     if name == 'timestamp':
                         f[timestamps].resize(datasets_index[name]+1, axis=0)
-                data_scale_factor = np.float32(self.meta['n_accs'] if self.meta.has_key('n_accs') else 1)
                 if self.sd_frame is not None and name.startswith("xeng_raw"):
                     sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
                     if sd_slots is None:
@@ -304,14 +314,21 @@ class k7Capture(threading.Thread):
                         self.send_sd_metadata()
                         t_it = self.ig_sd.get_item('sd_data')
                         #print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
-                    scaled_data = np.float32(ig[name]) / data_scale_factor
-                    print "Sending signal display frame with timestamp %i (local: %f). %s. Max: %f, Mean: %f" % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % (data_scale_factor,), np.max(scaled_data), np.mean(scaled_data))
+                    scaled_data = np.float32(ig[name]) / self.data_scale_factor
+                    logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
+                    logger.debug("Signal display frame: Max: %f, Min: %f, Mean: %f\n" % (np.max(scaled_data), np.min(scaled_data), np.mean(scaled_data)))
                     self.ig_sd['sd_data'] = scaled_data[...,self.baseline_mask,:]
                      # only send signal display data specified by baseline mask
                     self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
                     self.send_sd_data(self.ig_sd.get_heap())
                 if name.startswith("xeng_raw"):
-                    f[self.remap(name)][datasets_index[name]] = ig[name][...,self.baseline_mask,:] if not self.acc_scale else (np.float32(ig[name][...,self.baseline_mask,:]) / data_scale_factor)
+                     # we have data...
+                    sp.ProcBlock.current = ig[name]
+                     # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
+                    self.scale.proc()
+                     # scale the data
+                    f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current
+                     # write data to file
                 else:
                     f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
@@ -327,7 +344,7 @@ class k7Capture(threading.Thread):
                 # add config store metadata after receiving first frame. This should ensure that the values pulled are fresh.
                 for s in config_sensors:
                     f[observation_map].attrs[s] = kat.cfg.sensor.__getattribute__(s).get_value()
-                print "Added initial observation sensor values...\n"
+                logger.info("Added initial observation sensor values...\n")
             idx+=1
             self.pkt_sensor.set_value(idx)
 
@@ -337,7 +354,7 @@ class k7Capture(threading.Thread):
             f[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
              # we have generated a new baseline mask, so fix bls_ordering attribute...
 
-        print "Repacking correlator metadata into attributes..."
+        logger.info("Repacking correlator metadata into attributes...")
         for (name,idx) in datasets_index.iteritems():
             if name not in mapping:
                 try:
@@ -346,8 +363,9 @@ class k7Capture(threading.Thread):
                         del f[self.remap(name)]
                          # throw away any history for single valued items...
                 except ValueError:
-                    print "Failed to repack %s." % name
-        print "Capture complete at %f" % time.time()
+                    logger.warning("Failed to repack %s." % name)
+        logger.info("Capture complete at %f" % time.time())
+        logger.debug("\nProcessing Blocks\n=================\n%s\n\n" % self.scale)
         self.status_sensor.set_value("complete")
         activitylogger.info("Capture complete")
 
@@ -543,7 +561,7 @@ class CaptureDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_capture_stop(self, sock, msg):
         """Attempts to gracefully shut down current capture thread by sending a SPEAD stop packet to local receiver."""
-        print "Forceable capture stop called (%f)" % (time.time())
+        logger.warning("Forceable capture stop called (%f)" % (time.time()))
         if self.rec_thread is None:
             return ("ok","Thread was already stopped.")
         tx = spead.Transmitter(spead.TransportUDPtx('localhost',7148))
@@ -559,16 +577,15 @@ class CaptureDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_capture_done(self, sock, msg):
         """Closes the current capture file and renames it for use by augment."""
-        print "Capture done called at",time.time()
+        logger.info("Capture done called at %f (%s)" % (time.time(), time.ctime()))
         if self.rec_thread is None:
             return ("fail","No existing capture session.")
         self.current_file = self.rec_thread.fname
         if self.rec_thread.is_alive():
-            time.sleep(self.rec_thread.int_time)
+            time.sleep(2 * self.rec_thread.int_time)
              # the stop packet will only be sent at the end of the next dump
             if self.rec_thread.is_alive():
                  # capture thread is persistent...
-                print "Capture done is killing thread..."
                 self.request_capture_stop(sock, msg)
                  # perform a hard stop if we have not stopped yet.
         self.rec_thread.close_file()
@@ -576,13 +593,13 @@ class CaptureDeviceServer(DeviceServer):
         self.rec_thread = None
          # we are done with the capture thread
         if self.current_file is None:
-            print "File was already closed. Not renaming..."
+            logger.warning("File was already closed. Not renaming...")
             return ("ok","File was already closed.")
         output_file = self.current_file[:self.current_file.find(".writing.h5")] + ".unaugmented.h5"
         try:
             os.rename(self.current_file, output_file)
         except Exception, e:
-            print "Failed to rename output file",e
+            logger.error("Failed to rename output file %s" % e)
             return ("fail","Failed to rename output file from %s to %s." % (self.current_file, output_file))
         finally:
             self.current_file = None
@@ -601,18 +618,21 @@ if __name__ == '__main__':
             sys.exit(0)
         cfg = small_build(opts.system)
 
+    found_katconf = False
     if found_katconf:
         # Setup configuration source
         katconf.set_config(katconf.environ(opts.sysconfig))
         # set up Python logging
         katconf.configure_logging(opts.logging)
-    else:
-        logging.basicConfig(level=logging.WARNING)
-        
-    log_name = 'kat.k7capture'
-    logger = logging.getLogger(log_name)
-    logger.info("Logging started")
-    activitylogger = logging.getLogger('activity')
+
+    logger = logging.getLogger("kat.k7capture")
+    if not found_katconf:
+        if opts.logging is None: logger.warning("Defaulting to log level INFO. To override use the -l [DEBUG | INFO | WARNING | ERROR] switch.")
+        logger.setLevel(logging.INFO if opts.logging is None else opts.logging)
+
+    sp.ProcBlock.logger = logger
+     # logger ref for use in the signal processing routines
+    activitylogger = logging.getLogger("activity")
     activitylogger.setLevel(logging.INFO)
     activitylogger.info("Activity logging started")
 
@@ -620,9 +640,7 @@ if __name__ == '__main__':
     server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
-    smsg = "Started k7_capture server."
-    print smsg
-    logger.info(smsg)
+    activitylogger.info("Started k7_capture server.")
     try:
         while True:
             try:
@@ -630,34 +648,15 @@ if __name__ == '__main__':
             except Queue.Empty:
                 device = None
             if device is not None:
-                smsg = "Stopping ..."
-                print smsg
-                logger.info(smsg)
+                logger.info("Stopping")
                 device.stop()
                 device.join()
-                smsg = "Restarting ..."
-                print smsg
-                logger.info(smsg)
+                logger.info("Restarting")
                 device.start()
-                smsg = "Started."
-                print smsg
-                logger.info(smsg)
+                logger.info("Started")
     except KeyboardInterrupt:
-        smsg =  "Shutting down ..."
-        print smsg
-        logger.info(smsg)
+        activitylogger.info("Shutting down k7_capture server...")
         activitylogger.info("Activity logging stopped")
         server.stop()
         server.join()
-
-#    while True:
-#        rec_thread = k7Capture(opts.data_port, opts.acc_scale, opts.ip, cfg)
-#        rec_thread.setDaemon(True)
-#        rec_thread.start()
-#        while rec_thread.isAlive():
-#            print "."
-#            time.sleep(1)
-#        #fname = receive(opts.data_port, opts.acc_scale, opts.ip, cfg)
-#        print "Capture complete. Data recored to file."
-
 

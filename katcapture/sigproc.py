@@ -2,6 +2,7 @@ import time
 import numpy as np
 from katsdisp.data import CorrProdRef
 import scipy.signal as signal
+import logging
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -21,6 +22,7 @@ class ProcBlock(object):
     """
     current = None
     history = None
+    logger = logging.getLogger("katcapture.sigproc")
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
     _proc_times = []
@@ -31,9 +33,11 @@ class ProcBlock(object):
     def proc(self, *args, **kwargs):
         """Process a single time instance of data."""
         if self.current is None:
-            print "Warning: Data references have not been set up. This is almost certainly in error. The data exists as an attribute on the ProcBlock base class."
-        if self.expected_dtype is not None:
-            if self.current.dtype != self.expected_dtype: raise(TypeError,"%s expects data of type %s not %s" % (self.__class__.__name__,str(self.expected_dtype),str(self.current.dtype)))
+            self.logger.warning("Warning: Data references have not been set up. This is almost certainly in error. The data exists as an attribute on the ProcBlock base class.")
+        if self.expected_dtype is not None and self.current.dtype != self.expected_dtype:
+            smsg = "%s expects data of type %s not %s" % (self.__class__.__name__,str(self.expected_dtype),str(self.current.dtype))
+            self.logger.error(smsg)
+            raise(TypeError,smsg)
         st = time.time()
         retval = self._proc(*args, **kwargs)
         self._proc_times.append(time.time() - st)
@@ -69,7 +73,7 @@ class Scale(ProcBlock):
     def __init__(self, scale_factor, *args, **kwargs):
         super(Scale, self).__init__(*args, **kwargs)
         self.scale_factor = scale_factor
-        self.expected_dtype = np.float32
+        self.expected_dtype = np.int32
 
     def _proc(self):
         self.current[:] = (np.float32(self.current) / (1.0 * self.scale_factor))[:]
