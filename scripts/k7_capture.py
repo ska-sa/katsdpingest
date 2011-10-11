@@ -93,6 +93,8 @@ class k7Capture(threading.Thread):
         self.center_freq = 0
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
+        self.int_time = 1.0
+         # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
         self.baseline_mask = None
          # by default record all baselines
@@ -225,7 +227,7 @@ class k7Capture(threading.Thread):
         datasets_index = {}
         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
          # we need these bits of meta data before being able to assemble and transmit signal display data
-        meta_desired = ['n_accs','center_freq']
+        meta_desired = ['int_time', 'n_accs','center_freq']
          # if we find these, then what hey :)
         sd_slots = None
         sd_timestamp = None
@@ -242,6 +244,8 @@ class k7Capture(threading.Thread):
                     self.meta[name] = ig[name]
                     if name == 'center_freq' and self.center_freq == 0:
                         self.center_freq = self.meta[name]
+                    if name == 'int_time' and self.int_time == 1:
+                        self.int_time = self.meta[name]
                 if name in meta_required:
                     self.meta[name] = ig[name]
                     meta_required.remove(name)
@@ -560,7 +564,8 @@ class CaptureDeviceServer(DeviceServer):
             return ("fail","No existing capture session.")
         self.current_file = self.rec_thread.fname
         if self.rec_thread.is_alive():
-            time.sleep(1)
+            time.sleep(self.rec_thread.int_time)
+             # the stop packet will only be sent at the end of the next dump
             if self.rec_thread.is_alive():
                  # capture thread is persistent...
                 print "Capture done is killing thread..."
