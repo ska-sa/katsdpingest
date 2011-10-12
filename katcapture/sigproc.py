@@ -46,12 +46,19 @@ class ProcBlock(object):
     def _proc(self):
         raise NotImplementedError("Method must be overridden by subclasses.")
 
-    def stats(self):
+    def __str__(self):
         """Accumulated processing statistics of this block."""
+        descr = ["Processing Block: %s" % self.__class__.__name__]
+        descr.append("Parameters: " + ", ".join(["%s == %s" % (k,v) for k,v in self.__dict__.iteritems() if not k.startswith("_")]))
         if len(self._proc_times) > 0:
-            print "Processed %i frame(s) in %.3fs. Last: %.3fs, Avg: %.3fs\n" % (len(self._proc_times), np.sum(self._proc_times), self._proc_times[-1], np.average(self._proc_times))
+            descr.append("Processed %i frame(s) in %.3fs. Last: %.3fs, Avg: %.3fs" % (len(self._proc_times), np.sum(self._proc_times), self._proc_times[-1], np.average(self._proc_times)))
         else:
-            print "No frames processed."
+            descr.append("No frames processed.")
+        if self.current is not None:
+            descr.append("Current data has shape %s and type %s" % (self.current.shape, self.current.dtype))
+        else:
+            descr.append("No current data.")
+        return "\n".join(descr)
 
 class VanVleck(ProcBlock):
     """Perform van vleck corrections on the incoming data."""
