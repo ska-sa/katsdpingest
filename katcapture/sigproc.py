@@ -26,8 +26,8 @@ class ProcBlock(object):
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
     _proc_times = []
-    def __init__(self, bls_ordering=None):
-        self.cpref = CorrProdRef(bls_ordering)
+    def __init__(self, **kwargs):
+        self.cpref = CorrProdRef(**kwargs)
         self.expected_dtype = None
 
     def proc(self, *args, **kwargs):
@@ -99,7 +99,6 @@ class RFIThreshold2(ProcBlock):
         self.expected_dtype = np.complex64
 
     def _proc(self):
-        
         #print "\nRFI Threshold: Processing block of shape",self.current.shape
 
         #### Replace the code in this method with your own.
@@ -112,7 +111,6 @@ class RFIThreshold2(ProcBlock):
             spectral_data = np.abs(self.current[:,bl_index])
             spectral_data = np.atleast_1d(spectral_data)
             kernel_size = 2 * max(int(self.spike_width), 0) + 1
-    
             # Median filter data along the desired axis, with given kernel size
             kernel = np.ones(spectral_data.ndim, dtype='int32')
             kernel[self.axis] = kernel_size
@@ -137,7 +135,6 @@ class RFIThreshold2(ProcBlock):
             outliers = (spectral_data - filtered_data > self.n_sigma*estm_stdev)
 
             flags[:,bl_index] = outliers
-        
         return np.packbits(flags.astype(np.int8))
 
 class RFIThreshold(ProcBlock):
