@@ -11,7 +11,8 @@ from pkg_resources import resource_filename
 
 import katconf
 from katcapture.simulator.dbe7_simulator import SimulatorDeviceServer
-from katcapture.simulator.dbe7_simulator import K7Correlator
+from katcapture.simulator.dbe7_simulator_model import K7CorrelatorModel
+from katcore.dev.base import SimpleModel
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
@@ -68,7 +69,8 @@ if __name__ == '__main__':
     activitylogger.info("Activity logging started")
     
     restart_queue = Queue.Queue()
-    server = SimulatorDeviceServer(opts.host, opts.port, config_file=opts.config)
+    model = K7CorrelatorModel(opts.config)
+    server = SimulatorDeviceServer(model, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     smsg = "Started k7-capture server."
