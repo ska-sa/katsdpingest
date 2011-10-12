@@ -39,15 +39,15 @@ class SimulatorDeviceServer(Device):
         smsg = 'Correlator mode changed to ' + mode
         activitylogger.info(smsg)
         return ('ok', smsg)
-        
+
     @return_reply(Str())
     def request_spead_issue(self, sock, msg):
         """Issue the SPEAD meta packets..."""
         self._model.spead_issue()
-        smgs = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
+        smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
         activitylogger.info(smsg)
         return ("ok", smsg)
-    
+
     @return_reply(Str())
     def request_start_tx(self, sock, msg):
         """Start the data stream."""
