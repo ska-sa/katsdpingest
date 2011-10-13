@@ -9,7 +9,7 @@ class SigProcTestCases(unittest.TestCase):
 
     def setUp(self):
         """Create the basic environment, along with test vectors."""
-        self.scale_factor = 2
+        self.scale_factor = 3
         self.n_ts = 10
         self.n_chans = 512
         self.n_ants = 4
@@ -19,12 +19,12 @@ class SigProcTestCases(unittest.TestCase):
         self.spike_bls = np.random.randint(self.n_bls)
          # the channel and baseline into which to insert rfi spikes
 
-        self.data = (np.random.random((self.n_ts, self.n_chans, self.n_bls,2)) + 100).astype(np.int32)
+        self.data = (np.random.random((self.n_chans, self.n_bls,2)) + 100).astype(np.int32)
          # produce some random data
         self.data_copy = self.data.copy()
 
-        sigproc.ProcBlock.history = self.data
-        sigproc.ProcBlock.current = self.data[0]
+        sigproc.ProcBlock.history = None
+        sigproc.ProcBlock.current = self.data
 
     def testEmptyBlock(self):
         """Test a empty signal processing block."""
@@ -39,12 +39,11 @@ class SigProcTestCases(unittest.TestCase):
     def testBasicAssignment(self):
         """Test assignment to class variables."""
         pc = sigproc.ProcBlock()
-        np.testing.assert_equal(pc.current,pc.history[0])
+        np.testing.assert_equal(pc.current,self.data)
 
     def testScaleDataType(self):
         """Test acceptable data type for scale."""
         data_wrong_type = np.ones((self.n_ts,self.n_chans,self.n_bls,2), dtype=np.float32)
-        sigproc.ProcBlock.history = data_wrong_type
         sigproc.ProcBlock.current = data_wrong_type[0]
         sc = sigproc.Scale(self.scale_factor)
         self.assertRaises(TypeError, sc.proc)
@@ -53,8 +52,8 @@ class SigProcTestCases(unittest.TestCase):
         """Test basic scaling."""
         sc = sigproc.Scale(self.scale_factor)
         sc.proc()
-        np.testing.assert_equal(self.data[0], self.data_copy[0] / self.scale_factor)
-        self.assertNotEqual(self.data[0].dtype, np.float32)
+        np.testing.assert_equal(self.data, np.float32(self.data_copy) / (1.0 * self.scale_factor))
+        self.assertEqual(self.data.dtype, np.float32)
 
     def testVanVleck(self):
         """Not implemented yet..."""

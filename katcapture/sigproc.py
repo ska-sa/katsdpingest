@@ -83,7 +83,8 @@ class Scale(ProcBlock):
         self.expected_dtype = np.int32
 
     def _proc(self):
-        self.current[:] = (np.float32(self.current) / (1.0 * self.scale_factor))[:]
+        self.current.dtype = np.float32
+        self.current[:] = (np.float32(self.current.view(np.int32)) / (1.0 * self.scale_factor))[:]
          # avoid making a new current object. Just replace contents.
         return None
 
