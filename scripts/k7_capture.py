@@ -11,6 +11,7 @@
 
 import numpy as np
 import spead
+spead.logger.setLevel(spead.logging.WARNING)
 import h5py
 import sys
 import time
@@ -316,18 +317,18 @@ class k7Capture(threading.Thread):
                         #print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
                     scaled_data = np.float32(ig[name]) / self.data_scale_factor
                     logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
-                    logger.debug("Signal display frame: Max: %f, Min: %f, Mean: %f\n" % (np.max(scaled_data), np.min(scaled_data), np.mean(scaled_data)))
+                    #logger.debug("Signal display frame: Max: %f, Min: %f, Mean: %f\n" % (np.max(scaled_data), np.min(scaled_data), np.mean(scaled_data)))
                     self.ig_sd['sd_data'] = scaled_data[...,self.baseline_mask,:]
                      # only send signal display data specified by baseline mask
                     self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
                     self.send_sd_data(self.ig_sd.get_heap())
                 if name.startswith("xeng_raw"):
                      # we have data...
-                    sp.ProcBlock.current = ig[name]
+                    sp.ProcBlock.current = ig[name][...,self.baseline_mask,:]
                      # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
                     self.scale.proc()
                      # scale the data
-                    f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current
+                    f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current[np.newaxis,...]
                      # write data to file
                 else:
                     f[self.remap(name)][datasets_index[name]] = ig[name]
