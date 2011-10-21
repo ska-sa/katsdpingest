@@ -19,16 +19,52 @@ class ProcBlock(object):
     avaiable via the history.
 
     Support for both inline modification and production of new data products is provided.
+
+    *** Preliminary ***
+
+    A flag array is used to refer to values within the currently linked data that should be flagged. The flag array is eventually finalised
+    into a packed int8 array hence the requirement for the flag column to be a multiple of 8. Currently the following bits are specified:
+        0 - reserved
+        1 - predefined static flag list
+        2 - flag based on live CAM information
+        3 - reserved
+        4 - RFI detected in the online system
+        5 - RFI predicted from space based pollutants
+        6 - reserved
+        7 - reserved
+
+    *** End Preliminary ***
+
     """
     current = None
     history = None
+    flags = None
     logger = logging.getLogger("katcapture.sigproc")
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
     _proc_times = []
     def __init__(self, **kwargs):
         self.cpref = CorrProdRef(**kwargs)
+        self.flag_types = ['reserved','static','cam','reserved','detected_rfi','predicted_rfi','reserved','reserved']
         self.expected_dtype = None
+
+    def finalise_flags(self):
+        """Packs flags into optimal structure and returns them to caller."""
+        if self.flags is None:
+            self.logger.error("No flags yet defined. Using init_flags to setup the basic flag table.")
+        return np.packbits(self.flags).reshape(self.current.shape)
+
+    def init_flags(self, flag_size=8):
+        """Initialise a flag array based on the shape of current.
+        Typically this is called after updating the current reference to the current data.
+        Flags are stored in the final axis of the array (with size as given in flag_size).
+        Flag size must be a multiple of 8 to allow packbits to work unambiguously.
+        """
+        if flag_size % 8 != 0:
+            self.logger.error("given flag_size (%i) is not a multiple of 8." % flag_size)
+        if self.current is None:
+            self.logger.error("No current data. Unable to create flag table until ProcBlock.current has been initialised.")
+        self.flags = np.zeros(list(self.current.shape) + [flag_size], dtype=np.int8)
 
     def proc(self, *args, **kwargs):
         """Process a single time instance of data."""
@@ -107,14 +143,11 @@ class RFIThreshold2(ProcBlock):
         self.expected_dtype = np.complex64
 
     def _proc(self):
-        #print "\nRFI Threshold: Processing block of shape",self.current.shape
+        self.logger.debug("RFI Threshold: Processing block of shape %s" % str(self.current.shape))
 
-        #### Replace the code in this method with your own.
-        #### You need to produce a flags array that has shape (Nchannels, Nbaselines)
-        #### State can be stored in the class
+        if self.flags is None:
+            self.init_flags()
 
-        #self.current = np.atleast_1d(self.current)
-        flags = np.zeros(self.current.shape)
         for bl_index in range(self.current.shape[1]):
             spectral_data = np.abs(self.current[:,bl_index])
             spectral_data = np.atleast_1d(spectral_data)
@@ -142,8 +175,8 @@ class RFIThreshold2(ProcBlock):
             # Identify only positve outliers
             outliers = (spectral_data - filtered_data > self.n_sigma*estm_stdev)
 
-            flags[:,bl_index] = outliers
-        return np.packbits(flags.astype(np.int8))
+            self.flags[:,bl_index,4] = outliers
+             # set appropriate flag bit for detected RFI
 
 class RFIThreshold(ProcBlock):
     """Simple RFI flagging through thresholding.

@@ -38,7 +38,8 @@ hdf5_version = "2.0"
 mapping = {'xeng_raw':'/Data/correlator_data',
            'timestamp':'/Data/raw_timestamps'}
  # maps SPEAD element names to HDF5 paths
-timestamps = '/Data/timestamps'
+timestamps_dataset = '/Data/timestamps'
+flags_dataset = '/Markup/flags'
 correlator_map = '/MetaData/Configuration/Correlator/'
 observation_map = '/MetaData/Configuration/Observation/'
  # default path for things that are not mentioned above
@@ -107,6 +108,8 @@ class k7Capture(threading.Thread):
         #### Initialise processing blocks used
         self.scale = sp.Scale(self.data_scale_factor)
          # at this stage the scale factor is unknown
+        self.rfi = sp.RFIThreshold2()
+         # basic rfi thresholding flagger
         #### Done with blocks
         threading.Thread.__init__(self)
 
@@ -292,17 +295,23 @@ class k7Capture(threading.Thread):
                     datasets[name] = f[self.remap(name)]
                     datasets_index[name] = 0
                     if name == 'timestamp':
-                        f.create_dataset(timestamps,[1] + new_shape, maxshape=[None] + new_shape, dtype=np.float64)
+                        f.create_dataset(timestamps_dataset,[1] + new_shape, maxshape=[None] + new_shape, dtype=np.float64)
                         item._changed = False
+                    if name == 'xeng_raw':
+                        f.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
+                        if self.rfi is not None:
+                            f[flags_dataset].attrs['flag_types'] = self.rfi.flag_types
                     if not item._changed:
                         continue
-                     # if we built from and empty descriptor
+                     # if we built from an empty descriptor
                 else:
                     if not item._changed:
                         continue
                     f[self.remap(name)].resize(datasets_index[name]+1, axis=0)
                     if name == 'timestamp':
-                        f[timestamps].resize(datasets_index[name]+1, axis=0)
+                        f[timestamps_dataset].resize(datasets_index[name]+1, axis=0)
+                    if name == 'xeng_raw':
+                        f[flags_dataset].resize(datasets_index[name]+1, axis=0)
                 if self.sd_frame is not None and name.startswith("xeng_raw"):
                     sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
                     if sd_slots is None:
@@ -328,16 +337,32 @@ class k7Capture(threading.Thread):
                      # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
                     self.scale.proc()
                      # scale the data
-                    f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current[np.newaxis,...]
-                     # write data to file
+                    sp.ProcBlock.current = sp.ProcBlock.current.copy()
+                     # *** Dont delete this line ***
+                     # since array uses advanced selection (baseline_mask not contiguous) we may
+                     # have a changed the striding underneath with can prevent the array being viewed
+                     # as complex64. A copy resets the stride to its natural form and fixes this.
+                    sp.ProcBlock.current = sp.ProcBlock.current.view(np.complex64)[...,0]
+                     # temporary reshape to complex, eventually this will be done by Scale
+                     # (Once the final data format uses C64 instead of float32)
+                    self.rfi.init_flags()
+                     # begin flagging operations
+                    self.rfi.proc()
+                     # perform rfi thresholding
+                    flags = self.rfi.finalise_flags()
+                     # finalise flagging operations and return flag data to write
+                    f[flags_dataset][datasets_index[name]] = flags
+                     # write flags to file
+                    f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
+                     # write data to file (with temporary remap as mentioned above...)
                 else:
                     f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
                     try:
-                        f[timestamps][datasets_index[name]] = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
+                        f[timestamps_dataset][datasets_index[name]] = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
                          # insert derived timestamps
                     except KeyError:
-                        f[timestamps][datasets_index[name]] = -1.0
+                        f[timestamps_dataset][datasets_index[name]] = -1.0
                 datasets_index[name] += 1
                 item._changed = False
                   # we have dealt with this item so continue...
@@ -366,7 +391,7 @@ class k7Capture(threading.Thread):
                 except ValueError:
                     logger.warning("Failed to repack %s." % name)
         logger.info("Capture complete at %f" % time.time())
-        logger.debug("\nProcessing Blocks\n=================\n%s\n\n" % self.scale)
+        logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
         activitylogger.info("Capture complete")
 
