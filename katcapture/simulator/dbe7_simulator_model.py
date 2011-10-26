@@ -4,6 +4,7 @@ import time
 import sys
 import copy
 import numpy as np
+from .dbe7_roach_models import XEngines, FEngines
 from katcore.dev.base import ThreadedModel
 from katcp import Sensor
 import spead
@@ -14,26 +15,36 @@ class K7CorrelatorModel(ThreadedModel):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
         self._init_values()
         self._init_sensors()
+        self._init_roaches()
         self._init_spead()
         self._thread_paused = False
         self.data = self.generate_data()
 
+
+    def _init_roaches(self):
+        roach_x_names = self.config['servers_x'].replace(' ', '').split(',')
+        roach_f_names = self.config['servers_f'].replace(' ', '').split(',')
+        self._roach_x_engines = XEngines(roach_x_names)
+        self._roach_f_engines = FEngines(roach_f_names)
+        for s in self._roach_x_engines.get_sensors(): self.add_sensor(s)
+        for s in self._roach_f_engines.get_sensors(): self.add_sensor(s)
+        
     def _init_sensors(self):
-        self.sensors["sync-time"] = Sensor(
-            Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","",
-            default=0, params=[0,2**32])
-        self.sensors["tone_freq"] = Sensor(
-            Sensor.INTEGER, "tone_freq",
-            "The frequency of the injected tone in Hz.","",
-            default=0, params=[0,2**32])
-        self.sensors["destination_ip"] = Sensor(
+        self.add_sensor(Sensor(
+                Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","",
+                default=0, params=[0,2**32]))
+        self.add_sensor(Sensor(Sensor.INTEGER, "tone_freq",
+                               "The frequency of the injected tone in Hz.","",
+                               default=0, params=[0,2**32]))
+        dip_sens = Sensor(
             Sensor.STRING, "destination_ip",
             "The current destination address for data and metadata.","","")
-        self.sensors["destination_ip"].set_value(self.config['rx_meta_ip'])
-        msens = Sensor( Sensor.DISCRETE, 'mode', 'Current DBE operating mode', '',
-                        ['basic', 'ready', 'wbc', 'nbc'])
+        dip_sens.set_value(self.config['rx_meta_ip'])
+        self.add_sensor(dip_sens)
+        msens = Sensor(Sensor.DISCRETE, 'mode', 'Current DBE operating mode', '',
+                       ['basic', 'ready', 'wbc', 'nbc'])
         msens.set_value('ready', Sensor.NOMINAL, time.time())
-        self.sensors[msens.name] = msens
+        self.add_sensor(msens)
 
     def _init_values(self):
         self.labels = dict([[str(x)+y,'ant' + str(x+1)+{'x':'H','y':'V'}[y]]
@@ -432,4 +443,4 @@ class K7CorrelatorModel(ThreadedModel):
     def spead_data_descriptor_issue(self):
         mdata = copy.deepcopy(self._data_meta_descriptor)
         self.tx.send_heap(mdata)
- 
+
