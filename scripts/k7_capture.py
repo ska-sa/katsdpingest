@@ -380,16 +380,6 @@ class k7Capture(threading.Thread):
             f[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
              # we have generated a new baseline mask, so fix bls_ordering attribute...
 
-        logger.info("Repacking correlator metadata into attributes...")
-        for (name,idx) in datasets_index.iteritems():
-            if name not in mapping:
-                try:
-                    f[correlator_map].attrs[name] = f[self.remap(name)].value[-1]
-                    if idx == 1:
-                        del f[self.remap(name)]
-                         # throw away any history for single valued items...
-                except ValueError:
-                    logger.warning("Failed to repack %s." % name)
         logger.info("Capture complete at %f" % time.time())
         logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
