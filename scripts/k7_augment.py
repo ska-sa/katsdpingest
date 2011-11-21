@@ -307,7 +307,7 @@ rfe_sensors = ["rfe7_lo1_frequency"]
 beam_sensors = ["%s_target" % (options.dbe_name,)]
  # a list of sensor for beam 0
 
-sensors = {'ant':pointing_sensors, 'ped':pedestal_sensors, 'ped1':enviro_sensors, 'rfe7':rfe_sensors}
+sensors = {'ant':pointing_sensors+pedestal_sensors, 'anc':enviro_sensors, 'rfe7':rfe_sensors}
  # mapping from sensors to proxy
 
 sensors_iv = {"rfe3_rfe15_noise_pin_on":True, "rfe3_rfe15_noise_coupler_on":True, "activity":True, "target":True,"observer":True,"lock":True}
