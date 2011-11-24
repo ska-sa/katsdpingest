@@ -39,7 +39,7 @@ class TestModelMixin(object):
         self.maxDiff = None     # Make unittest print differences even
                                 # if they are large
         self.assertEqual(actual_description_dict, desired_description_dict)
-                
+
     def _get_sensor_key(self, sensor, key):
         key_fns = dict(
             name=lambda s: s.name,
@@ -52,7 +52,26 @@ class TestModelMixin(object):
         try: key_fn = key_fns[key]
         except KeyError, e: raise KeyError('Unknown sensor key: ' + e.message)
         return key_fn(sensor)
-    
+
+    def assert_sensors_value_conditions(self, actual_sensors, value_tests):
+        """Test that a list of Sensor objects (actual) match value_tests
+
+        Parameters
+        ----------
+        actual_sensors -- List of sensor objects
+        value_tests -- dict with
+           value_tests['sensor_name'] : Callable value test. Sould raise
+               AssertionError if the test fails
+        """
+
+        actual_sensor_dict = dict((s.name, s) for s in actual_sensors)
+        # Check that all the requested sensors are present
+        self.assertTrue(all(name in actual_sensor_dict
+                             for name in value_tests.keys()))
+
+        for name, test in value_tests.items():
+            test(actual_sensor_dict[name].value())
+        
 class test_Roach(unittest.TestCase, TestModelMixin):
     RoachClass = dbe7_roach_models.Roach
 
@@ -86,20 +105,86 @@ class test_FEngine(unittest.TestCase, TestModelMixin):
             name='roachy1234.3x.adc.overrange',
             description='adc overrange indicator',
             units='',
-            value=True,
+            value=False,
             status=Sensor.NOMINAL),
                                                         dict(
             type=Sensor.BOOLEAN,
             name='roachy1234.3y.adc.overrange',
             description='adc overrange indicator',
             units='',
-            value=True,
-            status=Sensor.NOMINAL))
+            value=False,
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.BOOLEAN,
+            name='roachy1234.3x.fft.overrange',
+            description='fft overrange indicator',
+            units='',
+            value=False,
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.BOOLEAN,
+            name='roachy1234.3y.fft.overrange',
+            description='fft overrange indicator',
+            units='',
+            value=False,
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.BOOLEAN,
+            name='roachy1234.3x.adc.terminated',
+            description='adc disabled',
+            units='',
+            value=False,
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.BOOLEAN,
+            name='roachy1234.3y.adc.terminated',
+            description='adc disabled',
+            units='',
+            value=False,
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.FLOAT,
+            name='roachy1234.3x.adc.power',
+            description='approximate input signal strength',
+            units='',
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.FLOAT,
+            name='roachy1234.3y.adc.power',
+            description='approximate input signal strength',
+            units='',
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.FLOAT,
+            name='roachy1234.3x.adc.amplitude',
+            description='approximate input signal strength',
+            units='',
+            status=Sensor.NOMINAL),
+                                                        dict(
+            type=Sensor.FLOAT,
+            name='roachy1234.3y.adc.amplitude',
+            description='approximate input signal strength',
+            units='',
+            status=Sensor.NOMINAL),
+        )
 
     def test_sensors(self):
         roach = dbe7_roach_models.FEngine('roachy1234', 3)
         self.assert_sensors_equal(roach.get_sensors(), self.expected_sensors)
+
+    def test_adc_sensor_values(self):
+        def test_ampl(val):
+            self.assertTrue(val > 0)
+        def test_power(val):
+            self.assertTrue(val < 0)
+
+        roach = dbe7_roach_models.FEngine('roachy1234', 3)
             
+        self.assert_sensors_value_conditions(roach.get_sensors(), {
+            'roachy1234.3x.adc.power': test_power,
+            'roachy1234.3y.adc.power': test_power,
+            'roachy1234.3x.adc.amplitude': test_ampl,
+            'roachy1234.3y.adc.amplitude': test_ampl})
         
 class test_XEngines(unittest.TestCase, TestModelMixin):
     roach_names = ('roach0123', 'roach3210')
@@ -143,15 +228,68 @@ class test_FEngines(test_XEngines):
                 name='%(roachname)s.%(roachnum)dx.adc.overrange',
                 description='adc overrange indicator',
                 units='',
-                value=True,
+                value=False,
                 status=Sensor.NOMINAL),
                           dict(
                 type=Sensor.BOOLEAN,
                 name='%(roachname)s.%(roachnum)dy.adc.overrange',
                 description='adc overrange indicator',
                 units='',
-                value=True,
-                status=Sensor.NOMINAL))
+                value=False,
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.BOOLEAN,
+                name='%(roachname)s.%(roachnum)dx.adc.terminated',
+                description='adc disabled',
+                units='',
+                value=False,
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.BOOLEAN,
+                name='%(roachname)s.%(roachnum)dy.adc.terminated',
+                description='adc disabled',
+                units='',
+                value=False,
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.BOOLEAN,
+                name='%(roachname)s.%(roachnum)dx.fft.overrange',
+                description='fft overrange indicator',
+                units='',
+                value=False,
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.BOOLEAN,
+                name='%(roachname)s.%(roachnum)dy.fft.overrange',
+                description='fft overrange indicator',
+                units='',
+                value=False,
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.FLOAT,
+                name='%(roachname)s.%(roachnum)dx.adc.amplitude',
+                description='approximate input signal strength',
+                units='',
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.FLOAT,
+                name='%(roachname)s.%(roachnum)dy.adc.amplitude',
+                description='approximate input signal strength',
+                units='',
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.FLOAT,
+                name='%(roachname)s.%(roachnum)dx.adc.power',
+                description='approximate input signal strength',
+                units='',
+                status=Sensor.NOMINAL),
+                          dict(
+                type=Sensor.FLOAT,
+                name='%(roachname)s.%(roachnum)dy.adc.power',
+                description='approximate input signal strength',
+                units='',
+                status=Sensor.NOMINAL)
+    )
 
         expected_sensors = super(test_FEngines, self).get_expected_sensors()
 

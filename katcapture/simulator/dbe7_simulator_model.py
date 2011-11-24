@@ -12,7 +12,6 @@ import spead
 class K7CorrelatorModel(ThreadedModel):
     def __init__(self, config_file, *names, **kwargs):
         self.config = self.read_config(config_file)
-        #import ipdb ; ipdb.set_trace()
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
         self._init_values()
         self._init_sensors()
@@ -23,8 +22,8 @@ class K7CorrelatorModel(ThreadedModel):
 
 
     def _init_roaches(self):
-        roach_x_names = self.config['servers_x'].replace(' ', '').split(',')
-        roach_f_names = self.config['servers_f'].replace(' ', '').split(',')
+        roach_x_names = [s.strip() for s in self.config['servers_x'].split(',')]
+        roach_f_names = [s.strip() for s in self.config['servers_f'].split(',')]
         self._roach_x_engines = XEngines(roach_x_names)
         self._roach_f_engines = FEngines(roach_f_names)
         for s in self._roach_x_engines.get_sensors(): self.add_sensor(s)
@@ -47,8 +46,11 @@ class K7CorrelatorModel(ThreadedModel):
         msens.set_value('ready', Sensor.NOMINAL, time.time())
         self.add_sensor(msens)
 
+        self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
+
         self.get_sensor('sync_time').set_value(self.sync_time, Sensor.NOMINAL)
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
+        self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
         
     def _init_values(self):
         self.labels = dict([[str(x)+y,'ant' + str(x+1)+{'x':'H','y':'V'}[y]]
