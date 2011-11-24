@@ -47,6 +47,9 @@ class K7CorrelatorModel(ThreadedModel):
         msens.set_value('ready', Sensor.NOMINAL, time.time())
         self.add_sensor(msens)
 
+        self.get_sensor('sync_time').set_value(self.sync_time, Sensor.NOMINAL)
+        self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
+        
     def _init_values(self):
         self.labels = dict([[str(x)+y,'ant' + str(x+1)+{'x':'H','y':'V'}[y]]
                             for x in range(8) for y in ['x','y']])
