@@ -12,6 +12,7 @@ import spead
 class K7CorrelatorModel(ThreadedModel):
     def __init__(self, config_file, *names, **kwargs):
         self.config = self.read_config(config_file)
+        #import ipdb ; ipdb.set_trace()
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
         self._init_values()
         self._init_sensors()
