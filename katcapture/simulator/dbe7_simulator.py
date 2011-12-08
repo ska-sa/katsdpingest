@@ -99,8 +99,9 @@ class SimulatorDeviceServer(Device):
     @return_reply(Str())
     def request_k7_accumulation_length(self, sock, period):
         """Set the accumulation length. (?k7-accumlation-length accumulation-period)"""
-        self._model.dump_period = 1000.0 / float(period)
-        smsg = "Set accumulation period to %fs" % float(period)/1000
+        self._model.dump_period = float(period) / 1000.0
+        time.sleep(self._model.dump_period)
+        smsg = "Set accumulation period to %f s" % self._model.dump_period
         activitylogger.info(smsg)
         return ("ok", smsg)
 
@@ -168,8 +169,9 @@ class SimulatorDeviceServer(Device):
         return ("fail","Input %s does not follow \d[x|y] form" % inp)
 
 
-    @return_reply(Str(), Float(optional=True))
-    def request_capture_start(self, sock, destination):
+    @request(Str(), Float(optional=True))
+    @return_reply(Str())
+    def request_capture_start(self, sock, destination, time_):
         """Start a capture (?capture-start k7 [time]). Mostly a dummy, does a spead_issue."""
         self._model.spead_issue()
         smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
