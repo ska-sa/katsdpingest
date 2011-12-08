@@ -10,6 +10,53 @@ activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
 logger = logging.getLogger(log_name)
 
+# Requests to nix:
+#
+# capture_destination -> Removed
+# cycle_nd -> Should go to sim interface, actually listen to rfe3 simulator?
+# fire_nd -> Should go to sim interface, actually listen to rfe3 simulator?
+# poco_accumulation_length -> k7_accumulation_length
+# poco_gain -> k7_gain
+# pointing_az -> Should go to sim interface, interaction with other simulators?
+# pointing_el -> Should go to sim interface, interaction with other simulators?
+# set_dump_rate -> Removed
+# spead_issue -> Removed
+# start_tx -> Should go to sim interface
+# stop_tx -> Should go to sim interface
+# test_target -> Should move to sim interface
+
+
+# Requests to add:
+#
+# capture_list
+# define
+# dict
+# dispatch
+# enable_sensors
+# get
+# job
+# k7_accumulation_length -> Done
+# k7_adc_snap_shot
+# k7_delay
+# k7_frequency_select
+# k7_gain -> Done
+# k7_snap_shot
+# log_record
+# notice
+# process
+# roach
+# sensor
+# set
+# sm
+# sync_now
+# system_info
+# version
+# version_list
+# watchannounce
+# xport
+
+
+
 class SimulatorDeviceServer(Device):
 
     VERSION_INFO = ("k7-simulator",0,1)
@@ -41,14 +88,6 @@ class SimulatorDeviceServer(Device):
         return ('ok', smsg)
 
     @return_reply(Str())
-    def request_spead_issue(self, sock, msg):
-        """Issue the SPEAD meta packets..."""
-        self._model.spead_issue()
-        smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
-        activitylogger.info(smsg)
-        return ("ok", smsg)
-
-    @return_reply(Str())
     def request_start_tx(self, sock, msg):
         """Start the data stream."""
         self._model._thread_paused = False
@@ -56,21 +95,12 @@ class SimulatorDeviceServer(Device):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
-    @request(Int())
-    @return_reply(Str())
-    def request_set_dump_rate(self, sock, rate):
-        """Set the dump rate in Hz. Default is 1."""
-        self._model.dump_period = 1.0 / int(rate)
-        smsg = "Dump rate set to %i Hz" % rate
-        activitylogger.info(smsg)
-        return ("ok", smsg)
-
     @request(Str())
     @return_reply(Str())
-    def request_poco_accumulation_length(self, sock, period):
-        """Set the period in ms. Default is 1000."""
+    def request_k7_accumulation_length(self, sock, period):
+        """Set the accumulation length. (?k7-accumlation-length accumulation-period)"""
         self._model.dump_period = 1000.0 / float(period)
-        smsg = "Dump period set to %s ms" % period
+        smsg = "Set accumulation period to %fs" % float(period)/1000
         activitylogger.info(smsg)
         return ("ok", smsg)
 
@@ -90,8 +120,8 @@ class SimulatorDeviceServer(Device):
 
     @request(Str(), Str())
     @return_reply(Str())
-    def request_poco_gain(self, sock, msg1, msg2):
-        """Dummy for compatibility."""
+    def request_k7_gain(self, sock, msg1, msg2):
+        """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
         return ("ok","OK")
 
     @request(Float(),Float(),Float(optional=True,default=20.0))
@@ -137,15 +167,10 @@ class SimulatorDeviceServer(Device):
             return ("ok","Label set.")
         return ("fail","Input %s does not follow \d[x|y] form" % inp)
 
-    @request(Str(),Str(),Int())
-    @return_reply(Str())
-    def request_capture_destination(self, sock, destination, ip, port):
-        """Dummy command to enable ff compatibility."""
-        return ("ok","Destination OK")
 
-    @return_reply(Str(optional=True))
+    @return_reply(Str(), Float(optional=True))
     def request_capture_start(self, sock, destination):
-        """For compatibility with dbe_proxy. Same as spead_issue."""
+        """Start a capture (?capture-start k7 [time]). Mostly a dummy, does a spead_issue."""
         self._model.spead_issue()
         smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
         activitylogger.info("k7simulator: %s" % smsg)
