@@ -185,6 +185,10 @@ class test_FEngine(unittest.TestCase, TestModelMixin):
             'roachy1234.3y.adc.power': test_power,
             'roachy1234.3x.adc.amplitude': test_ampl,
             'roachy1234.3y.adc.amplitude': test_ampl})
+
+    def test_channels(self):
+        roach = dbe7_roach_models.FEngine('roachum5', 7)
+        self.assertEqual(roach.channels, ('7x', '7y'))
         
 class test_XEngines(unittest.TestCase, TestModelMixin):
     roach_names = ('roach0123', 'roach3210')
@@ -305,3 +309,10 @@ class test_FEngines(test_XEngines):
         f_engines = dbe7_roach_models.FEngines(self.roach_names)
         self.assert_sensors_equal(f_engines.get_sensors(),
                                   self.get_expected_sensors())
+
+
+    def test_channels(self):
+        f_engines = dbe7_roach_models.FEngines(('r1', 'r2'))
+        self.assertEqual(f_engines.get_channels(), ['0x', '0y', '1x', '1y'])
+        self.assertTrue(f_engines.is_channel('1x'))
+        self.assertFalse(f_engines.is_channel('5y'))

@@ -28,7 +28,8 @@ basic_roach_sensors = (dict(
         initial_status=Sensor.NOMINAL),
                        )
                                               
-# Extra sensor templates for DBE7 roach f-engines
+# Extra sensor templates for DBE7 roach f-engines, excluding
+# per-channel sensors
 f_engine_extra_sensors = (dict(
         name_template='%(roachname)s.fpga.synchronised',
         type=Sensor.BOOLEAN,
@@ -37,92 +38,53 @@ f_engine_extra_sensors = (dict(
         params=None,
         initial_value=True,
         initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dx.adc.overrange',
-        type=Sensor.BOOLEAN,
-        description='adc overrange indicator',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dy.adc.overrange',
-        type=Sensor.BOOLEAN,
-        description='adc overrange indicator',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dx.adc.terminated',
-        type=Sensor.BOOLEAN,
-        description='adc disabled',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dy.adc.terminated',
-        type=Sensor.BOOLEAN,
-        description='adc disabled',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                                  dict(
-        name_template='%(roachname)s.%(channel)dx.fft.overrange',
-        type=Sensor.BOOLEAN,
-        description='fft overrange indicator',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dy.fft.overrange',
-        type=Sensor.BOOLEAN,
-        description='fft overrange indicator',
-        units='',
-        params=None,
-        initial_value=False,
-        initial_status=Sensor.NOMINAL),
-                                  dict(
-        name_template='%(roachname)s.%(channel)dx.adc.power',
-        type=Sensor.FLOAT,
-        description='approximate input signal strength',
-        units='',
-        params=[-1e9, 0],
-        initial_value=-23.3,
-        initial_status=Sensor.NOMINAL),
-                                  dict(
-        name_template='%(roachname)s.%(channel)dy.adc.power',
-        type=Sensor.FLOAT,
-        description='approximate input signal strength',
-        units='',
-        params=[-1e9, 0],
-        initial_value=-23.3,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dx.adc.amplitude',
-        type=Sensor.FLOAT,
-        description='approximate input signal strength',
-        units='',
-        params=[0, 1],
-        initial_value=0.1,
-        initial_status=Sensor.NOMINAL),
-                          dict(
-        name_template='%(roachname)s.%(channel)dy.adc.amplitude',
-        type=Sensor.FLOAT,
-        description='approximate input signal strength',
-        units='',
-        params=[0, 1],
-        initial_value=0.1,
-        initial_status=Sensor.NOMINAL),
-
                           )
+
+f_engine_channel_sensors = (dict(
+        name_template='%(roachname)s.%(channel)s.adc.overrange',
+        type=Sensor.BOOLEAN,
+        description='adc overrange indicator',
+        units='',
+        params=None,
+        initial_value=False,
+        initial_status=Sensor.NOMINAL),
+                          dict(
+        name_template='%(roachname)s.%(channel)s.adc.terminated',
+        type=Sensor.BOOLEAN,
+        description='adc disabled',
+        units='',
+        params=None,
+        initial_value=False,
+        initial_status=Sensor.NOMINAL),
+                                  dict(
+        name_template='%(roachname)s.%(channel)s.fft.overrange',
+        type=Sensor.BOOLEAN,
+        description='fft overrange indicator',
+        units='',
+        params=None,
+        initial_value=False,
+        initial_status=Sensor.NOMINAL),
+                                  dict(
+        name_template='%(roachname)s.%(channel)s.adc.power',
+        type=Sensor.FLOAT,
+        description='approximate input signal strength',
+        units='',
+        params=[-1e9, 0],
+        initial_value=-23.3,
+        initial_status=Sensor.NOMINAL),
+                          dict(
+        name_template='%(roachname)s.%(channel)s.adc.amplitude',
+        type=Sensor.FLOAT,
+        description='approximate input signal strength',
+        units='',
+        params=[0, 1],
+        initial_value=0.1,
+        initial_status=Sensor.NOMINAL),
+        )
         
 
 class Roach(SimpleModel):
-    def __init__(self, name):
+    def __init__(self, name, *args, **kwargs):
         super(Roach, self).__init__()
         self.name = name
         self._init_sensors()
@@ -143,17 +105,29 @@ class Roach(SimpleModel):
 class XEngine(Roach): pass
 
 class FEngine(Roach):
+    CHANNEL_POLARIZATIONS = ('x', 'y')
+    
     def __init__(self, name, channel_number):
         self.channel_number = channel_number
-        super(FEngine, self).__init__(name)
+        self.channels = tuple('%d%s' % (channel_number, pol)
+                              for pol in self.CHANNEL_POLARIZATIONS)
+        super(FEngine, self).__init__(name, channel_number)
         
     def _init_sensors(self):
         super(FEngine, self)._init_sensors()
         for sensor_def in f_engine_extra_sensors:
             sname = sensor_def['name_template'] % {
-                'roachname': self.name, 'channel': self.channel_number}
+                'roachname': self.name, }
             self.add_sensor(self._setup_sensor(sname, sensor_def))
-            
+
+        for sensor_def in f_engine_channel_sensors:
+            for chan in self.channels:
+                sname = sensor_def['name_template'] % {
+                    'roachname': self.name,
+                    'channel': chan}
+                self.add_sensor(self._setup_sensor(sname, sensor_def))
+
+                
 class RoachEngines(SimpleModel):
     RoachClass = Roach
 
@@ -176,8 +150,19 @@ class XEngines(RoachEngines):
 class FEngines(RoachEngines):
     RoachClass = FEngine
 
+    def __init__(self, roach_names):
+        self.channels = set()
+        super(FEngines, self).__init__(roach_names)
+
     def _init_roaches(self):
         for channel_no, roach_name in enumerate(self.roach_names):
             roach = self.RoachClass(roach_name, channel_no)
             self._roaches[roach_name] = roach
             for s in roach.get_sensors(): self.add_sensor(s)
+            for c in roach.channels: self.channels.add(c)
+
+    def get_channels(self):
+        return sorted(self.channels)
+
+    def is_channel(self, chan):
+        return chan in self.channels

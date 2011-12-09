@@ -2,12 +2,18 @@ from __future__ import with_statement
 
 import time
 import sys
+import logging
 import copy
 import numpy as np
 from .dbe7_roach_models import XEngines, FEngines
 from katcore.dev.base import ThreadedModel
 from katcp import Sensor
 import spead
+import random
+
+activitylogger = logging.getLogger('activity')
+log_name = 'kat.k7simulator'
+logger = logging.getLogger(log_name)
 
 class K7CorrelatorModel(ThreadedModel):
     def __init__(self, config_file, *names, **kwargs):
@@ -31,7 +37,7 @@ class K7CorrelatorModel(ThreadedModel):
         
     def _init_sensors(self):
         self.add_sensor(Sensor(
-                Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","",
+                Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","seconds",
                 default=0, params=[0,2**32]))
         self.add_sensor(Sensor(Sensor.INTEGER, "tone_freq",
                                "The frequency of the injected tone in Hz.","",
@@ -45,9 +51,14 @@ class K7CorrelatorModel(ThreadedModel):
                        ['basic', 'ready', 'wbc', 'nbc'])
         msens.set_value('ready', Sensor.NOMINAL, time.time())
         self.add_sensor(msens)
-
+        nbc_f_sens = Sensor(Sensor.INTEGER, 'nbc.frequency.current',
+                            'current selected center frequency', 'Hz',
+                            [0, 387.5*1000000])
+        nbc_f_sens.set_value(0, Sensor.UNKNOWN)
+        self.add_sensor(nbc_f_sens)
+    
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
-
+        
         self.get_sensor('sync_time').set_value(self.sync_time, Sensor.NOMINAL)
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
         self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
@@ -84,9 +95,10 @@ class K7CorrelatorModel(ThreadedModel):
         config = {}
         try:
             f = open(config_file)
-        except IOError:
-            print "Specified config file (%s) not found. Unable to start simulator." % config_file
-            sys.exit(0)
+        except IOError, e:
+            raise IOError("Specified config file (%s) could not be read. "
+                          "Unable to start simulator. Read error: %s" % (
+                              config_file, e))
         for s in f.readlines():
             try:
                 if s.index(' = ') > 0:
@@ -144,6 +156,42 @@ class K7CorrelatorModel(ThreadedModel):
         order2 = [o for o in order2 if o not in order1]
         return tuple([o for o in order1 + order2])
 
+    def get_adc_snap_shot(self, when, level, inputs):
+        """Return fake ADC snapshot values for inputs
+
+        Parameters
+        ==========
+
+        when -- 'pps' or 'now', see doc K0000-2006V1-04 for intended effect
+        level -- ignored, see doc K0000-2006V1-04 for intended effect
+        inputs -- List of DBE inputs to provide ADC snapshot for, e.g.
+          ('0x', '5y')
+
+        Return Values
+        =============
+
+        Generator of tuples
+
+        (input, timestamp, values)
+
+        for each input requested, with
+
+        input -- name of the input (as in input parameter `inputs`)
+        timestamp -- timestamp in ms since Unix epoch for snapshot values
+        values -- list of adc snapshop values
+        """
+        for inp in inputs:
+            if not self._roach_f_engines.is_channel(inp):
+                raise ValueError( 'Unknown input %s. Valid inputs are %s.' % (
+                    inp, ','.join(self._roach_f_engines.get_channels())) )
+        no_samples = 16
+        if when == 'pps':
+            time.sleep(random.random()) # Sleep for up to 1s
+        for inp in inputs:
+            yield (inp, int(time.time()*1000),
+                   [random.randint(-127, 127) for i in range(no_samples)])
+
+        
     def run(self):
         while not self._stopEvent.isSet():
             if not self._thread_paused:
@@ -450,3 +498,38 @@ class K7CorrelatorModel(ThreadedModel):
         mdata = copy.deepcopy(self._data_meta_descriptor)
         self.tx.send_heap(mdata)
 
+    def set_mode(self, mode, progress_callback=None):
+        """Set DBE mode, can be one of 'wbc' or 'nbc'
+
+        Parameters
+        ==========
+
+        mode -- 'nbc' or 'wbc', the desired mode
+        progress_callback -- optional callback that is called with a string
+            describing the 'progress' of mode changing.
+
+        """
+        mode_delay = 10         # Mode change delay in seconds
+        valid_modes = ('nbc', 'wbc')
+
+        if progress_callback is None: progress_callback = lambda x: x
+        if mode not in valid_modes:
+            raise ValueError('Mode should be one of ' + ','.join(
+                "'%s'" %m for m in valid_modes))
+        if mode == self.get_sensor('mode').value():
+            progress_callback('Correlator already in mode %s' % mode)
+            return
+
+        logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
+    
+        for i in range(mode_delay):
+            time.sleep(1)
+            smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
+            progress_callback(smsg)
+
+        if mode == 'wbc':
+            nbc_f_sens = self.get_sensor('nbc.frequency.current')
+            nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
+
+        self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
+        

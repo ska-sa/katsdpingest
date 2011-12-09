@@ -133,7 +133,10 @@ class TestCorrelatorData(unittest.TestCase):
         itemgroup = spead.ItemGroup()
         meta_req = ['n_bls', 'n_chans', 'n_accs', 'xeng_raw',
                     'timestamp', 'scale_factor_timestamp', 'sync_time']
-        self.katcp_req('spead-issue')
+        (message, informs) = self.katcp_req('capture-start', 'k7')
+        if not message.reply_ok():
+            raise RuntimeError('Error with katcp command')
+        
         for i, heap in enumerate(spead.iterheaps(self.k7_simulator_speadrx)):
             itemgroup.update(heap)
             speadkeys = itemgroup.keys()

@@ -4,7 +4,13 @@ import sys
 
 from katcp import Sensor, Message
 from katcore.dev.base import Device
-from katcp.kattypes import request, return_reply, Str, Int, Float
+# XXX TODO
+# Evil hack to make kattypes support variable number of
+# arguments. Should be ported to katcp when we start working on it
+import monkeypatch_kattypes
+
+from katcp.kattypes import request, return_reply
+from katcp.kattypes import Str, Int, Float, Discrete, Timestamp
 
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
@@ -28,32 +34,32 @@ logger = logging.getLogger(log_name)
 
 # Requests to add:
 #
-# capture_list
-# define
-# dict
-# dispatch
-# enable_sensors
-# get
-# job
+# capture_list -> Done
+# define -> leave?
+# dict -> leave?
+# dispatch -> leave?
+# enable_sensors -> leave?
+# get -> leave?
+# job -> leave?
 # k7_accumulation_length -> Done
-# k7_adc_snap_shot
-# k7_delay
-# k7_frequency_select
+# k7_adc_snap_shot -> Done
+# k7_delay -> Done, stubbily
+# k7_frequency_select TODO
 # k7_gain -> Done
-# k7_snap_shot
-# log_record
-# notice
-# process
-# roach
-# sensor
-# set
-# sm
-# sync_now
-# system_info
-# version
-# version_list
-# watchannounce
-# xport
+# k7_snap_shot TODO
+# log_record -> leave?
+# notice -> leave?
+# process -> leave?
+# roach -> leave?
+# sensor -> leave?
+# set -> leave?
+# sm -> leave?
+# sync_now -> leave?
+# system_info -> leave?
+# version -> TODO
+# version_list -> TODO
+# watchannounce -> leave?
+# xport -> leave?
 
 
 
@@ -70,21 +76,13 @@ class SimulatorDeviceServer(Device):
         Currently a dummy operation in simulator, just pauses to test
         proxy timeouts and changes mode sensor.
         """
-        valid_modes = ('nbc', 'wbc')
-        mode_delay = 10         # Mode change delay in seconds
-        if mode not in valid_modes:
-            smsg = 'Invalid correlator mode selected. Valid modes are: %s' %(
-                ','.join(valid_modes))
-            activitylogger.error(smsg)
-            return ('fail', smsg)
-        logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
-        for i in range(mode_delay):
-            time.sleep(1)
-            smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
+        
+        def progress_callback(smsg):
             self.log.info(smsg)
-        self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
+        self._model.set_mode(mode, progress_callback)
         smsg = 'Correlator mode changed to ' + mode
         activitylogger.info(smsg)
+        
         return ('ok', smsg)
 
     @return_reply(Str())
@@ -105,6 +103,57 @@ class SimulatorDeviceServer(Device):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
+    @request(Discrete(('pps', 'now')), Int(min=0, max=127), Str(multiple=True),
+             include_msg=True)
+    @return_reply()
+    def request_k7_adc_snap_shot(self, sock, req_msg, when, level, *inputs):
+        """retrieve an adc snapshot (?k7-adc-snap-shot [pps|now] threshold input+)
+
+        The simulator returns some dummy values.
+        """
+        for input, timestamp, values in self._model.get_adc_snap_shot(
+                when, level, inputs):
+            imsg = Message.inform(req_msg.name, input, '%d' % timestamp, *(
+                "%d" % v for v in values))
+            self.reply_inform(sock, imsg, req_msg)
+            
+        return ('ok', )
+
+    @request(Str(), Timestamp(), Timestamp(), Float(), Float(), Float())
+    @return_reply()
+    def request_k7_delay(self, sock, board_input, time_, delay,
+                         delay_rate, fringe_offset, fringe_rate):
+        """set the delay and fringe correction (?k7-delay board-input time delay-value delay-rate fringe-offset fringe-rate)
+
+        Stubby simulator dummy for compatibility
+        """
+        return('ok', )
+        
+
+    # @request()
+    # @return_reply()
+    # def request_k7_frequency_select(self, sock):
+    #     """select a frequency for fine channelisation (?k7-frequency-select center-frequency)
+
+    #     Frequency in Hertz. The actual centre frequency will be
+    #     quantized to the closest available frequency bin, and is
+    #     returned (also Hz).
+
+    #     Has no effect in the simulator
+
+    #     """
+        
+    
+    #     return ('ok', )
+    
+    @request(Str(), Str())
+    @return_reply(Str())
+    def request_k7_gain(self, sock, input, gains):
+        """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
+        # TODO Check that valid inputs were specified
+        # TODO Check format of 'gains'. Talk to DBE team?
+        return ("ok","OK")
+
     @request(Float(optional=True, default=5.0))
     @return_reply(Str())
     def request_fire_nd(self, sock, duration):
@@ -119,11 +168,6 @@ class SimulatorDeviceServer(Device):
         self._model.nd_duty_cycle = duty_cycle
         return("ok","Duty cycle firing enabled")
 
-    @request(Str(), Str())
-    @return_reply(Str())
-    def request_k7_gain(self, sock, msg1, msg2):
-        """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
-        return ("ok","OK")
 
     @request(Float(),Float(),Float(optional=True,default=20.0))
     @return_reply(Str())
@@ -187,6 +231,16 @@ class SimulatorDeviceServer(Device):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
+    @return_reply()
+    def request_capture_list(self, sock, req_msg):
+        """list available data streams (?capture-list)"""
+        smsg = 'k7 %s %d' % (self._model.config['rx_meta_ip'],
+                             self._model.config['rx_udp_port'])
+        self.reply_inform(
+            sock, Message.inform(req_msg.name, smsg), req_msg)
+        return ("ok", )
+
+    
     @return_reply(Str())
     def request_stop_tx(self, sock, msg):
         """Stop the data stream."""
