@@ -34,7 +34,7 @@ class K7CorrelatorModel(ThreadedModel):
         self._roach_f_engines = FEngines(roach_f_names)
         for s in self._roach_x_engines.get_sensors(): self.add_sensor(s)
         for s in self._roach_f_engines.get_sensors(): self.add_sensor(s)
-        
+
     def _init_sensors(self):
         self.add_sensor(Sensor(
                 Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","seconds",
@@ -56,13 +56,13 @@ class K7CorrelatorModel(ThreadedModel):
                             [0, 387.5*1000000])
         nbc_f_sens.set_value(0, Sensor.UNKNOWN)
         self.add_sensor(nbc_f_sens)
-    
+
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
-        
+
         self.get_sensor('sync_time').set_value(self.sync_time, Sensor.NOMINAL)
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
         self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
-        
+
     def _init_values(self):
         self.labels = dict([[str(x)+y,'ant' + str(x+1)+{'x':'H','y':'V'}[y]]
                             for x in range(8) for y in ['x','y']])
@@ -130,6 +130,7 @@ class K7CorrelatorModel(ThreadedModel):
 
     def start(self, *names, **kwargs):
         super(K7CorrelatorModel, self).start(*names, **kwargs)
+        self.set_mode('wbc')
         self.spead_issue()
 
     def update_bls_ordering(self):
@@ -191,7 +192,27 @@ class K7CorrelatorModel(ThreadedModel):
             yield (inp, int(time.time()*1000),
                    [random.randint(-127, 127) for i in range(no_samples)])
 
-        
+    def k7_frequency_select(self, centre_frequency):
+        """Set the nbc centre frequency to the closest nbc channel
+
+        Returns the actual centre frequency used. Will fail if the correlator is
+        not in narrow-band (nbc) mode
+        """
+        # TODO Should see if we can get this from actual DBE code/config
+        min_f0 = 0 ; max_f0 = 400e6 ; d_f0 = 12.5e6
+        assert(centre_frequency >= min_f0)
+        assert(centre_frequency <= max_f0)
+        mode = self.get_sensor('mode').value()
+        if mode != 'nbc':
+            raise RuntimeError('Correlator must be in nbc mode to set nbc '
+                               'centre frequency. Correleator is currently in '
+                               '%s mode' % mode)
+
+        f0 = int(round(centre_frequency/d_f0)*d_f0)
+        self.get_sensor('nbc.frequency.current').set_value(
+            f0, Sensor.NOMINAL, time.time())
+        return f0
+
     def run(self):
         while not self._stopEvent.isSet():
             if not self._thread_paused:
@@ -521,7 +542,7 @@ class K7CorrelatorModel(ThreadedModel):
             return
 
         logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
-    
+
         for i in range(mode_delay):
             time.sleep(1)
             smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
@@ -532,4 +553,4 @@ class K7CorrelatorModel(ThreadedModel):
             nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
 
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
-        
+

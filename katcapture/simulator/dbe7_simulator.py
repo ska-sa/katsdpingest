@@ -76,13 +76,13 @@ class SimulatorDeviceServer(Device):
         Currently a dummy operation in simulator, just pauses to test
         proxy timeouts and changes mode sensor.
         """
-        
+
         def progress_callback(smsg):
             self.log.info(smsg)
         self._model.set_mode(mode, progress_callback)
         smsg = 'Correlator mode changed to ' + mode
         activitylogger.info(smsg)
-        
+
         return ('ok', smsg)
 
     @return_reply(Str())
@@ -116,7 +116,7 @@ class SimulatorDeviceServer(Device):
             imsg = Message.inform(req_msg.name, input, '%d' % timestamp, *(
                 "%d" % v for v in values))
             self.reply_inform(sock, imsg, req_msg)
-            
+
         return ('ok', )
 
     @request(Str(), Timestamp(), Timestamp(), Float(), Float(), Float())
@@ -128,24 +128,23 @@ class SimulatorDeviceServer(Device):
         Stubby simulator dummy for compatibility
         """
         return('ok', )
-        
 
-    # @request()
-    # @return_reply()
-    # def request_k7_frequency_select(self, sock):
-    #     """select a frequency for fine channelisation (?k7-frequency-select center-frequency)
 
-    #     Frequency in Hertz. The actual centre frequency will be
-    #     quantized to the closest available frequency bin, and is
-    #     returned (also Hz).
+    @request(Int(min=0, max=400000000))
+    @return_reply(Int())
+    def request_k7_frequency_select(self, sock, centre_frequency):
+        """select a frequency for fine channelisation (?k7-frequency-select center-frequency)
 
-    #     Has no effect in the simulator
+        Frequency in Hertz. The actual centre frequency will be
+        quantized to the closest available frequency bin, and is
+        returned (also Hz).
 
-    #     """
-        
-    
-    #     return ('ok', )
-    
+        Has no effect in the simulator
+
+        """
+        actual_centre_frequency = self._model.k7_frequency_select(centre_frequency)
+        return ('ok', actual_centre_frequency)
+
     @request(Str(), Str())
     @return_reply(Str())
     def request_k7_gain(self, sock, input, gains):
@@ -240,7 +239,7 @@ class SimulatorDeviceServer(Device):
             sock, Message.inform(req_msg.name, smsg), req_msg)
         return ("ok", )
 
-    
+
     @return_reply(Str())
     def request_stop_tx(self, sock, msg):
         """Stop the data stream."""

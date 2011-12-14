@@ -67,11 +67,11 @@ class TestCorrelatorData(unittest.TestCase):
     def katcp_req(self, *req):
         return self.k7_simulator_katcp.blocking_request(
             katcp.Message.request(*req))
-        
+
     def tearDown(self):
         # Stop the spead client
         self.k7_simulator_speadrx.stop()
-        
+
         # Stop the katcp client
         self.k7_simulator_katcp.stop()
         self.k7_simulator_katcp.join()
@@ -81,7 +81,7 @@ class TestCorrelatorData(unittest.TestCase):
         time.sleep(0.1)         # Give it a chance to exit gracefully
         self.k7_simulator_proc.kill()
         self.k7_simulator_logfile.close()
-        
+
     def test_data(self):
         # Set test target at az 165, el 45 deg with flux of 200
         self.katcp_req('test-target', '165.', '45.', '200.')
@@ -90,7 +90,7 @@ class TestCorrelatorData(unittest.TestCase):
         self.katcp_req('pointing-el', '80.')
         away_group = self.get_spead_itemgroup(time_after=time.time())
         self.verify_shapes(away_group)
-        
+
         # Point 'antenna' at the test target
         self.katcp_req('pointing-az', '165.')
         self.katcp_req('pointing-el', '45.')
@@ -107,7 +107,7 @@ class TestCorrelatorData(unittest.TestCase):
         target_1000_max = np.max(np.abs(self.get_xeng(target_group_1000)).flat)
         self.assertTrue(target_200_max > 2*away_max)
         self.assertTrue(target_1000_max > 4*target_200_max)
-        
+
     def get_xeng(self, group):
         xeng_raw = group['xeng_raw']
         xeng = np.zeros(xeng_raw.shape[0:2], dtype=np.complex64)
@@ -127,7 +127,7 @@ class TestCorrelatorData(unittest.TestCase):
         self.assertEqual(group['n_bls'], n_bls)
         self.assertEqual(group['xeng_raw'].shape, (n_chans, n_bls, 2))
 
-        
+
     def get_spead_itemgroup(self, time_after=None):
         max_spead_iters = 10
         itemgroup = spead.ItemGroup()
@@ -136,7 +136,7 @@ class TestCorrelatorData(unittest.TestCase):
         (message, informs) = self.katcp_req('capture-start', 'k7')
         if not message.reply_ok():
             raise RuntimeError('Error with katcp command')
-        
+
         for i, heap in enumerate(spead.iterheaps(self.k7_simulator_speadrx)):
             itemgroup.update(heap)
             speadkeys = itemgroup.keys()
