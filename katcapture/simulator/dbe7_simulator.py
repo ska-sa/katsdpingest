@@ -62,7 +62,6 @@ logger = logging.getLogger(log_name)
 # xport -> leave?
 
 
-
 class SimulatorDeviceServer(Device):
 
     VERSION_INFO = ("k7-simulator",0,1)
