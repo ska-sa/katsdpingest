@@ -23,6 +23,7 @@ def retry(fn, exception, timeout=1, sleep_interval=0.025):
     return retval
 
 
+
 class TestCorrelatorData(unittest.TestCase):
     def setUp(self):
         # simulator host and port
@@ -32,8 +33,8 @@ class TestCorrelatorData(unittest.TestCase):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             s.connect((device_host, device_port))
-            raise Exception('Service already running on port %d. Perhaps run kat-stop?')
-        except: pass
+            raise RuntimeError('Service already running on port %d. Perhaps run kat-stop?')
+        except socket.error: pass
         self.k7_simulator_logfile = open('k7_simulator.log', 'w')
         #Find the k7_simulator executable
         k7_simulator_file = os.path.join(
@@ -41,6 +42,10 @@ class TestCorrelatorData(unittest.TestCase):
         k7_conf_file = os.path.join(
             os.path.dirname(__file__), '..', '..',
             'katcapture', 'conf', 'k7-local.conf')
+        # k7_conf_file = os.path.join(
+        #     os.path.dirname(__file__), '..', '..',
+        #     'katcapture', 'conf', 'config-wbc')
+
         # Set up a process running the k7_simulator
         self.k7_simulator_proc = subprocess.Popen(
             [k7_simulator_file, '-p', '%d' % device_port, '-c', k7_conf_file],

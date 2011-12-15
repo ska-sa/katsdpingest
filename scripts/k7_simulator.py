@@ -67,7 +67,7 @@ if __name__ == '__main__':
     activitylogger = logging.getLogger('activity')
     activitylogger.setLevel(logging.INFO)
     activitylogger.info("Activity logging started")
-    
+
     restart_queue = Queue.Queue()
     model = K7CorrelatorModel(opts.config)
     server = SimulatorDeviceServer(model, opts.host, opts.port)
