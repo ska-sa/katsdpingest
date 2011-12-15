@@ -58,7 +58,7 @@ class K7CorrelatorModel(ThreadedModel):
         self.add_sensor(nbc_f_sens)
 
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
-
+        
         self.get_sensor('sync_time').set_value(self.sync_time, Sensor.NOMINAL)
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
         self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
@@ -178,6 +178,7 @@ class K7CorrelatorModel(ThreadedModel):
         for each input requested, with
 
         input -- name of the input (as in input parameter `inputs`)
+        input -- name of the input (as in input parameter `inputs`
         timestamp -- timestamp in ms since Unix epoch for snapshot values
         values -- list of adc snapshop values
         """
