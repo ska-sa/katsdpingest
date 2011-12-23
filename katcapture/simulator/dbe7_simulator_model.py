@@ -3,9 +3,11 @@ from __future__ import with_statement
 import time
 import sys
 import logging
+import threading
 import numpy as np
 from .dbe7_roach_models import XEngines, FEngines
 from .dbe7_spead_model import DBE7SpeadData
+from .model_correlator_conf import ModelCorrConf
 from katcore.dev.base import ThreadedModel
 from katcp import Sensor
 import random
@@ -14,24 +16,57 @@ activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
 logger = logging.getLogger(log_name)
 
+class AddLockSettersGetters(object):
+    class add(object):
+        def __init__(self, initial_value=None):
+            self.initial_value = initial_value
+
+    def __init__(self, lock_name):
+        self.lock_name = lock_name
+
+    def make_getter(self, name):
+        def getter(self):
+            return getattr(self, name)
+
+        return getter
+
+    def make_setter(self, name):
+        lock_name = self.lock_name
+        def setter(self, val):
+            with getattr(self, lock_name):
+                setattr(self, name, val)
+
+        return setter
+
+    def __call__(self, cls):
+        for name in dir(cls):
+            attr = getattr(cls, name)
+            if isinstance(attr, self.add):
+                assert (name.startswith('_'))
+                setattr(cls, name, attr.initial_value)
+                setattr(cls, 'set'+name, self.make_setter(name))
+                setattr(cls, 'get'+name, self.make_getter(name))
+        return cls
+
+@AddLockSettersGetters('_data_lock')
 class K7CorrelatorModel(ThreadedModel):
     def __init__(self, config_file, *names, **kwargs):
-        self.config = self.read_config(config_file)
+        self.config = ModelCorrConf(config_file)
         self._spead_model = DBE7SpeadData(self.config)
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
+        # Lock that should be held whenever something that could
+        # effect data generation and associated SPEAD meta data is
+        # modified. For instance, while changing the dump period.
+        self._data_lock = threading.Lock()
         self._init_values()
         self._init_sensors()
         self._init_roaches()
-        self._init_spead()
         self._thread_paused = False
         self.data = self.generate_data()
 
-
     def _init_roaches(self):
-        roach_x_names = [s.strip() for s in self.config['servers_x'].split(',')]
-        roach_f_names = [s.strip() for s in self.config['servers_f'].split(',')]
-        self._roach_x_engines = XEngines(roach_x_names)
-        self._roach_f_engines = FEngines(roach_f_names)
+        self._roach_x_engines = XEngines(self.config['servers_x'])
+        self._roach_f_engines = FEngines(self.config['servers_f'])
         for s in self._roach_x_engines.get_sensors(): self.add_sensor(s)
         for s in self._roach_f_engines.get_sensors(): self.add_sensor(s)
 
@@ -64,65 +99,30 @@ class K7CorrelatorModel(ThreadedModel):
 
     def _init_values(self):
         self.adc_value = 0
-        self.dump_period = 1.0
+        self.set_dump_period(1.0)
         self.sample_rate = 800e6
         self.tone_freq = 302e6
         self.noise_diode = 0
         self.nd_duty_cycle = 0
         self._nd_cycles = 0
-        self.target_az = 0
-        self.target_el = 0
-        self.target_flux = 0
-        self.test_az = 0
-        self.test_el = 0
+        self.set_target_az(0)
+        self.set_target_el(0)
+        self.set_target_flux(0)
+        self.set_test_az(0)
+        self.set_test_el(0)
         self.nd = 0
         self.multiplier = 100
 
-    def _init_spead(self):
-        self._spead_model.init_spead()
-
-    def read_config(self, config_file):
-        config = {}
-        try:
-            f = open(config_file)
-        except IOError, e:
-            raise IOError("Specified config file (%s) could not be read. "
-                          "Unable to start simulator. Read error: %s" % (
-                              config_file, e))
-        for s in f.readlines():
-            try:
-                if s.index(' = ') > 0:
-                    (k,v) = s[:-1].split(' = ')
-                    try:
-                        config[k] = int(v)
-                    except ValueError:
-                        config[k] = v
-            except ValueError:
-                pass
-        f.close()
-        config['xeng_sample_bits']=32
-        config['n_xfpgas']=len(config['servers_x'])
-        config['n_xeng']=config['x_per_fpga']*config['n_xfpgas']
-        config['n_bls']=config['n_ants']*(config['n_ants']+1)/2 * config['n_stokes']
-        config['n_chans_per_x']=config['n_chans']/config['n_xeng']
-        config['bandwidth']=config['adc_clk']/2.
-        config['center_freq']=config['adc_clk']/4.
-        config['pcnt_scale_factor']=config['bandwidth']/config['xeng_acc_len']
-        config['spead_timestamp_scale_factor']=(config['pcnt_scale_factor'] /
-                                                config['n_chans'])
-        config['10gbe_ip']=12
-        config['n_accs']=config['acc_len']*config['xeng_acc_len']
-        config['int_time']= float(config['n_chans'])*(
-            config['n_accs']/config['bandwidth'])
-        config['pols']=['x','y']
-        config['n_pols'] = 2
-        return config
+    _target_az = AddLockSettersGetters.add()
+    _target_el = AddLockSettersGetters.add()
+    _target_flux = AddLockSettersGetters.add()
+    _test_az = AddLockSettersGetters.add()
+    _test_el = AddLockSettersGetters.add()
 
     def start(self, *names, **kwargs):
         self.set_mode('wbc', mode_delay=0)
         self.spead_issue()
         super(K7CorrelatorModel, self).start(*names, **kwargs)
-
 
     def get_adc_snap_shot(self, when, level, inputs):
         """Return fake ADC snapshot values for inputs
@@ -187,13 +187,14 @@ class K7CorrelatorModel(ThreadedModel):
                 self.send_dump()
                 status = ("\rSending correlator dump at %s "
                           "(dump period: %f s, multiplier: %i, noise_diode: %s)" %
-                          (time.ctime(), self.dump_period, self.multiplier,
+                          (time.ctime(), self._dump_period, self.multiplier,
                            (self.nd > 0 and 'On' or 'Off')))
                 sys.stdout.write(status)
                 sys.stdout.flush()
             st = time.time()
-            self.data = self.generate_data()
-            time.sleep(max(self.dump_period - (time.time() - st), 0.))
+            with self._data_lock:
+                self.data = self.generate_data()
+            time.sleep(max(self._dump_period - (time.time() - st), 0.))
         self.send_stop()
         print "Correlator tx halted."
 
@@ -204,10 +205,11 @@ class K7CorrelatorModel(ThreadedModel):
         return np.exp(-(0.5/(0.374*0.374)) * (x*x + y*y))
 
     def generate_data(self):
-        source_value = self.target_flux * self.gaussian(
-            self.target_az - self.test_az, self.target_el - self.test_el)
+        source_value = self.get_target_flux() * self.gaussian(
+            self.get_target_az() - self.get_test_az(),
+            self.get_target_el() - self.get_test_el())
          # generate a flux contribution from the synthetic source (if any)
-        tsys_elev_value = 25 - np.log(self.test_el + 1) * 5
+        tsys_elev_value = 25 - np.log(self.get_test_el() + 1) * 5
         self.nd = 0
         if self.noise_diode > 0:
             self.noise_diode -= 1
@@ -251,23 +253,31 @@ class K7CorrelatorModel(ThreadedModel):
         return (pol1+pol1,pol2+pol2,pol1+pol2,pol2+pol1)
 
     def spead_issue(self):
-        print "Issuing SPEAD meta data to %s\n" % self.config['rx_meta_ip']
-        self._spead_model.spead_issue()
-
-
+        with self._data_lock:
+            print "Issuing SPEAD meta data to %s\n" % self.config['rx_meta_ip_str']
+            self._spead_model.spead_issue()
 
     def send_dump(self):
         """Send a single correlator dump..."""
-        data_ig = self._spead_model.data_ig
-        tx = self._spead_model.tx
-        data_ig['timestamp'] = int(
-            (time.time() - self._spead_model.sync_time) *
-            self.config['spead_timestamp_scale_factor'])
-        data_ig['xeng_raw'] = self.data
-        tx.send_heap(data_ig.get_heap())
+        with self._data_lock:
+            data_ig = self._spead_model.data_ig
+            tx = self._spead_model.tx
+            data_ig['timestamp'] = int(
+                (time.time() - self._spead_model.sync_time) *
+                self.config['spead_timestamp_scale_factor'])
+            data_ig['xeng_raw'] = self.data
+            tx.send_heap(data_ig.get_heap())
 
     def send_stop(self):
         self._spead_model.send_stop()
+
+    def set_dump_period(self, dump_period):
+        with self._data_lock:
+            self._dump_period = dump_period
+            self._spead_model.set_acc_time(dump_period)
+
+    def get_dump_period(self):
+        return self._dump_period
 
     def set_mode(self, mode, progress_callback=None, mode_delay=10):
         """Set DBE mode, can be one of 'wbc' or 'nbc'
@@ -304,4 +314,14 @@ class K7CorrelatorModel(ThreadedModel):
             nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
 
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
+
+    @property
+    def labels(self):
+        """Build a dict of input channel names -> antenna labels"""
+        return dict(zip(self.config.get_unmapped_channel_names(),
+                        self.config['antenna_mapping']))
+
+    def set_antenna_mapping(self, channel, ant_name):
+        """Set the antenna name of `channel` (e.g. 0x, 3y) to `ant_name`"""
+        self.config.set_antenna_mapping(channel, ant_name)
 

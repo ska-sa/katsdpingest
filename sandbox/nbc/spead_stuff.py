@@ -1,15 +1,10 @@
 import logging
-import copy
-import spead
-import time
 import numpy
+import spead
 
-class DBE7SpeadData(object):
+class FakeCorrelator(object):
     """
-    DBE7 spead data configuration stealing some code from
-    corr.corr_functions.Correlator (spead_*issue, get_bl_order,
-    adc_lru_mapping_get, get_input_location, is_wideband, is_narrowband,
-    map_input_to_ant
+    Simplified fake correlator stealing some code from corr.corr_functions.Correlator
     """
 
     def __init__(self, config, logger=None):
@@ -17,7 +12,7 @@ class DBE7SpeadData(object):
         self.MODE_NB = 1
         self.MODE_DDC = 2
         if logger is None:
-            self.syslogger = logging.getLogger('kat.k7simulator')
+            self.syslogger = logging.getLogger('corrsys')
         else:
             self.syslogger = logger
         self.config = config
@@ -25,27 +20,6 @@ class DBE7SpeadData(object):
         self.xsrvs = self.config['servers_x']
         self.fsrvs = self.config['servers_f']
         self.allsrvs = self.fsrvs + self.xsrvs
-        # Bogus initial accumulation time. Should be set by user with
-        # set_acc_time(). This _acc_time is used to short-circuit the
-        # "real" DBE calculation using the number of integrations,
-        # etc.
-        self.set_acc_time(0)
-        self.init_spead()
-
-    def init_spead(self):
-        self.tx=spead.Transmitter(spead.TransportUDPtx(
-                self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
-        self.data_ig=spead.ItemGroup()
-        self._data_meta_descriptor = None
-        self.init_data_descriptor()
-
-    @property
-    def sync_time(self):
-        return self.config['sync_time']
-
-    @property
-    def bls_ordering(self):
-        return self.get_bl_order()
 
     def get_bl_order(self):
         """Return the order of baseline data output by a CASPER correlator X engine."""
@@ -86,9 +60,10 @@ class DBE7SpeadData(object):
         feng_input = input_n%self.config['f_inputs_per_fpga']
         return (ffpga_n,xfpga_n,fxaui_n,xxaui_n,feng_input)
 
+
     def spead_labelling_issue(self):
-        tx=self.tx
-        ig=self.data_ig
+        tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
+        ig=spead.ItemGroup()
 #        ig.add_item(name="bls_ordering",id=0x100C,
 #            description="The output ordering of the baselines from each X engine. Packed as a pair of unsigned integers, ant1,ant2 where ant1 < ant2.",
 #            shape=[self.config['n_bls'],2],fmt=spead.mkfmt(('u',16)),
@@ -115,7 +90,7 @@ class DBE7SpeadData(object):
     def spead_static_meta_issue(self):
         """ Issues the SPEAD metadata packets containing the payload and options descriptors and unpack sequences."""
         #tested ok corr-0.5.0 2010-08-07
-        tx=self.tx
+        tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
         ig=spead.ItemGroup()
 
         ig.add_item(name="adc_clk",id=0x1007,
@@ -152,7 +127,7 @@ class DBE7SpeadData(object):
             description="The analogue bandwidth of the digitally processed signal in Hz.",
             shape=[],fmt=spead.mkfmt(('f',64)),
             init_val=self.config['bandwidth'])
-
+        
         #1015/1016 are taken (see time_metadata_issue below)
 
         if self.is_wideband():
@@ -252,7 +227,7 @@ class DBE7SpeadData(object):
     def spead_time_meta_issue(self):
         """Issues a SPEAD packet to notify the receiver that we've resync'd the system, acc len has changed etc."""
         #tested ok corr-0.5.0 2010-08-07
-        tx=self.tx
+        tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
         ig=spead.ItemGroup()
 
         ig.add_item(name="n_accs",id=0x1015,
@@ -281,7 +256,7 @@ class DBE7SpeadData(object):
 
     def spead_eq_meta_issue(self):
         """Issues a SPEAD heap for the RF gain and EQ settings."""
-        tx=self.tx
+        tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
         ig=spead.ItemGroup()
 
         if self.config['adc_type'] == 'katadc':
@@ -310,13 +285,11 @@ class DBE7SpeadData(object):
         self.syslogger.info("Issued SPEAD EQ metadata to %s:%i."%(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
 
 
-    def init_data_descriptor(self):
-        """ Initialises the SPEAD data descriptors for the HW 10GbE output.
-        To  issue the descriptor to enable receivers to decode the
-        data, calls spead_data_descriptor_issue
-        """
+    def spead_data_descriptor_issue(self):
+        """ Issues the SPEAD data descriptors for the HW 10GbE output, to enable receivers to decode the data."""
         #tested ok corr-0.5.0 2010-08-07
-        ig=self.data_ig
+        tx=spead.Transmitter(spead.TransportUDPtx(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
+        ig=spead.ItemGroup()
 
         if self.config['xeng_sample_bits'] != 32: raise RuntimeError("Invalid bitwidth of X engine output. You specified %i, but I'm hardcoded for 32."%self.config['xeng_sample_bits'])
 
@@ -343,11 +316,7 @@ class DBE7SpeadData(object):
                     description="Raw data for xengine %i out of %i. Frequency channels are split amongst xengines. Frequencies are distributed to xengines in a round-robin fashion, starting with engine 0. Data from all X engines must thus be combed or interleaved together to get continuous frequencies. Each xengine calculates all baselines (n_bls given by SPEAD ID 0x100B) for a given frequency channel. For a given baseline, -SPEAD ID 0x1040- stokes parameters are calculated (nominally 4 since xengines are natively dual-polarisation; software remapping is required for single-baseline designs). Each stokes parameter consists of a complex number (two real and imaginary unsigned integers)."%(x,self.config['n_xeng']),
                     ndarray=(numpy.dtype(numpy.int32),(self.config['n_chans']/self.config['n_xeng'],self.config['n_bls'],2)))
 
-        self._data_meta_descriptor = self.data_ig.get_heap()
-
-    def spead_data_descriptor_issue(self):
-        mdata = copy.deepcopy(self._data_meta_descriptor)
-        self.tx.send_heap(mdata)
+        tx.send_heap(ig.get_heap())
         self.syslogger.info("Issued SPEAD data descriptor to %s:%i."%(self.config['rx_meta_ip_str'],self.config['rx_udp_port']))
 
 
@@ -357,8 +326,6 @@ class DBE7SpeadData(object):
         self.spead_static_meta_issue()
         self.spead_time_meta_issue()
         self.spead_eq_meta_issue()
-
-    spead_issue = spead_issue_all         # For compatibility with other simulator code
 
     def is_wideband(self):
         return self.config['mode'] == self.MODE_WB
@@ -387,19 +354,6 @@ class DBE7SpeadData(object):
         return 8
 
     def acc_time_get(self):
-        ## Two lines below is how the DBE really does it. We will hack it
-        # n_accs = self.acc_n_get()
-        # return float(self.config['n_chans'] * n_accs) / self.config['bandwidth']
-        ##
-        return self._acc_time
+        n_accs = self.acc_n_get()
+        return float(self.config['n_chans'] * n_accs) / self.config['bandwidth']
 
-    def set_acc_time(self, acc_time):
-        """Set the accumulation time in seconds
-
-        This accumulation time is used to short-circuit the 'real' DBE
-        calculation using the number of integrations, etc.
-        """
-        self._acc_time = acc_time
-
-    def send_stop(self):
-        self.tx.send_halt()

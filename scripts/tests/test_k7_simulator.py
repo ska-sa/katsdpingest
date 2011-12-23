@@ -22,10 +22,8 @@ def retry(fn, exception, timeout=1, sleep_interval=0.025):
         break
     return retval
 
-
-
-class TestCorrelatorData(unittest.TestCase):
-    def setUp(self):
+class SimulatorSetup(object):
+    def setup_simulator_process(self, extra_sim_parms=[]):
         # simulator host and port
         device_host = '127.0.0.1' ; device_port = 2041
         # Test that there is not already a service listening on that
@@ -35,25 +33,27 @@ class TestCorrelatorData(unittest.TestCase):
             s.connect((device_host, device_port))
             raise RuntimeError('Service already running on port %d. Perhaps run kat-stop?')
         except socket.error: pass
-        self.k7_simulator_logfile = open('k7_simulator.log', 'w')
+        self.k7_simulator_logfile = open('k7_simulator.log', 'w+')
         #Find the k7_simulator executable
         k7_simulator_file = os.path.join(
             os.path.dirname(__file__), '..', 'k7_simulator.py')
-        k7_conf_file = os.path.join(
-            os.path.dirname(__file__), '..', '..',
-            'katcapture', 'conf', 'k7-local.conf')
         # k7_conf_file = os.path.join(
         #     os.path.dirname(__file__), '..', '..',
-        #     'katcapture', 'conf', 'config-wbc')
+        #     'katcapture', 'conf', 'k7-local.conf')
+        k7_conf_file = os.path.join(
+            os.path.dirname(__file__), '..', '..',
+            'katcapture', 'conf', 'config-wbc')
 
         # Set up a process running the k7_simulator
         self.k7_simulator_proc = subprocess.Popen(
-            [k7_simulator_file, '-p', '%d' % device_port, '-c', k7_conf_file],
+            [k7_simulator_file, '-p', '%d' %
+             device_port, '-c', k7_conf_file] + extra_sim_parms,
             stdout=self.k7_simulator_logfile, stderr=self.k7_simulator_logfile)
 
         # Set up katcp client
         self.k7_simulator_katcp = katcp.BlockingClient(device_host, device_port)
         self.k7_simulator_katcp.start()
+        self.k7_simulator_katcp.wait_connected(1.)
         # Wait for katcp client to become alive
         help_reply, help_informs = retry(
             lambda : self.k7_simulator_katcp.blocking_request(
@@ -66,16 +66,16 @@ class TestCorrelatorData(unittest.TestCase):
 
 
         # Set up spead client
-        self.k7_simulator_speadrx = spead.TransportUDPrx(
+        self.speadrx = spead.TransportUDPrx(
             spead_udp_port, pkt_count=1024, buffer_size=51200000)
 
     def katcp_req(self, *req):
         return self.k7_simulator_katcp.blocking_request(
             katcp.Message.request(*req))
 
-    def tearDown(self):
+    def tear_down_simulator(self):
         # Stop the spead client
-        self.k7_simulator_speadrx.stop()
+        self.speadrx.stop()
 
         # Stop the katcp client
         self.k7_simulator_katcp.stop()
@@ -87,23 +87,33 @@ class TestCorrelatorData(unittest.TestCase):
         self.k7_simulator_proc.kill()
         self.k7_simulator_logfile.close()
 
+class TestCorrelatorData(unittest.TestCase):
+    def setUp(self):
+        self.sim = SimulatorSetup()
+        self.sim.setup_simulator_process()
+
+    def tearDown(self):
+        self.sim.tear_down_simulator()
+
     def test_data(self):
+        # Set dump rate to 100ms to speed stuff up
+        self.sim.katcp_req('k7-accumulation-length', 100)
         # Set test target at az 165, el 45 deg with flux of 200
-        self.katcp_req('test-target', '165.', '45.', '200.')
+        self.sim.katcp_req('test-target', '165.', '45.', '200.')
         # Point 'antenna' away from test target
-        self.katcp_req('pointing-az', '280.')
-        self.katcp_req('pointing-el', '80.')
+        self.sim.katcp_req('pointing-az', '280.')
+        self.sim.katcp_req('pointing-el', '80.')
         away_group = self.get_spead_itemgroup(time_after=time.time())
         self.verify_shapes(away_group)
 
         # Point 'antenna' at the test target
-        self.katcp_req('pointing-az', '165.')
-        self.katcp_req('pointing-el', '45.')
+        self.sim.katcp_req('pointing-az', '165.')
+        self.sim.katcp_req('pointing-el', '45.')
         target_group_200 = self.get_spead_itemgroup(time_after=time.time())
         self.verify_shapes(target_group_200)
 
         # Increase flux of test target to 1000
-        self.katcp_req('test-target', '165.', '45.', '1000.')
+        self.sim.katcp_req('test-target', '165.', '45.', '1000.')
         target_group_1000 = self.get_spead_itemgroup(time_after=time.time())
         self.verify_shapes(target_group_1000)
 
@@ -123,7 +133,7 @@ class TestCorrelatorData(unittest.TestCase):
 
     def verify_shapes(self, group):
         n_stokes = 4            # Number of stokes polarisation parameters
-        n_chans = 512           # Number of frequency channels
+        n_chans = 1024           # Number of wbc frequency channels
         self.assertEqual(group['n_chans'], n_chans)
         n_ants = group['n_ants']
         self.assertEqual(n_ants, 8) # Number of antennas supported by DBE7
@@ -134,15 +144,17 @@ class TestCorrelatorData(unittest.TestCase):
 
 
     def get_spead_itemgroup(self, time_after=None):
-        max_spead_iters = 10
+        max_spead_iters = 50
         itemgroup = spead.ItemGroup()
         meta_req = ['n_bls', 'n_chans', 'n_accs', 'xeng_raw',
                     'timestamp', 'scale_factor_timestamp', 'sync_time']
-        (message, informs) = self.katcp_req('capture-start', 'k7')
-        if not message.reply_ok():
-            raise RuntimeError('Error with katcp command')
-
-        for i, heap in enumerate(spead.iterheaps(self.k7_simulator_speadrx)):
+        def issue():
+            (message, informs) = self.sim.katcp_req('capture-start', 'k7')
+            if not message.reply_ok():
+                raise RuntimeError('Error with katcp command')
+        issue()
+        for i, heap in enumerate(spead.iterheaps(self.sim.speadrx)):
+            if i == 0: issue()
             itemgroup.update(heap)
             speadkeys = itemgroup.keys()
             if all(
@@ -152,10 +164,19 @@ class TestCorrelatorData(unittest.TestCase):
                 timestamp = (itemgroup['timestamp'] /
                              itemgroup['scale_factor_timestamp'] +
                              itemgroup['sync_time'])
-                if timestamp > time_after + itemgroup['int_time']:
+                min_timestamp = time_after + itemgroup['int_time']
+                if timestamp > min_timestamp:
                     break
+                if i > max_spead_iters:
+                    raise Exception(
+                        'Timestamp still too old by %fs in %d iterations' % (
+                            min_timestamp - timestamp, i))
             if i > max_spead_iters:
                 raise Exception(
                     'Unable to obtain required spead data in %d iterations'
                     % max_spead_iters)
         return itemgroup
+
+class TestCorrelatorLabeling(unittest.TestCase):
+    def test_labels(self):
+        pass

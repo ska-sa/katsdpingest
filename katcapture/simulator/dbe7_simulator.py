@@ -96,9 +96,10 @@ class SimulatorDeviceServer(Device):
     @return_reply(Str())
     def request_k7_accumulation_length(self, sock, period):
         """Set the accumulation length. (?k7-accumlation-length accumulation-period)"""
-        self._model.dump_period = float(period) / 1000.0
-        time.sleep(self._model.dump_period)
-        smsg = "Set accumulation period to %f s" % self._model.dump_period
+        self._model.set_dump_period(float(period) / 1000.0)
+        dump_period = self._model.get_dump_period()
+        time.sleep(dump_period)
+        smsg = "Set accumulation period to %f s" % dump_period
         activitylogger.info(smsg)
         return ("ok", smsg)
 
@@ -171,9 +172,9 @@ class SimulatorDeviceServer(Device):
     @return_reply(Str())
     def request_test_target(self, sock, az, el, flux):
         """Add a test target to the simulator. ?test-target <az> <el> [<flux_scale>]"""
-        self._model.target_az = az
-        self._model.target_el = el
-        self._model.target_flux = flux
+        self._model.set_target_az(az)
+        self._model.set_target_el(el)
+        self._model.set_target_flux(flux)
         smsg = "Target set to (%f, %f, %f)" % (az, el, flux)
         activitylogger.info(smsg)
         return ("ok", smsg)
@@ -182,15 +183,19 @@ class SimulatorDeviceServer(Device):
     @return_reply(Str())
     def request_pointing_el(self, sock, el):
         """Sets the current simulator elevation pointing."""
-        self._model.test_el = el
-        return ("ok","Elevation set to %f" % el)
+        self._model.set_test_el(el)
+        smsg = "Pointing elevation set to %f" % el
+        logger.info(smsg)
+        return ("ok", smsg)
 
     @request(Float())
     @return_reply(Str())
     def request_pointing_az(self, sock, az):
         """Sets the current simulator azimuth pointing."""
-        self._model.test_az = az
-        return ("ok","Azimuth set to %f" % az)
+        self._model.set_test_az(az)
+        smsg = "Pointing azimuth set to %f" % az
+        logger.info(smsg)
+        return ("ok", smsg)
 
 
     @return_reply(Str())
@@ -198,17 +203,18 @@ class SimulatorDeviceServer(Device):
         """Label the specified input with a string."""
         if not msg.arguments:
             for (inp,label) in sorted(self._model.labels.iteritems()):
-                self.reply_inform(sock, Message.inform("label-input", label, inp,'roachXXXXXX'), msg)
+                self.reply_inform(sock, Message.inform("label-input", label, inp), msg)
             return ("ok",str(len(self._model.labels)))
         else:
             inp = msg.arguments[0]
             label = msg.arguments[1]
 
-        if self._model.labels.has_key(inp):
-            self._model.labels[inp] = label
-            self._model.update_bls_ordering()
-            return ("ok","Label set.")
-        return ("fail","Input %s does not follow \d[x|y] form" % inp)
+        try:
+            self._model.set_antenna_mapping(inp, label)
+            return ('ok', label)
+        except ValueError:
+            return ("fail","Unknown input %s. Should be one of %s." % (
+                inp, ', '.join(self._model.config.get_unmapped_channel_names())) )
 
 
     @request(Str(), Float(optional=True))
@@ -216,7 +222,7 @@ class SimulatorDeviceServer(Device):
     def request_capture_start(self, sock, destination, time_):
         """Start a capture (?capture-start k7 [time]). Mostly a dummy, does a spead_issue."""
         self._model.spead_issue()
-        smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip'])
+        smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip_str'])
         activitylogger.info("k7simulator: %s" % smsg)
         return ("ok",smsg)
 

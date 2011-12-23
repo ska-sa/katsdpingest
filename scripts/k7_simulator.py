@@ -16,7 +16,7 @@ from katcore.dev.base import SimpleModel
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    default_conf = resource_filename("katcapture","") + "/conf/k7-local.conf"
+    default_conf = resource_filename("katcapture","") + "/conf/config-wbc"
     parser.add_option('-c', '--config',
                       dest='config',
                       type="string",
