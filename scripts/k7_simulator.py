@@ -50,8 +50,19 @@ def parse_opts(argv):
                       metavar='LOGGING',
                       help='level to use for basic logging or name of logging '
                       'configuration file; default is /log/log.<SITENAME>.conf')
+    parser.add_option('--standalone',
+                      dest='standalone',
+                      default=False,
+                      action='store_true',
+                      help='Standalone mode. Sets default antenna channel '
+                      'mappings and does a spead issue at startup')
+
     return parser.parse_args(argv)
 
+def setup_standalone(server, model):
+    for i in range(1,8):
+        for ch,pol in zip(['x', 'y'], ['h', 'v']):
+            model.set_antenna_mapping('%d%s' %(i, ch), 'ant%d%s' %(i, pol))
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
@@ -71,6 +82,9 @@ if __name__ == '__main__':
     restart_queue = Queue.Queue()
     model = K7CorrelatorModel(opts.config)
     server = SimulatorDeviceServer(model, opts.host, opts.port)
+    if opts.standalone:
+        activitylogger.info('Doing standalone mode setup')
+        setup_standalone(server, model)
     server.set_restart_queue(restart_queue)
     server.start()
     smsg = "Started k7-capture server."

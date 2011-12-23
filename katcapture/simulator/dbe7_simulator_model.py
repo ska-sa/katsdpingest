@@ -50,6 +50,9 @@ class AddLockSettersGetters(object):
 
 @AddLockSettersGetters('_data_lock')
 class K7CorrelatorModel(ThreadedModel):
+    # In standalone mode a default antenna mapping is set up. The
+    # standalone variable needs to be set before start() is called
+    standalone = False
     def __init__(self, config_file, *names, **kwargs):
         self.config = ModelCorrConf(config_file)
         self._spead_model = DBE7SpeadData(self.config)
