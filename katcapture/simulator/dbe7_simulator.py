@@ -254,3 +254,22 @@ class SimulatorDeviceServer(Device):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
+    def issue_device_changed(self, change):
+        """
+        Issue a device-changed inform to all clients.
+
+        Parameter change indicates what part of the device has changed. e.g.
+
+        issue_device_changed('sensor-list')
+
+        will result in the inform
+
+        #device-changed sensor-list.
+
+        The change description is tested for validity; currently only
+        'sensor-list' is considered valid.
+        """
+        if not change in ['sensor-list']:
+            raise ValueError('Unknown change notification %s' % change)
+        msg = Message.inform('device-changed', change)
+        self.mass_inform(msg)
