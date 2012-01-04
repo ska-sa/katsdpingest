@@ -428,6 +428,7 @@ class CaptureDeviceServer(DeviceServer):
                 self._my_sensors[sensor].set_value(0)
              # take care of basic defaults to ensure sensor status is 'nominal'
         self._my_sensors["label"].set_value("no_thread")
+        self._my_sensors["status"].set_value("init")
 
     @return_reply(Str())
     def request_sd_metadata_issue(self, sock, msg):
@@ -620,6 +621,7 @@ class CaptureDeviceServer(DeviceServer):
         finally:
             self.current_file = None
         smsg = "File renamed to %s" % (output_file)
+        self._my_sensors["capture-active"].set_value(0)
         activitylogger.info(smsg)
         return ("ok", smsg)
 
