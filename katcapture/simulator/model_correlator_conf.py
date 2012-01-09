@@ -22,6 +22,10 @@ class ModelCorrConf(upstream_correlator_conf.CorrConf):
         else:
             return self.config[item]
 
+    def read_mode(self):
+        # Override upstream method that tries to read non-existant files
+        pass
+
     def _get_sync_time(self):
         return self._sync_time
 
