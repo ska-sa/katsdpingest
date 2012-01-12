@@ -159,10 +159,10 @@ def get_sensor_data(sensor, start_time, end_time, dither=1, initial_value=False)
     end_time = end_time + dither
     initial_data = [[], [], []]
     if initial_value:
-        initial_data = sensor.get_stored_history(select=False,start_time=start_time,end_time=start_time, last_known=True)
+        initial_data = sensor.get_stored_history(select=False,start_seconds=start_time,end_seconds=start_time, last_known=True)
         print "Initial value fetch:",initial_data
     stime = time.time()
-    data = sensor.get_stored_history(select=False,start_time=start_time,end_time=end_time)
+    data = sensor.get_stored_history(select=False,start_seconds=start_time,end_seconds=end_time)
     print "Retrieved data of length",len(data[1]),"in",time.time()-stime,"s"
     return np.rec.fromarrays([initial_data[0] + data[0], initial_data[1] + data[1], initial_data[2] + data[2]], names='timestamp, value, status')
 
@@ -215,7 +215,7 @@ def create_group(f, name):
 
 def get_lo1_frequency(start_time):
     try:
-        return kat.sensors.rfe7_rfe7_lo1_frequency.get_stored_history(select=False, include_central=True, start_time=start_time, end_time=start_time, last_known=True)[1][0]
+        return kat.sensors.rfe7_rfe7_lo1_frequency.get_stored_history(select=False, include_central=True, start_seconds=start_time, end_seconds=start_time, last_known=True)[1][0]
     except Exception:
         section_reports['lo1_frequency'] = "Warning: Failed to get a stored value for lo1 frequency. Defaulting to 6022000000.0"
         return 6022000000.0
