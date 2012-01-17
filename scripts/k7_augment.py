@@ -215,7 +215,7 @@ def create_group(f, name):
 
 def get_lo1_frequency(start_time):
     try:
-        return kat.sensors.rfe7_rfe7_lo1_frequency.get_stored_history(select=False, include_central=True, start_seconds=start_time, end_seconds=start_time, last_known=True)[1][0]
+        return kat.sensors.rfe7_rfe7_lo1_frequency.get_stored_history(select=False, start_seconds=start_time, end_seconds=start_time, last_known=True)[1][0]
     except Exception:
         section_reports['lo1_frequency'] = "Warning: Failed to get a stored value for lo1 frequency. Defaulting to 6022000000.0"
         return 6022000000.0
@@ -264,7 +264,6 @@ def print_tb():
 parser = OptionParser()
 parser.add_option("-b", "--batch", action="store_true", default=False, help="If set augment will process all unaugmented files in the directory specified by -d, and then continue to monitor this directory. Any new files that get created will be augmented in sequence.")
 parser.add_option("-c", "--config", dest='config', default='/var/kat/katconfig', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/katconfig]')
-parser.add_option("-u", "--central_monitor_url", default=None, help="Override the central monitor url in the configuration with the one specified.")
 parser.add_option("-d", "--dir", default=katuilib.defaults.kat_directories["data"], help="Process all unaugmented files in the specified directory. [default=%default]")
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
 parser.add_option("-s", "--system", default="systems/local.conf", help="System configuration file to use. [default=%default]")
@@ -332,7 +331,7 @@ activitylogger.info(smsg)
 
  # build an kat object for history gathering purposes
 print "Creating KAT connections..."
-kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR, central_monitor_url=options.central_monitor_url)
+kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
  # check that we have basic connectivity (i.e. two antennas and pedestals)
 time.sleep(2)
 while not kat.rfe7.katcpobj.is_connected():
