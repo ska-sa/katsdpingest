@@ -66,7 +66,7 @@ def small_build(system):
 def parse_opts(argv):
     parser = optparse.OptionParser()
     parser.add_option('--include_cfg', action='store_true', default=False, help='pull configuration information via katcp from the configuration server')
-    parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma seperated list. [default=%default]')
+    parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and metadata on')
     parser.add_option('-s', '--system', default='systems/local.conf', help='system configuration file to use. [default=%default]')
