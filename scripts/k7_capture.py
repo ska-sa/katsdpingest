@@ -79,7 +79,7 @@ def parse_opts(argv):
     return parser.parse_args(argv)
 
 class k7Capture(threading.Thread):
-    def __init__(self, data_port, cfg, pkt_sensor, status_sensor):
+    def __init__(self, data_port, cfg, my_sensors):
         self.data_port = data_port
         self.data_scale_factor = 1.0
         self.acc_scale = True
@@ -87,8 +87,9 @@ class k7Capture(threading.Thread):
         self._label_idx = 0
         self._log_idx = 0
         self._current_hdf5 = None
-        self.pkt_sensor = pkt_sensor
-        self.status_sensor = status_sensor
+        self._my_sensors = my_sensors
+        self.pkt_sensor = self._my_sensors['packets-captured']
+        self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self.fname = None
         self._sd_metadata = None
@@ -256,15 +257,22 @@ class k7Capture(threading.Thread):
                     self.meta[name] = ig[name]
                     if name == 'center_freq' and self.center_freq == 0:
                         self.center_freq = self.meta[name]
+                        self._my_sensors["spead-center-freq"].set_value(self.meta[name])
                     if name == 'int_time' and self.int_time == 1:
                         self.int_time = self.meta[name]
+                        self._my_sensors["spead-dump-period"].set_value(self.meta[name])
                     if name == 'n_accs':
                         self.data_scale_factor = np.float32(ig[name])
                         self.scale.scale_factor = self.data_scale_factor
+                        self._my_sensors["spead-accum-per-dump"].set_value(self.meta[name])
                         logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
                 if name in meta_required:
                     self.meta[name] = ig[name]
                     meta_required.remove(name)
+                    if name == 'n_chans':
+                        self._my_sensors["spead-num-chans"].set_value(self.meta[name])
+                    if name == 'n_bls':
+                        self._my_sensors["spead-num-bls"].set_value(self.meta[name])
                     if not meta_required:
                         self.set_baseline_mask()
                          # we first set the baseline mask in order to have the correct number of baselines
@@ -418,12 +426,21 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["script-status"] = Sensor(Sensor.STRING, "script-status", "Current status reported by running script", "")
         self._my_sensors["script-starttime"] = Sensor(Sensor.STRING, "script-starttime", "Start time of current script", "")
         self._my_sensors["script-endtime"] = Sensor(Sensor.STRING, "script-endtime", "End time of current script", "")
+        self._my_sensors["spead-num-chans"] = Sensor(Sensor.INTEGER, "spead_num_chans","Number of channels reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
+        self._my_sensors["spead-num-bls"] = Sensor(Sensor.INTEGER, "spead_num_bls","Number of baselines reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
+        self._my_sensors["spead-dump-period"] = Sensor(Sensor.FLOAT, "spead_dump_period","Dump period reported via SPEAD header from the DBE","",default=0,params=[0,2**31])
+        self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
+        self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
 
         super(CaptureDeviceServer, self).__init__(*args, **kwargs)
 
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
+            if sensor.startswith("spead"):
+                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
+                 # set all SPEAD sensors to unknown at start
+                continue
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
@@ -459,7 +476,7 @@ class CaptureDeviceServer(DeviceServer):
         """Spawns a new capture thread that waits for a SPEAD start stream packet."""
         if self.rec_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
-        self.rec_thread = k7Capture(opts.data_port, cfg, self._my_sensors["packets-captured"], self._my_sensors["status"])
+        self.rec_thread = k7Capture(opts.data_port, cfg, self._my_sensors)
         self.rec_thread.setDaemon(True)
         self.rec_thread.start()
         self._my_sensors["capture-active"].set_value(1)
@@ -630,6 +647,10 @@ class CaptureDeviceServer(DeviceServer):
             self.current_file = None
         smsg = "File renamed to %s" % (output_file)
         self._my_sensors["capture-active"].set_value(0)
+        for sensor in self._my_sensors:
+            if sensor.startswith("spead"):
+                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
+                 # set all SPEAD sensors to unknown when thread has stopped
         activitylogger.info(smsg)
         return ("ok", smsg)
 
