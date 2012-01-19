@@ -22,7 +22,7 @@ import copy
 import os
 import logging
 from katcp import DeviceServer, Sensor, Message
-from katcp.kattypes import request, return_reply, Str, Int
+from katcp.kattypes import request, return_reply, Str, Int, Float
 import katcapture.sigproc as sp
 
 try:
@@ -98,6 +98,7 @@ class k7Capture(threading.Thread):
         self.center_freq = 0
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
+        self.current_ts = 0
         self.int_time = 1.0
          # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
@@ -359,7 +360,8 @@ class k7Capture(threading.Thread):
                     f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
                     try:
-                        f[timestamps_dataset][datasets_index[name]] = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
+                        self.current_ts = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
+                        f[timestamps_dataset][datasets_index[name]] = self.current_ts
                          # insert derived timestamps
                     except KeyError:
                         f[timestamps_dataset][datasets_index[name]] = -1.0
@@ -445,6 +447,12 @@ class CaptureDeviceServer(DeviceServer):
         smsg = "Capture initialised at %s" % time.ctime()
         activitylogger.info(smsg)
         return ("ok", smsg)
+
+    @return_reply(Float())
+    def request_get_last_dump_timestamp(self, sock, msg):
+        """Returns the timestamp of the most recently received correlator dump."""
+        cts = self.rec_thread.current_ts if self.rec_thread is not None else 0
+        return ("ok",cts)
 
     @return_reply(Str())
     def request_capture_init(self, sock, msg):
