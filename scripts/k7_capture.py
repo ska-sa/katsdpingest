@@ -44,7 +44,7 @@ correlator_map = '/MetaData/Configuration/Correlator/'
 observation_map = '/MetaData/Configuration/Observation/'
  # default path for things that are not mentioned above
 config_sensors = ['script_arguments','script_description','script_experiment_id','script_name','script_nd_params','script_observer','script_rf_params','script_starttime','script_status']
- # sensors to pull from the cfg katcp device
+ # sensors to pull from the cfg katcp client
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
 
@@ -52,14 +52,14 @@ def small_build(system):
     print "Creating KAT connections..."
     katconfig = katuilib.conf.KatuilibConfig(system)
     cfg_config = katconfig.clients['cfg']
-    cfg = katuilib.utility.build_device(cfg_config.name, cfg_config.ip, cfg_config.port)
+    cfg = katuilib.utility.build_client(cfg_config.name, cfg_config.ip, cfg_config.port)
     count=0
     while not cfg.is_connected() and count < 6:
         count+=1
-        print "Waiting for cfg device to become available... (wait %i/5)" % count
+        print "Waiting for cfg client to become available... (wait %i/5)" % count
         time.sleep(2)
         if not cfg.is_connected():
-            print "Failed to connect to cfg device (ip: %s, port: %i)\n" % (cfg_config.ip, cfg_config.port)
+            print "Failed to connect to cfg client (ip: %s, port: %i)\n" % (cfg_config.ip, cfg_config.port)
             sys.exit(0)
         return cfg
 

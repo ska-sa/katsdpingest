@@ -104,7 +104,7 @@ if __name__ == '__main__':
     server = SimulatorDeviceServer(model, opts.host, opts.port)
     test_host, test_port = address(opts.test_addr)
     testserver = SimTestDevice(model, test_host, test_port)
-    testserver.set_device(server)
+    testserver.set_    device(server)
 
     # Hide sensors as specified by command line regex
     if not opts.startup_sensor_hide_re is None:

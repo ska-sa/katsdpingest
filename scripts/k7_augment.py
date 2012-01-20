@@ -268,7 +268,7 @@ parser.add_option("-d", "--dir", default=katuilib.defaults.kat_directories["data
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
 parser.add_option("-s", "--system", default="systems/local.conf", help="System configuration file to use. [default=%default]")
 parser.add_option("-o", "--override", dest="force", action="store_true", default=False, help="If set, previously augmented files will be re-augmented. Only useful in conjunction with a single specified file.")
-parser.add_option("--dbe", dest="dbe_name", default="dbe7", help="Name of kat device to use as the correlator proxy. [default=%default]")
+parser.add_option("--dbe", dest="dbe_name", default="dbe7", help="Name of kat client to use as the correlator proxy. [default=%default]")
 parser.add_option("-v", "--verbose", action="store_true", default=False, help="Verbose output.")
 parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
             help='level to use for basic logging or name of logging configuration file; ' \
@@ -334,7 +334,7 @@ print "Creating KAT connections..."
 kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
  # check that we have basic connectivity (i.e. two antennas and pedestals)
 time.sleep(2)
-while not kat.rfe7.katcpobj.is_connected():
+while not kat.rfe7.is_connected():
      # wait for at least rfe7 to become stable as we query it straight away.
      # also serves as a basic connectivity check.
     status = "\r%s Connection to RFE7 not yet established. Waiting for connection (possibly futile)..." % str(state[batch_count % 4])
@@ -343,8 +343,8 @@ while not kat.rfe7.katcpobj.is_connected():
     time.sleep(30)
     batch_count += 1
 initial_lo1 = 0
-dbe_device = getattr(kat, options.dbe_name)
-array_config = dbe_device.sensor.array_config.get_value()
+dbe_client = getattr(kat, options.dbe_name)
+array_config = dbe_client.sensor.array_config.get_value()
  # get array config from the correlator we're using
 #kat.disconnect()
  # we dont need live connection anymore
