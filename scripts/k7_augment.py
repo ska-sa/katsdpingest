@@ -295,18 +295,20 @@ activitylogger.info("Activity logging started")
 state = ["|","/","-","\\"]
 batch_count = 0
 
-pointing_sensors = ["activity","target","pos_actual_scan_azim","pos_actual_scan_elev","pos_actual_refrac_azim","pos_actual_refrac_elev","pos_actual_pointm_azim","pos_actual_pointm_elev","pos_request_scan_azim","pos_request_scan_elev","pos_request_refrac_azim","pos_request_refrac_elev","pos_request_pointm_azim","pos_request_pointm_elev"]
- # a list of pointing sensors to insert
+antenna_sensors = ["activity","target",
+                   "pos_actual_scan_azim","pos_actual_scan_elev","pos_actual_refrac_azim","pos_actual_refrac_elev",
+                   "pos_actual_pointm_azim","pos_actual_pointm_elev","pos_request_scan_azim","pos_request_scan_elev",
+                   "pos_request_refrac_azim","pos_request_refrac_elev","pos_request_pointm_azim","pos_request_pointm_elev",
+                   "rfe3_rfe15_noise_pin_on","rfe3_rfe15_noise_coupler_on"]
+ # a list of antenna sensors to insert
 enviro_sensors = ["asc_air_temperature","asc_air_pressure","asc_air_relative_humidity","asc_wind_speed","asc_wind_direction"]
  # a list of enviro sensors to insert
-pedestal_sensors = ["rfe3_rfe15_noise_pin_on", "rfe3_rfe15_noise_coupler_on"]
- # a list of pedestal sensors to insert
 rfe_sensors = ["rfe7_lo1_frequency"]
  # a list of RFE sensors to insert
 beam_sensors = ["%s_target" % (options.dbe_name,)]
  # a list of sensor for beam 0
 
-sensors = {'ant':pointing_sensors+pedestal_sensors, 'anc':enviro_sensors, 'rfe7':rfe_sensors}
+sensors = {'ant':antenna_sensors, 'anc':enviro_sensors, 'rfe7':rfe_sensors}
  # mapping from sensors to proxy
 
 sensors_iv = {"rfe3_rfe15_noise_pin_on":True, "rfe3_rfe15_noise_coupler_on":True, "activity":True, "target":True,"observer":True,"lock":True}
@@ -332,7 +334,7 @@ activitylogger.info(smsg)
  # build an kat object for history gathering purposes
 print "Creating KAT connections..."
 kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
- # check that we have basic connectivity (i.e. two antennas and pedestals)
+ # check that we have basic connectivity (i.e. two antennas)
 time.sleep(2)
 while not kat.rfe7.is_connected():
      # wait for at least rfe7 to become stable as we query it straight away.
@@ -409,7 +411,6 @@ while(len(files) > 0 or options.batch):
             sg = create_group(f, "/MetaData/Sensors")
             ag = create_group(sg, "Antennas")
             acg = create_group(f, "/MetaData/Configuration/Antennas")
-            pg = create_group(sg, "Pedestals")
             rfeg = create_group(sg, "RFE")
             eg = create_group(sg, "Enviro")
             bg = create_group(sg, "Beams")
@@ -420,7 +421,7 @@ while(len(files) > 0 or options.batch):
                 a = create_group(ag, ant_name)
                 ac = create_group(acg, ant_name)
                 stime = time.time()
-                for sensor in pointing_sensors:
+                for sensor in antenna_sensors:
                     insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
                 if options.verbose:
                     smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
@@ -454,18 +455,6 @@ while(len(files) > 0 or options.batch):
                             smsg = "Dataset %s.%s_%s_noise_diode_model already exists. Not replacing existing model." % (ac.name, pol, nd)
                             print smsg
                             logger.info(smsg)
-
-            for ped in range(1,8):
-                ped = str(ped)
-                ped_name = 'ped' + ped
-                p = create_group(pg, ped_name)
-                stime = time.time()
-                for sensor in pedestal_sensors:
-                    insert_sensor(ped_name + "_" + sensor, p, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
-                if options.verbose:
-                    smsg = "Overall creation of sensor table for pedestal " + ped + " took " + str(time.time()-stime) + "s"
-                    print smsg
-                    logger.debug(smsg)
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
