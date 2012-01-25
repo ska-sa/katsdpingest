@@ -99,7 +99,6 @@ class k7Capture(threading.Thread):
         self.center_freq = 0
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
-        self.current_ts = 0
         self.int_time = 1.0
          # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
@@ -368,8 +367,9 @@ class k7Capture(threading.Thread):
                     f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
                     try:
-                        self.current_ts = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
-                        f[timestamps_dataset][datasets_index[name]] = self.current_ts
+                        current_ts = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
+                        self._my_sensors["last-dump-timestamp"].set_value(current_ts)
+                        f[timestamps_dataset][datasets_index[name]] = current_ts
                          # insert derived timestamps
                     except KeyError:
                         f[timestamps_dataset][datasets_index[name]] = -1.0
@@ -431,6 +431,7 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["spead-dump-period"] = Sensor(Sensor.FLOAT, "spead_dump_period","Dump period reported via SPEAD header from the DBE","",default=0,params=[0,2**31])
         self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
         self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
+        self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
 
         super(CaptureDeviceServer, self).__init__(*args, **kwargs)
 
@@ -464,12 +465,6 @@ class CaptureDeviceServer(DeviceServer):
         smsg = "Capture initialised at %s" % time.ctime()
         activitylogger.info(smsg)
         return ("ok", smsg)
-
-    @return_reply(Float())
-    def request_get_last_dump_timestamp(self, sock, msg):
-        """Returns the timestamp of the most recently received correlator dump."""
-        cts = self.rec_thread.current_ts if self.rec_thread is not None else 0
-        return ("ok",cts)
 
     @return_reply(Str())
     def request_capture_init(self, sock, msg):
