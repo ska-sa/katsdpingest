@@ -75,7 +75,9 @@ def parse_opts(argv):
                       default=False,
                       action='store_true',
                       help='Standalone mode. Sets default antenna channel '
-                      'mappings and does a spead issue at startup')
+                      'mappings and does a spead issue at '
+                      'startup. Also sets logging to local with "warn"'
+                      'level; can be overidden with the -l option')
 
     return parser.parse_args(argv)
 
@@ -91,6 +93,8 @@ if __name__ == '__main__':
     katconf.set_config(katconf.environ(opts.sysconfig))
 
     # set up Python logging
+    if opts.standalone and opts.logging is None:
+        opts.logging = 'warn'
     katconf.configure_logging(opts.logging)
     log_name = 'kat.k7simulator'
     logger = logging.getLogger(log_name)
