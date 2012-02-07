@@ -21,7 +21,8 @@ class test_Roach(unittest.TestCase, SensorComparisonMixin):
 
     def test_sensors(self):
         roach = self.RoachClass('roachy1234')
-        self.assert_sensors_equal(roach.get_sensors(), self.expected_sensors)
+        self.assert_sensors_equal_description(
+            roach.get_sensors(), self.expected_sensors)
 
 class test_XEngine(test_Roach):
     RoachClass = dbe7_roach_models.XEngine
@@ -105,7 +106,8 @@ class test_FEngine(unittest.TestCase, SensorComparisonMixin):
 
     def test_sensors(self):
         roach = dbe7_roach_models.FEngine('roachy1234', 3)
-        self.assert_sensors_equal(roach.get_sensors(), self.expected_sensors)
+        self.assert_sensors_equal_description(
+            roach.get_sensors(), self.expected_sensors)
 
     def test_adc_sensor_values(self):
         def test_ampl(val):
@@ -149,8 +151,9 @@ class test_XEngines(unittest.TestCase, SensorComparisonMixin):
 
     def test_sensors(self):
         x_engines = dbe7_roach_models.XEngines(self.roach_names)
-        self.assert_sensors_equal(x_engines.get_sensors(),
-                                  self.get_expected_sensors())
+        self.assert_sensors_equal_description(
+            x_engines.get_sensors(),
+            self.get_expected_sensors())
 
 
 class test_FEngines(test_XEngines):
@@ -242,8 +245,8 @@ class test_FEngines(test_XEngines):
 
     def test_sensors(self):
         f_engines = dbe7_roach_models.FEngines(self.roach_names)
-        self.assert_sensors_equal(f_engines.get_sensors(),
-                                  self.get_expected_sensors())
+        self.assert_sensors_equal_description(f_engines.get_sensors(),
+                                              self.get_expected_sensors())
 
 
     def test_channels(self):
