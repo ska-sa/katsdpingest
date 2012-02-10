@@ -50,9 +50,9 @@ sdisp_ips = {}
 
 def small_build(system):
     print "Creating KAT connections..."
-    katconfig = katuilib.conf.KatuilibConfig(system)
+    katconfig = katcorelib.conf.KatuilibConfig(system)
     cfg_config = katconfig.clients['cfg']
-    cfg = katuilib.utility.build_client(cfg_config.name, cfg_config.ip, cfg_config.port)
+    cfg = katcorelib.build_client(cfg_config.name, cfg_config.ip, cfg_config.port)
     count=0
     while not cfg.is_connected() and count < 6:
         count+=1
@@ -654,9 +654,9 @@ if __name__ == '__main__':
     cfg = None
     if opts.include_cfg:
         try:
-            import katuilib
+            import katcorelib
         except ImportError:
-            print "katulib is not available on this host. please run script using --include_cfg=false"
+            print "katcorelib is not available on this host. please run script using --include_cfg=false"
             sys.exit(0)
         cfg = small_build(opts.system)
 

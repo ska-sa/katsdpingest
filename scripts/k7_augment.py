@@ -24,7 +24,7 @@ from optparse import OptionParser
 import numpy as np
 from h5py import File
 
-import katuilib
+import katcorelib
 import katcore.targets
 import katconf
 
@@ -264,7 +264,7 @@ def print_tb():
 parser = OptionParser()
 parser.add_option("-b", "--batch", action="store_true", default=False, help="If set augment will process all unaugmented files in the directory specified by -d, and then continue to monitor this directory. Any new files that get created will be augmented in sequence.")
 parser.add_option("-c", "--config", dest='config', default='/var/kat/katconfig', help='look for configuration files in folder CONF [default is KATCONF environment variable or /var/kat/katconfig]')
-parser.add_option("-d", "--dir", default=katuilib.defaults.kat_directories["data"], help="Process all unaugmented files in the specified directory. [default=%default]")
+parser.add_option("-d", "--dir", default='/var/kat/data', help="Process all unaugmented files in the specified directory. [default=%default]")
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
 parser.add_option("-s", "--system", default="systems/local.conf", help="System configuration file to use. [default=%default]")
 parser.add_option("-o", "--override", dest="force", action="store_true", default=False, help="If set, previously augmented files will be re-augmented. Only useful in conjunction with a single specified file.")
@@ -333,7 +333,7 @@ activitylogger.info(smsg)
 
  # build an kat object for history gathering purposes
 print "Creating KAT connections..."
-kat = katuilib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
+kat = katcorelib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
  # check that we have basic connectivity (i.e. two antennas)
 time.sleep(2)
 while not kat.rfe7.is_connected():
