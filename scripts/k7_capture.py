@@ -11,7 +11,6 @@
 
 import numpy as np
 import spead
-spead.logger.setLevel(spead.logging.WARNING)
 import h5py
 import sys
 import time
@@ -144,8 +143,6 @@ class k7Capture(threading.Thread):
     def set_baseline_mask(self):
         """Uses the _script_ants variable to set a baseline mask.
         This only works if script_ants has been set by an external process between capture_done and capture_start."""
-        self.baseline_mask = range(self.meta['n_bls'])
-         # by default we send all baselines...
         if self._script_ants is not None and self.meta.has_key('bls_ordering'):
             logger.info("Using script-ants (%s) as a custom baseline mask..." % self._script_ants)
             ants = self._script_ants.replace(" ","").split(",")
@@ -154,6 +151,9 @@ class k7Capture(threading.Thread):
                 self.baseline_mask = [b.index(pair) for pair in b if pair[0][:-1] in ants and pair[1][:-1] in ants]
                 self.meta['bls_ordering'] = np.array([b[idx] for idx in self.baseline_mask])
                  # we need to recalculate the bls ordering as well...
+        if self.baseline_mask is None or len(self.baseline_mask) == 0:
+            self.baseline_mask = range(self.meta['n_bls'])
+             # by default we send all baselines...
 
     def send_sd_metadata(self):
         self._sd_metadata = self._update_sd_metadata()
@@ -253,6 +253,7 @@ class k7Capture(threading.Thread):
                 if not item._changed and datasets.has_key(name): continue
                  # the item is not marked as changed, and we have a record for it
                 if name in meta_desired:
+                    logger.info("Meta data received (desired) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
                     self.meta[name] = ig[name]
                     if name == 'center_freq' and self.center_freq == 0:
                         self.center_freq = self.meta[name]
@@ -266,6 +267,7 @@ class k7Capture(threading.Thread):
                         self._my_sensors["spead-accum-per-dump"].set_value(self.meta[name])
                         logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
                 if name in meta_required:
+                    logger.info("Meta data received (required) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
                     self.meta[name] = ig[name]
                     meta_required.remove(name)
                     if name == 'n_chans':
@@ -326,9 +328,6 @@ class k7Capture(threading.Thread):
                         self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
                          # make sure we have the right dtype for the sd data
                         sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
-                        n_xeng = len(sd_slots)
-                         # this is the first time we know how many x engines there are
-                        f[correlator_map].attrs['n_xeng'] = n_xeng
                         self.send_sd_metadata()
                         t_it = self.ig_sd.get_item('sd_data')
                         #print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
@@ -671,6 +670,9 @@ if __name__ == '__main__':
     if not found_katconf:
         if opts.logging is None: logger.warning("Defaulting to log level INFO. To override use the -l [DEBUG | INFO | WARNING | ERROR] switch.")
         logger.setLevel(logging.INFO if opts.logging is None else opts.logging)
+
+    spead.logger.setLevel(logging.WARNING)
+     # configure SPEAD to display warnings about dropped packets etc...
 
     sp.ProcBlock.logger = logger
      # logger ref for use in the signal processing routines
