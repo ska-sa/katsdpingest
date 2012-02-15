@@ -5,8 +5,7 @@
 [katcp]
 #List of servers to be used for F/X engines. Comma separated list with no whitespace.
 servers_f = roach030268,roach030279,roach030265,roach030203,roach030276,roach030269,roach030267,roach030277
-servers_x = roach030274,roach030271
-#,roach030270,roach030273,roach030266,roach030263,roach030275,roach030196
+servers_x = roach030274,roach030271,roach030270,roach030273,roach030266,roach030263,roach030275,roach030196
 #This is the control port to use when communicating with BORPH. By default, ROACHes use 7147.
 katcp_port = 7147
 #bitstream to load the FPGAs. Should be present and load-able by ROACH's KATCP server - corr will not do this for you.

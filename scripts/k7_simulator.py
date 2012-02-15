@@ -19,12 +19,12 @@ from katcore.syslaunch import address
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    default_conf = resource_filename("katcapture","") + "/conf/config-wbc"
+    default_conf = resource_filename("katcapture","") + "/conf"
     parser.add_option('-c', '--config',
                       dest='config',
                       type="string",
                       default=default_conf,
-                      help='k7 correlator config file to use.')
+                      help='k7 correlator config directory to use.')
     parser.add_option('-p', '--port',
                       dest='port',
                       type=long,

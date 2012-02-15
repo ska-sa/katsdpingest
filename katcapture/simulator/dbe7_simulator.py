@@ -1,3 +1,4 @@
+from __future__ import with_statement
 import time
 import logging
 import sys
@@ -66,6 +67,67 @@ class SimulatorDeviceServer(Device):
 
     VERSION_INFO = ("k7-simulator",0,1)
     BUILD_INFO = ("k7-simulator",0,1,"rc1")
+
+    def setup_sensors(self):
+        super(SimulatorDeviceServer, self).setup_sensors()
+        # Subscribe to model signals indicating a change in sensors
+        self._model.sensor_changed.connect(self.handle_sensor_update)
+        self._model.sensor_removed.connect(self.handle_sensor_remove)
+        self._model.sensor_added.connect(self.handle_sensor_add)
+
+    def handle_sensor_add(self, model, sensor, **kwargs):
+        assert(model is self._model)
+        logger.debug('New sensor %s added signal.' % sensor.name)
+        self.add_sensor(sensor)
+        self.issue_device_changed('sensor-list')
+
+    def handle_sensor_remove(self, model, sensor, **kwargs):
+        assert(model is self._model)
+        logger.info('Sensor %s removed signal.' % sensor.name)
+        self.remove_sensor(sensor)
+        self.issue_device_changed('sensor-list')
+
+    def handle_sensor_update(self, model, sensor, old_sensor, **kwargs):
+        assert(model is self._model)
+        logger.debug('Sensor %s changed signal.' % sensor.name)
+        assert(sensor.name == old_sensor.name)
+        self.replace_sensor(sensor, old_sensor)
+        self.issue_device_changed('sensor-list')
+
+    def replace_sensor(self, sensor, old_sensor=None):
+        # TODO Perhaps one wants to put this method in the katcp
+        # server? Or at least the device class.
+        if not old_sensor is None:
+            assert(self.get_sensor(sensor.name) is old_sensor)
+        else:
+            old_sensor = self.get_sensor(sensor.name)
+        # Can't call remove_sensor() since it whacks the strategies
+        del self._sensors[sensor.name]
+        # Get all the old sensor's strategies
+        sensor_strategies = []
+        with self._strat_lock:
+            # Loop over the per-sock strategies
+            for sock_strategies in self._strategies.values():
+                for strat_sensor, strategy in list(sock_strategies.items()):
+                    if strat_sensor.name == sensor.name:
+                        # Replace the strategy's sensor with the new one
+                        strategy.detach()
+                        # Naughty private variable access. Del to make
+                        # sure an error is raised if we set a
+                        # non-existent variable
+                        del(strategy._sensor)
+                        strategy._sensor = sensor
+                        sensor_strategies.append(strategy)
+
+        # Can't call strat.attach while _strat_lock is held since it
+        # may try and write to a disconnected socket, which in turn
+        # calls the on_disconnect handler which in turn tries to
+        # aquire _strat_lock so that it can remove the sensor
+        # strategies of the dead socket.
+        for strat in sensor_strategies:
+            strat.attach()
+
+        self.add_sensor(sensor)
 
     @request(Str())
     @return_reply(Str())

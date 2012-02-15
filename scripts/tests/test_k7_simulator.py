@@ -40,14 +40,13 @@ class SimulatorSetup(object):
         # k7_conf_file = os.path.join(
         #     os.path.dirname(__file__), '..', '..',
         #     'katcapture', 'conf', 'k7-local.conf')
-        k7_conf_file = os.path.join(
-            os.path.dirname(__file__), '..', '..',
-            'katcapture', 'conf', 'config-wbc')
-
+        k7_conf_dir = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'katcapture', 'conf')
+        
         # Set up a process running the k7_simulator
         self.k7_simulator_proc = subprocess.Popen(
             [k7_simulator_file, '-p', '%d' %
-             device_port, '-c', k7_conf_file] + extra_sim_parms,
+             device_port, '-c', k7_conf_dir] + extra_sim_parms,
             stdout=self.k7_simulator_logfile, stderr=self.k7_simulator_logfile)
 
         # Set up katcp client
@@ -61,7 +60,7 @@ class SimulatorSetup(object):
             katcp.KatcpClientError)
         # Get spead udp port
         cfg = ConfigParser.SafeConfigParser()
-        cfg.read(k7_conf_file)
+        cfg.read(os.path.join(k7_conf_dir, 'config-wbc'))
         spead_udp_port = cfg.getint('receiver', 'rx_udp_port')
 
 

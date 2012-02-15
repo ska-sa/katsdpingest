@@ -1,5 +1,6 @@
 from __future__ import with_statement
 
+import os
 import time
 import sys
 import logging
@@ -11,6 +12,9 @@ from .model_correlator_conf import ModelCorrConf
 from katcore.dev.base import ThreadedModel
 from katcp import Sensor
 import random
+import blinker
+
+
 
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
@@ -53,25 +57,83 @@ class K7CorrelatorModel(ThreadedModel):
     # In standalone mode a default antenna mapping is set up. The
     # standalone variable needs to be set before start() is called
     standalone = False
-    def __init__(self, config_file, *names, **kwargs):
-        self.config = ModelCorrConf(config_file)
-        self._spead_model = DBE7SpeadData(self.config)
+    def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
+        self.config_dir = config_dir
+        # A signal indicating that a sensor has been added. The signal
+        # is sent with self as the sender, and the keyword arguments:
+        #
+        # sensor: katcp Sensor object -- the new sensor
+        self.sensor_added = blinker.Signal()
+        # A signal indicating that a sensor has been changed. The signal
+        # is sent with self as the sender, and the keyword arguments:
+        #
+        # sensor: katcp Sensor object -- the new sensor
+        #
+        # It is assumed that the subscriber will arrange to remove
+        # listeners or sampling strategies from the sensor as required.
+        self.sensor_changed = blinker.Signal()
+        # A signal indicating that a sensor has been removed. The signal
+        # is sent with self as the sender, and the keyword arguments:
+        #
+        # sensor: katcp Sensor object -- The new sensor.
+        # old_sensor: katcp Sensor object -- The old sensor
+        #
+        # It is assumed that the subscriber will arrange to have
+        # listeners or sampling strategies or whatever transferred
+        # from the old to the new sensor object should that be
+        # required.
+        self.sensor_removed = blinker.Signal()
         # Lock that should be held whenever something that could
         # effect data generation and associated SPEAD meta data is
         # modified. For instance, while changing the dump period.
         self._data_lock = threading.Lock()
         self._init_values()
         self._init_sensors()
-        self._init_roaches()
-        self._thread_paused = False
-        self.data = self.generate_data()
+        self._thread_paused = True
 
-    def _init_roaches(self):
+    def _update_roaches(self):
+        old_sensors = []
+        try: old_sensors.extend(self._roach_x_engines.get_sensors())
+        except AttributeError: pass
+        try: old_sensors.extend(self._roach_f_engines.get_sensors())
+        except AttributeError: pass
+        old_sensor_names = set(s.name for s in old_sensors)
+
         self._roach_x_engines = XEngines(self.config['servers_x'])
         self._roach_f_engines = FEngines(self.config['servers_f'])
-        for s in self._roach_x_engines.get_sensors(): self.add_sensor(s)
-        for s in self._roach_f_engines.get_sensors(): self.add_sensor(s)
+        new_sensors = (self._roach_x_engines.get_sensors() +
+                       self._roach_f_engines.get_sensors())
+        new_sensor_names = set(s.name for s in new_sensors)
+        remove = old_sensor_names - new_sensor_names
+        add = new_sensor_names - old_sensor_names
+        change = new_sensor_names & old_sensor_names
+        for s in new_sensors:
+            if s.name in add:
+                self.add_sensor(s)
+            elif s.name in change:
+                self.change_sensor(s)
+            else:
+                raise RuntimeError('An impossible error has occured')
+        for s in old_sensors:
+            if s.name in remove:
+                self.del_sensor(s)
+
+
+    def add_sensor(self, sensor, signal=True):
+        super(K7CorrelatorModel, self).add_sensor(sensor)
+        if signal: self.sensor_added.send(self, sensor=sensor)
+
+    def del_sensor(self, sensor, signal=True):
+        del(self.sensors[sensor.name])
+        if signal: self.sensor_removed.send(self, sensor=sensor)
+
+    def change_sensor(self, sensor, signal=True):
+        old_sensor = self.get_sensor(sensor.name)
+        self.del_sensor(old_sensor, signal=False)
+        self.add_sensor(sensor, signal=False)
+        if signal:
+            self.sensor_changed.send(self, sensor=sensor, old_sensor=old_sensor)
 
     def _init_sensors(self):
         self.add_sensor(Sensor(
@@ -83,7 +145,6 @@ class K7CorrelatorModel(ThreadedModel):
         dip_sens = Sensor(
             Sensor.STRING, "destination_ip",
             "The current destination address for data and metadata.","","")
-        dip_sens.set_value(self.config['rx_meta_ip'])
         self.add_sensor(dip_sens)
         msens = Sensor(Sensor.DISCRETE, 'mode', 'Current DBE operating mode', '',
                        ['basic', 'ready', 'wbc', 'nbc'])
@@ -96,13 +157,12 @@ class K7CorrelatorModel(ThreadedModel):
         self.add_sensor(nbc_f_sens)
 
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
-        self.get_sensor('sync_time').set_value(self._spead_model.sync_time, Sensor.NOMINAL)
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
         self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
 
     def _init_values(self):
         self.adc_value = 0
-        self.set_dump_period(1.0)
+        self._dump_period = 1.0
         self.sample_rate = 800e6
         self.tone_freq = 302e6
         self.noise_diode = 0
@@ -187,6 +247,8 @@ class K7CorrelatorModel(ThreadedModel):
     def run(self):
         while not self._stopEvent.isSet():
             if not self._thread_paused:
+                with self._data_lock:
+                    self.data = self.generate_data()
                 self.send_dump()
                 status = ("\rSending correlator dump at %s "
                           "(dump period: %f s, multiplier: %i, noise_diode: %s)" %
@@ -195,8 +257,6 @@ class K7CorrelatorModel(ThreadedModel):
                 sys.stdout.write(status)
                 sys.stdout.flush()
             st = time.time()
-            with self._data_lock:
-                self.data = self.generate_data()
             time.sleep(max(self._dump_period - (time.time() - st), 0.))
         self.send_stop()
         print "Correlator tx halted."
@@ -305,6 +365,7 @@ class K7CorrelatorModel(ThreadedModel):
             progress_callback('Correlator already in mode %s' % mode)
             return
 
+        self._thread_paused = True
         logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
 
         for i in range(mode_delay):
@@ -316,7 +377,16 @@ class K7CorrelatorModel(ThreadedModel):
             nbc_f_sens = self.get_sensor('nbc.frequency.current')
             nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
 
+        config_file = os.path.join(self.config_dir, 'config-'+mode)
+        self.config = ModelCorrConf(config_file)
+        self._spead_model = DBE7SpeadData(self.config)
+        self._spead_model.set_acc_time(self.get_dump_period())
+        self._update_roaches()
+
+        self.get_sensor('sync_time').set_value(self._spead_model.sync_time, Sensor.NOMINAL)
+        self.get_sensor('destination_ip').set_value(self.config['rx_meta_ip_str'])
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
+        self._thread_paused = False
 
     @property
     def labels(self):
@@ -327,4 +397,3 @@ class K7CorrelatorModel(ThreadedModel):
     def set_antenna_mapping(self, channel, ant_name):
         """Set the antenna name of `channel` (e.g. 0x, 3y) to `ant_name`"""
         self.config.set_antenna_mapping(channel, ant_name)
-
