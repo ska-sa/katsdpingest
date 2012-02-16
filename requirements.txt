@@ -1,0 +1,11 @@
+blinker
+h5py
+iniparse
+katconf
+katcore
+katcorelib
+katcp
+katsdisp
+numpy
+scipy
+spead
