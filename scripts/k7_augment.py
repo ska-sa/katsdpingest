@@ -25,7 +25,7 @@ import numpy as np
 from h5py import File
 
 import katcorelib
-import katcore.targets
+import katcorelib.targets
 import katconf
 
 major_version = 2
@@ -42,7 +42,7 @@ def get_input_info(array_cfg):
 
     Parameters
     ----------
-    array_cfg : :class:`katcore.targets.ArrayConfig` object
+    array_cfg : :class:`katcorelib.targets.ArrayConfig` object
         ArrayConfig object from which to extract correlator info
 
     Returns
@@ -73,7 +73,7 @@ def get_antenna_info(array_cfg):
 
     Parameters
     ----------
-    array_cfg : :class:`katcore.targets.ArrayConfig` object
+    array_cfg : :class:`katcorelib.targets.ArrayConfig` object
         ArrayConfig object from which to extract antenna info
 
     Returns
@@ -353,7 +353,7 @@ array_config = dbe_client.sensor.array_config.get_value()
 section_reports['configuration'] = str(options.system)
 
 
-array_cfg = katcore.targets.ArrayConfig(array_config)
+array_cfg = katcorelib.targets.ArrayConfig(array_config)
  # retrieve array configuration object for correlator
 config_antennas, dbe_delay, real_to_dbe = get_input_info(array_cfg)
  # return dicts showing the current mapping between dbe inputs and real antennas
