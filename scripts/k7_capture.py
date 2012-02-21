@@ -42,29 +42,29 @@ flags_dataset = '/Markup/flags'
 correlator_map = '/MetaData/Configuration/Correlator/'
 observation_map = '/MetaData/Configuration/Observation/'
  # default path for things that are not mentioned above
-config_sensors = ['script_arguments','script_description','script_experiment_id','script_name','script_nd_params','script_observer','script_rf_params','script_starttime','script_status']
- # sensors to pull from the cfg katcp client
+script_sensors = ['script_arguments','script_description','script_experiment_id','script_name','script_nd_params','script_observer','script_rf_params','script_starttime','script_status']
+ # sensors to pull from the ctl katcp client
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
 
 def small_build(system):
     print "Creating KAT connections..."
     katconfig = katcorelib.conf.KatuilibConfig(system)
-    cfg_config = katconfig.clients['cfg']
-    cfg = katcorelib.build_client(cfg_config.name, cfg_config.ip, cfg_config.port)
+    ctl_config = katconfig.clients['ctl']
+    ctl = katcorelib.build_client(ctl_config.name, ctl_config.ip, ctl_config.port)
     count=0
-    while not cfg.is_connected() and count < 6:
+    while not ctl.is_connected() and count < 6:
         count+=1
-        print "Waiting for cfg client to become available... (wait %i/5)" % count
+        print "Waiting for ctl client to become available... (wait %i/5)" % count
         time.sleep(2)
-        if not cfg.is_connected():
-            print "Failed to connect to cfg client (ip: %s, port: %i)\n" % (cfg_config.ip, cfg_config.port)
+        if not ctl.is_connected():
+            print "Failed to connect to ctl client (ip: %s, port: %i)\n" % (ctl_config.ip, ctl_config.port)
             sys.exit(0)
-        return cfg
+        return ctl
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    parser.add_option('--include_cfg', action='store_true', default=False, help='pull configuration information via katcp from the configuration server')
+    parser.add_option('--include_ctl', action='store_true', default=False, help='pull configuration information via katcp from the kat controller')
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and metadata on')
@@ -78,11 +78,11 @@ def parse_opts(argv):
     return parser.parse_args(argv)
 
 class k7Capture(threading.Thread):
-    def __init__(self, data_port, cfg, my_sensors):
+    def __init__(self, data_port, ctl, my_sensors):
         self.data_port = data_port
         self.data_scale_factor = 1.0
         self.acc_scale = True
-        self.cfg = cfg
+        self.ctl = ctl
         self._label_idx = 0
         self._log_idx = 0
         self._current_hdf5 = None
@@ -375,10 +375,10 @@ class k7Capture(threading.Thread):
                 datasets_index[name] += 1
                 item._changed = False
                   # we have dealt with this item so continue...
-            if idx==0 and self.cfg is not None:
-                # add config store metadata after receiving first frame. This should ensure that the values pulled are fresh.
-                for s in config_sensors:
-                    f[observation_map].attrs[s] = kat.cfg.sensor.__getattribute__(s).get_value()
+            if idx==0 and self.ctl is not None:
+                # add script metadata after receiving first frame. This should ensure that the values pulled are fresh.
+                for s in script_sensors:
+                    f[observation_map].attrs[s] = kat.ctl.sensor.__getattribute__(s).get_value()
                 logger.info("Added initial observation sensor values...\n")
             idx+=1
             self.pkt_sensor.set_value(idx)
@@ -470,7 +470,7 @@ class CaptureDeviceServer(DeviceServer):
         """Spawns a new capture thread that waits for a SPEAD start stream packet."""
         if self.rec_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
-        self.rec_thread = k7Capture(opts.data_port, cfg, self._my_sensors)
+        self.rec_thread = k7Capture(opts.data_port, ctl, self._my_sensors)
         self.rec_thread.setDaemon(True)
         self.rec_thread.start()
         self._my_sensors["capture-active"].set_value(1)
@@ -650,14 +650,14 @@ class CaptureDeviceServer(DeviceServer):
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
-    cfg = None
-    if opts.include_cfg:
+    ctl = None
+    if opts.include_ctl:
         try:
             import katcorelib
         except ImportError:
-            print "katcorelib is not available on this host. please run script using --include_cfg=false"
+            print "katcorelib is not available on this host. please run script using --include_ctl=false"
             sys.exit(0)
-        cfg = small_build(opts.system)
+        ctl = small_build(opts.system)
 
     found_katconf = False
     if found_katconf:
