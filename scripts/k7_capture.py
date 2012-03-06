@@ -114,9 +114,9 @@ class k7Capture(threading.Thread):
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
-        if self._sd_count % 10 == 0:
-            logger.debug("Sending metadata heartbeat...")
-            self.send_sd_metadata()
+        #if self._sd_count % 10 == 0:
+        #    logger.debug("Sending metadata heartbeat...")
+        #    self.send_sd_metadata()
 
         for tx in self.sdisp_ips.itervalues():
             tx.send_heap(data)
