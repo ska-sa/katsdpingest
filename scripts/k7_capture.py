@@ -381,6 +381,7 @@ class k7Capture(threading.Thread):
                     f[observation_map].attrs[s] = kat.ctl.sensor.__getattribute__(s).get_value()
                 logger.info("Added initial observation sensor values...\n")
             idx+=1
+            f.flush()
             self.pkt_sensor.set_value(idx)
 
         if self.baseline_mask is not None:
