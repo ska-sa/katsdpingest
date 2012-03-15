@@ -1,8 +1,9 @@
 import logging
 import re
 from katcore.sim import base
+from katcp import Sensor
 from katcp.kattypes import request, return_reply
-from katcp.kattypes import Str, Int
+from katcp.kattypes import Str, Int, Bool
 from katcp import Message
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
@@ -27,6 +28,12 @@ class SimTestDevice(base.SimTestDevice):
         the device has changed.
         """
         self._device = device
+
+    def setup_sensors(self):
+        """Add the test-device sensors from the model"""
+        super(SimTestDevice, self).setup_sensors()
+        for sensor in self._model.test_sensors.values():
+            self.add_sensor(sensor)
 
     def hide_sensor(self, sensor_name):
         if sensor_name in self._hidden_sensors:
@@ -128,3 +135,10 @@ class SimTestDevice(base.SimTestDevice):
         for sn in hidden_sensor_names:
             self.reply_inform(sock, Message.inform(req_msg.name, sn), req_msg)
         return ('ok', len(hidden_sensor_names))
+
+    @request(Bool())
+    @return_reply()
+    def request_hang_requests(self, sock, hang):
+        """Make device hang on all requests other than watchdog"""
+        self._model.get_test_sensor('hang-requests').set_value(hang)
+        return ('ok',)

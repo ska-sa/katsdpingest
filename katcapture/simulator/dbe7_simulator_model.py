@@ -52,11 +52,37 @@ class AddLockSettersGetters(object):
                 setattr(cls, 'get'+name, self.make_getter(name))
         return cls
 
+class TestInterfaceModel(ThreadedModel):
+    def __init__(self, *args, **kwargs):
+        self.test_sensors = {} # Sensors meant for the test device interface
+        super(TestInterfaceModel, self).__init__(*args, **kwargs)
+
+    def add_test_sensor(self, sensor):
+        """Add a test device sensor object"""
+        sname = sensor.name
+        if sname  in self.test_sensors:
+            raise ValueError(
+                'Sensor with name %s already added to device' % sname)
+        self.test_sensors[sname] = sensor
+
+    def get_test_sensor(self, sensorname):
+        """Retrieve a sensor object by its name"""
+        sensor = self.test_sensors.get(sensorname, None)
+        if not sensor:
+            raise ValueError("Unknown sensor '%s'." % sensorname)
+        return sensor
+
+    def get_sensors(self):
+        """Get list of all sensors"""
+        return self.test_sensors.values()
+
+
 @AddLockSettersGetters('_data_lock')
-class K7CorrelatorModel(ThreadedModel):
+class K7CorrelatorModel(TestInterfaceModel):
     # In standalone mode a default antenna mapping is set up. The
     # standalone variable needs to be set before start() is called
     standalone = False
+
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
         self.config_dir = config_dir
@@ -90,6 +116,7 @@ class K7CorrelatorModel(ThreadedModel):
         self._data_lock = threading.Lock()
         self._init_values()
         self._init_sensors()
+        self._init_test_sensors()
         self._thread_paused = True
 
     def _update_roaches(self):
@@ -155,10 +182,15 @@ class K7CorrelatorModel(ThreadedModel):
                             [0, 387.5*1000000])
         nbc_f_sens.set_value(0, Sensor.UNKNOWN)
         self.add_sensor(nbc_f_sens)
-
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
         self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
         self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
+
+    def _init_test_sensors(self):
+        self.add_test_sensor(Sensor(
+            Sensor.BOOLEAN, 'hang-requests',
+            'Requests on the real device other than watchdog hang if true',
+            '', default=False))
 
     def _init_values(self):
         self.adc_value = 0

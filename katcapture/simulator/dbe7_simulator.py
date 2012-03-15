@@ -32,22 +32,31 @@ logger = logging.getLogger(log_name)
 # stop_tx -> Should go to sim interface
 # test_target -> Should move to sim interface
 
+# Request to update:
+#
+# label-input (see https://katfs.kat.ac.za/mantis/view.php?id=1394 ) TODO
 
 # Requests to add:
 #
-# capture_list -> Done
+# capture_list -> DONE
+# k7_accumulation_length -> DONE
+# k7_adc_snap_shot -> DONE
+# k7_delay -> DONE, stubbily
+# k7_frequency_select TODO
+# k7_gain -> DONE
+# k7_snap_shot TODO
+# version -> TODO
+# version_list -> TODO
+# label-clear (https://katfs.kat.ac.za/mantis/view.php?id=1394) TODO
+
+# Hardware request to leave out of simulator
+#
 # define -> leave?
 # dict -> leave?
 # dispatch -> leave?
 # enable_sensors -> leave?
 # get -> leave?
 # job -> leave?
-# k7_accumulation_length -> Done
-# k7_adc_snap_shot -> Done
-# k7_delay -> Done, stubbily
-# k7_frequency_select TODO
-# k7_gain -> Done
-# k7_snap_shot TODO
 # log_record -> leave?
 # notice -> leave?
 # process -> leave?
@@ -57,11 +66,8 @@ logger = logging.getLogger(log_name)
 # sm -> leave?
 # sync_now -> leave?
 # system_info -> leave?
-# version -> TODO
-# version_list -> TODO
 # watchannounce -> leave?
 # xport -> leave?
-
 
 class SimulatorDeviceServer(Device):
 
@@ -128,6 +134,13 @@ class SimulatorDeviceServer(Device):
             strat.attach()
 
         self.add_sensor(sensor)
+
+    def handle_request(self, sock, msg):
+        hang_requests = self._model.get_test_sensor('hang-requests').value()
+        if not hang_requests  or msg.name == 'watchdog':
+            return super(SimulatorDeviceServer, self).handle_request(sock, msg)
+        # If hang_requests is set we never reply
+        return
 
     @request(Str())
     @return_reply(Str())

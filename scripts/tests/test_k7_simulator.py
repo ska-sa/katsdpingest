@@ -1,4 +1,4 @@
-import unittest
+import unittest2 as unittest
 import os.path
 import subprocess
 import katcp
@@ -22,10 +22,20 @@ def retry(fn, exception, timeout=1, sleep_interval=0.025):
         break
     return retval
 
+class fixtures(object): pass
+
+def setUp():
+    fixtures.sim = SimulatorSetup()
+    fixtures.sim.setup_simulator_process()
+    #fixtures.sim = None
+def tearDown():
+    fixtures.sim.tear_down_simulator()
+
+
 class SimulatorSetup(object):
     def setup_simulator_process(self, extra_sim_parms=[]):
         # simulator host and port
-        device_host = '127.0.0.1' ; device_port = 2041
+        device_host = '127.0.0.1' ; device_port = 2041 ; test_device_port = 2042
         # Test that there is not already a service listening on that
         # port
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -42,44 +52,60 @@ class SimulatorSetup(object):
         #     'katcapture', 'conf', 'k7-local.conf')
         k7_conf_dir = os.path.join(
             os.path.dirname(__file__), '..', '..', 'katcapture', 'conf')
-        
+
         # Set up a process running the k7_simulator
         self.k7_simulator_proc = subprocess.Popen(
             [k7_simulator_file, '-p', '%d' %
              device_port, '-c', k7_conf_dir] + extra_sim_parms,
             stdout=self.k7_simulator_logfile, stderr=self.k7_simulator_logfile)
 
-        # Set up katcp client
+        # Set up katcp client for device and test interface
         self.k7_simulator_katcp = katcp.BlockingClient(device_host, device_port)
         self.k7_simulator_katcp.start()
+        self.k7_testinterface_katcp = katcp.BlockingClient(
+            device_host, test_device_port)
+        self.k7_testinterface_katcp.start()
         self.k7_simulator_katcp.wait_connected(1.)
-        # Wait for katcp client to become alive
+        self.k7_testinterface_katcp.wait_connected(1.)
+        # Wait for katcp clients to become alive
         help_reply, help_informs = retry(
             lambda : self.k7_simulator_katcp.blocking_request(
                 katcp.Message.request('help')),
             katcp.KatcpClientError)
+        help_reply, help_informs = retry(
+            lambda : self.k7_testinterface_katcp.blocking_request(
+                katcp.Message.request('help')),
+            katcp.KatcpClientError)
+
         # Get spead udp port
         cfg = ConfigParser.SafeConfigParser()
         cfg.read(os.path.join(k7_conf_dir, 'config-wbc'))
         spead_udp_port = cfg.getint('receiver', 'rx_udp_port')
 
-
         # Set up spead client
         self.speadrx = spead.TransportUDPrx(
             spead_udp_port, pkt_count=1024, buffer_size=51200000)
 
-    def katcp_req(self, *req):
+
+    def katcp_req(self, *req, **kwargs):
+        timeout = kwargs.get('timeout')
         return self.k7_simulator_katcp.blocking_request(
-            katcp.Message.request(*req))
+            katcp.Message.request(*req), timeout=timeout)
+
+    def katcp_test_req(self, *req, **kwargs):
+        timeout = kwargs.get('timeout')
+        return self.k7_testinterface_katcp.blocking_request(
+            katcp.Message.request(*req), timeout=timeout)
 
     def tear_down_simulator(self):
         # Stop the spead client
         self.speadrx.stop()
 
-        # Stop the katcp client
+        # Stop the katcp clients
         self.k7_simulator_katcp.stop()
+        self.k7_testinterface_katcp.stop()
         self.k7_simulator_katcp.join()
-
+        self.k7_testinterface_katcp.join()
         # Kill the k7_simulator process
         self.k7_simulator_proc.terminate()
         time.sleep(0.1)         # Give it a chance to exit gracefully
@@ -88,11 +114,7 @@ class SimulatorSetup(object):
 
 class TestCorrelatorData(unittest.TestCase):
     def setUp(self):
-        self.sim = SimulatorSetup()
-        self.sim.setup_simulator_process()
-
-    def tearDown(self):
-        self.sim.tear_down_simulator()
+        self.sim = fixtures.sim
 
     def test_data(self):
         # Set dump rate to 100ms to speed stuff up
@@ -179,3 +201,22 @@ class TestCorrelatorData(unittest.TestCase):
 class TestCorrelatorLabeling(unittest.TestCase):
     def test_labels(self):
         pass
+
+class TestTestInterface(unittest.TestCase):
+    def setUp(self):
+        self.sim = fixtures.sim
+        self.sim.katcp_test_req('hang-requests', 0)
+
+    def tearDown(self):
+        self.sim.katcp_test_req('hang-requests', 0)
+
+    def test_hang(self):
+        # Check that the simulator is currently working
+        self.assertTrue(self.sim.katcp_req('watchdog', timeout=0.25)[0].reply_ok())
+        self.assertTrue(self.sim.katcp_req('label-input', timeout=0.25)[0].reply_ok())
+        self.sim.katcp_test_req('hang-requests', 1)
+        with self.assertRaises(RuntimeError):
+            self.sim.katcp_req('label-input', timeout=0.25)
+        # Watchdogs should still work
+        self.assertTrue(self.sim.katcp_req('watchdog', timeout=0.25)[0].reply_ok())
+        
