@@ -137,7 +137,7 @@ class SimulatorDeviceServer(Device):
 
     def handle_request(self, sock, msg):
         hang_requests = self._model.get_test_sensor('hang-requests').value()
-        if not hang_requests  or msg.name == 'watchdog':
+        if not hang_requests or msg.name == 'watchdog':
             return super(SimulatorDeviceServer, self).handle_request(sock, msg)
         # If hang_requests is set we never reply
         return
@@ -162,7 +162,7 @@ class SimulatorDeviceServer(Device):
     @return_reply(Str())
     def request_start_tx(self, sock, msg):
         """Start the data stream."""
-        self._model._thread_paused = False
+        self._mode.start_data_stream()
         smsg = "Data stream started."
         activitylogger.info(smsg)
         return ("ok", smsg)

@@ -219,6 +219,12 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.spead_issue()
         super(K7CorrelatorModel, self).start(*names, **kwargs)
 
+    def start_data_stream(self):
+        if self.get_sensor('mode').value() == 'ready':
+            raise RuntimeError("Cannot dump data in 'ready' mode")
+        else:
+            self._thread_paused = False
+
     def get_adc_snap_shot(self, when, level, inputs):
         """Return fake ADC snapshot values for inputs
 
@@ -387,7 +393,7 @@ class K7CorrelatorModel(TestInterfaceModel):
             mode change. Defaults to 10
 
         """
-        valid_modes = ('nbc', 'wbc')
+        valid_modes = ('nbc', 'wbc', 'ready')
 
         if progress_callback is None: progress_callback = lambda x: x
         if mode not in valid_modes:
@@ -405,11 +411,15 @@ class K7CorrelatorModel(TestInterfaceModel):
             smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
             progress_callback(smsg)
 
-        if mode == 'wbc':
+        if mode != 'nbc':
             nbc_f_sens = self.get_sensor('nbc.frequency.current')
             nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
 
-        config_file = os.path.join(self.config_dir, 'config-'+mode)
+        if mode == 'ready':
+            # Fake ready mode using the wbc config as basis
+            config_file = os.path.join(self.config_dir, 'config-wbc')
+        else:
+            config_file = os.path.join(self.config_dir, 'config-'+mode)
         self.config = ModelCorrConf(config_file)
         self._spead_model = DBE7SpeadData(self.config)
         self._spead_model.set_acc_time(self.get_dump_period())
@@ -418,14 +428,20 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.get_sensor('sync_time').set_value(self._spead_model.sync_time, Sensor.NOMINAL)
         self.get_sensor('destination_ip').set_value(self.config['rx_meta_ip_str'])
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
-        self._thread_paused = False
+        if mode != 'ready':
+            self._thread_paused = False
 
     @property
     def labels(self):
         """Build a dict of input channel names -> antenna labels"""
+        if self.get_sensor('mode').value() == 'ready':
+            raise RuntimeError("Can't access antenna mapping in 'ready' mode")
+
         return dict(zip(self.config.get_unmapped_channel_names(),
                         self.config['antenna_mapping']))
 
     def set_antenna_mapping(self, channel, ant_name):
         """Set the antenna name of `channel` (e.g. 0x, 3y) to `ant_name`"""
+        if self.get_sensor('mode').value() == 'ready':
+            raise RuntimeError("Can't set antenna mapping in 'ready' mode")
         self.config.set_antenna_mapping(channel, ant_name)

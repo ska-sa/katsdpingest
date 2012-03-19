@@ -219,4 +219,3 @@ class TestTestInterface(unittest.TestCase):
             self.sim.katcp_req('label-input', timeout=0.25)
         # Watchdogs should still work
         self.assertTrue(self.sim.katcp_req('watchdog', timeout=0.25)[0].reply_ok())
-        
