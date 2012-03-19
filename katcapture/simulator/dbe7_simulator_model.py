@@ -5,6 +5,7 @@ import time
 import sys
 import logging
 import threading
+from math import floor
 import numpy as np
 from .dbe7_roach_models import XEngines, FEngines
 from .dbe7_spead_model import DBE7SpeadData
@@ -191,6 +192,10 @@ class K7CorrelatorModel(TestInterfaceModel):
             Sensor.BOOLEAN, 'hang-requests',
             'Requests on the real device other than watchdog hang if true',
             '', default=False))
+        self.add_test_sensor(Sensor(
+            Sensor.FLOAT, 'mode-change-delay',
+            'Time that correlator should hang while wating for the mode to change',
+            'seconds', [0, 1000], default=10))
 
     def _init_values(self):
         self.adc_value = 0
@@ -380,7 +385,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     def get_dump_period(self):
         return self._dump_period
 
-    def set_mode(self, mode, progress_callback=None, mode_delay=10):
+    def set_mode(self, mode, progress_callback=None, mode_delay=None):
         """Set DBE mode, can be one of 'wbc' or 'nbc'
 
         Parameters
@@ -389,11 +394,14 @@ class K7CorrelatorModel(TestInterfaceModel):
         mode -- 'nbc' or 'wbc', the desired mode
         progress_callback -- optional callback that is called with a string
             describing the 'progress' of mode changing.
-        mode_delay -- optional integer number of seconds to delay while doing
-            mode change. Defaults to 10
+        mode_delay -- optional number of seconds to delay while doing
+            mode change. Defaults to the value of the test_sensor
+            'mode-change-delay'
 
         """
         valid_modes = ('nbc', 'wbc', 'ready')
+        if mode_delay is None:
+            mode_delay = self.get_test_sensor('mode-change-delay').value()
 
         if progress_callback is None: progress_callback = lambda x: x
         if mode not in valid_modes:
@@ -406,9 +414,13 @@ class K7CorrelatorModel(TestInterfaceModel):
         self._thread_paused = True
         logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
 
-        for i in range(mode_delay):
+        for i in range(int(floor(mode_delay))):
             time.sleep(1)
             smsg = 'Doing some mode changing stuff on DBE %d' % (i+1)
+            progress_callback(smsg)
+        if mode_delay % 1 > 0.000001:
+            time.sleep(mode_delay % 1)
+            smsg = 'Doing some mode changing stuff on DBE.'
             progress_callback(smsg)
 
         if mode != 'nbc':

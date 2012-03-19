@@ -1,6 +1,8 @@
 import unittest2 as unittest
 import os.path
 import subprocess
+import string
+import random
 import katcp
 import spead
 import time
@@ -22,15 +24,21 @@ def retry(fn, exception, timeout=1, sleep_interval=0.025):
         break
     return retval
 
-class fixtures(object): pass
+class fixtures(object):
+    sim = None
 
-def setUp():
+# setup diliberately spelt wrong to keep nosetest out of it. Doing it
+# since nose hides module level setup/teardown errors:
+# https://github.com/nose-devs/nose/issues/506
+def sertup():
     fixtures.sim = SimulatorSetup()
     fixtures.sim.setup_simulator_process()
-    #fixtures.sim = None
-def tearDown():
-    fixtures.sim.tear_down_simulator()
 
+def tearDown():
+    try:
+        fixtures.sim.tear_down_simulator()
+    except BaseException, e:           # Work around nosetest nonsense
+        print(e)
 
 class SimulatorSetup(object):
     def setup_simulator_process(self, extra_sim_parms=[]):
@@ -102,18 +110,43 @@ class SimulatorSetup(object):
         self.speadrx.stop()
 
         # Stop the katcp clients
-        self.k7_simulator_katcp.stop()
-        self.k7_testinterface_katcp.stop()
-        self.k7_simulator_katcp.join()
-        self.k7_testinterface_katcp.join()
+        self.k7_simulator_katcp.stop(1)
+        self.k7_testinterface_katcp.stop(1)
+        self.k7_simulator_katcp.join(1)
+        self.k7_testinterface_katcp.join(1)
         # Kill the k7_simulator process
         self.k7_simulator_proc.terminate()
         time.sleep(0.1)         # Give it a chance to exit gracefully
         self.k7_simulator_proc.kill()
         self.k7_simulator_logfile.close()
 
-class TestCorrelatorData(unittest.TestCase):
+class ModuleSetupTestCase(unittest.TestCase):
     def setUp(self):
+        """Set up correlator process if needed and get correlator  to 'standard' setup"""
+        if fixtures.sim is None:
+            sertup()
+        fixtures.sim.katcp_test_req('hang-requests', 0)
+        self.set_mode_quickly('wbc')
+        self.set_standard_mode_delay()
+        self.set_standard_mapping()
+
+    def set_standard_mapping(self):
+        for i in range(8):
+            for pol in 'xy':
+                chan = '%d%s' % (i, pol)
+                fixtures.sim.katcp_req('label-input', chan, chan)
+
+    def set_standard_mode_delay(self):
+        fixtures.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay', '10')
+
+    def set_mode_quickly(self, mode):
+        fixtures.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay', '0')
+        fixtures.sim.katcp_req('mode', mode)
+
+
+class TestCorrelatorData(ModuleSetupTestCase):
+    def setUp(self):
+        super(TestCorrelatorData, self).setUp()
         self.sim = fixtures.sim
 
     def test_data(self):
@@ -198,16 +231,55 @@ class TestCorrelatorData(unittest.TestCase):
                     % max_spead_iters)
         return itemgroup
 
-class TestCorrelatorLabeling(unittest.TestCase):
-    def test_labels(self):
-        pass
-
-class TestTestInterface(unittest.TestCase):
+class TestCorrelatorLabeling(ModuleSetupTestCase):
     def setUp(self):
-        self.sim = fixtures.sim
-        self.sim.katcp_test_req('hang-requests', 0)
+        super(TestCorrelatorLabeling, self).setUp()
 
-    def tearDown(self):
+    def test_labels(self):
+        reply, informs = fixtures.sim.katcp_req('label-input')
+        # Check that we have the standard setup
+        expected_map = {'0x':'0x',
+                        '0y':'0y',
+                        '1x':'1x',
+                        '1y':'1y',
+                        '2x':'2x',
+                        '2y':'2y',
+                        '3x':'3x',
+                        '3y':'3y',
+                        '4x':'4x',
+                        '4y':'4y',
+                        '5x':'5x',
+                        '5y':'5y',
+                        '6x':'6x',
+                        '6y':'6y',
+                        '7x':'7x',
+                        '7y':'7y'}
+        def get_map_from_informs(informs):
+            input_map = {}
+            for inform in informs:
+                name, input = inform.arguments
+                input_map[input] = name
+            return input_map
+        actual_map = get_map_from_informs(informs)
+        # generate random channel names for the test
+        choice_chars = string.letters+string.digits
+        for k in expected_map.keys():
+            expected_map[k] = ''.join(random.choice(choice_chars)
+                                      for i in xrange(random.randint(1,12)))
+        # Set the mappings on the correlator
+        for input, name in expected_map.items():
+            reply, informs = fixtures.sim.katcp_req('label-input', input, name)
+            self.assertTrue(reply.reply_ok())
+
+        # Now see what the correlator actually has
+        reply, informs = fixtures.sim.katcp_req('label-input')
+        actual_map = get_map_from_informs(informs)
+        self.assertEqual(actual_map, expected_map)
+
+class TestTestInterface(ModuleSetupTestCase):
+    def setUp(self):
+        super(TestTestInterface, self).setUp()
+        self.sim = fixtures.sim
         self.sim.katcp_test_req('hang-requests', 0)
 
     def test_hang(self):
@@ -219,3 +291,46 @@ class TestTestInterface(unittest.TestCase):
             self.sim.katcp_req('label-input', timeout=0.25)
         # Watchdogs should still work
         self.assertTrue(self.sim.katcp_req('watchdog', timeout=0.25)[0].reply_ok())
+
+    def test_mode_change_time(self):
+        self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay', '0')
+        # Get us into a known mode
+        reply, informs = self.sim.katcp_req('mode', 'ready')
+        delay1 = 0.1
+        self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay',
+                                str(delay1))
+        start = time.time()
+        reply, informs = self.sim.katcp_req('mode', 'nbc')
+        duration = time.time() - start
+        self.assertTrue(reply.reply_ok())
+        # Mode change should take at least delay1 seconds
+        self.assertGreaterEqual(duration, delay1)
+        self.assertLess(duration, delay1+0.1)   # But really should not take much longer
+        delay2 = 1.3
+        self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay',
+                                str(delay2))
+        start = time.time()
+        reply, informs = self.sim.katcp_req('mode', 'wbc')
+        duration = time.time() - start
+        # Mode change should take at least delay2 seconds
+        self.assertGreaterEqual(duration, delay2)
+        self.assertLess(duration, delay2+0.1)   # But really should not take much longer
+
+class TestReadyMode(ModuleSetupTestCase):
+    """Test proper functioning of ready mode, i.e. does ?label-input break"""
+    def setUp(self):
+        super(TestReadyMode, self).setUp()
+
+    def test_label(self):
+        # Check that it is broken in ready mode
+        self.set_mode_quickly('ready')
+        reply, informs = fixtures.sim.katcp_req('label-input')
+        self.assertFalse(reply.reply_ok())
+        reply, informs = fixtures.sim.katcp_req('label-input', '0x', 'bananans')
+        self.assertFalse(reply.reply_ok())
+        # Now check that it actually would have worked in another mode!
+        self.set_mode_quickly('wbc')
+        reply, informs = fixtures.sim.katcp_req('label-input')
+        self.assertTrue(reply.reply_ok())
+        reply, informs = fixtures.sim.katcp_req('label-input', '0x', 'bananans')
+        self.assertTrue(reply.reply_ok())

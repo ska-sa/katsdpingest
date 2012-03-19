@@ -3,7 +3,7 @@ import re
 from katcore.sim import base
 from katcp import Sensor
 from katcp.kattypes import request, return_reply
-from katcp.kattypes import Str, Int, Bool
+from katcp.kattypes import Str, Int, Bool, Discrete, Timestamp
 from katcp import Message
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
@@ -142,3 +142,39 @@ class SimTestDevice(base.SimTestDevice):
         """Make device hang on all requests other than watchdog"""
         self._model.get_test_sensor('hang-requests').set_value(hang)
         return ('ok',)
+
+    @request(Str(), Str(),
+             Discrete(('unknown','nominal','warn','error','failure'), optional=True),
+             Timestamp(optional=True))
+    @return_reply()
+    def request_set_test_sensor_value(self, sock, sensorname, value, status, timestamp):
+        """Set a test sensor's value, status and timestamp.
+
+        Parameters
+        ----------
+        sensor : str
+            Name of the sensor whose value to set.
+        value : object
+            The sensor's value. Type should be appropriate for named sensor.
+        status : {'unknown','nominal','warn','error','failure'}
+            The sensor value's status. Optional.
+        timestamp : float, in milliseconds since the Unix Epoch
+            The sensor value's timestamp. Optional.
+
+        Returns
+        -------
+        success : {'ok', 'fail'}
+            Whether setting the sensor values, status and timestamp succeeded.
+        """
+        try:
+            sensor = self._model.get_test_sensor(sensorname)
+            value = sensor.parse_value(value)
+            if not status and not timestamp and hasattr(self._model, "_update_test_sensor"):
+                self._model._update_test_sensor(sensor, value)
+            else:
+                status = sensor.STATUS_NAMES[status] if status else sensor.NOMINAL
+                sensor.set_value(value, status, timestamp)
+        except ValueError, e:
+            return ('fail', e)
+
+        return ['ok']
