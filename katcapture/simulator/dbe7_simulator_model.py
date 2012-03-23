@@ -73,7 +73,7 @@ class TestInterfaceModel(ThreadedModel):
             raise ValueError("Unknown sensor '%s'." % sensorname)
         return sensor
 
-    def get_sensors(self):
+    def get_test_sensors(self):
         """Get list of all sensors"""
         return self.test_sensors.values()
 
