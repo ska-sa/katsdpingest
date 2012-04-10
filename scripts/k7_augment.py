@@ -37,12 +37,12 @@ augment_version = 0
 errors = 0
 section_reports = {}
 
-def get_input_info(array_cfg):
+def get_input_info(array_config):
     """Get correlator input mapping and delays from config system.
 
     Parameters
     ----------
-    array_cfg : :class:`katcorelib.targets.ArrayConfig` object
+    array_config : :class:`katcorelib.targets.ArrayConfig` object
         ArrayConfig object from which to extract correlator info
 
     Returns
@@ -56,7 +56,7 @@ def get_input_info(array_cfg):
 
     """
     config_antennas, dbe_delay, real_to_dbe = set(), {}, {}
-    for k, v in array_cfg.correlator.inputs.iteritems():
+    for k, v in array_config.correlator.inputs.iteritems():
         # Connection on DBE side is labelled '0x', '1y', etc.
         dbe = '%d%s' % k
         # Connection on antenna side is labelled '1h', '2h', etc.
@@ -68,12 +68,12 @@ def get_input_info(array_cfg):
         real_to_dbe[real] = dbe
     return config_antennas, dbe_delay, real_to_dbe
 
-def get_antenna_info(array_cfg):
+def get_antenna_info(array_config):
     """Get antenna objects, positions and diameter from config system.
 
     Parameters
     ----------
-    array_cfg : :class:`katcorelib.targets.ArrayConfig` object
+    array_config : :class:`katcorelib.targets.ArrayConfig` object
         ArrayConfig object from which to extract antenna info
 
     Returns
@@ -84,19 +84,15 @@ def get_antenna_info(array_cfg):
         Antenna positions in ECEF coordinates, in metres
     antenna_diameter : float
         Antenna dish diameter (taken from first dish in array)
-    noise_diode_models : dict
-        Mapping from '%(antenna)_%(diode)_%(pol)' to noise diode model CSV file
 
     """
-    antenna_positions, antennas, noise_diode_models = [], {}, {}
-    for ant_name, ant_cfg in array_cfg.antennas.iteritems():
+    antenna_positions, antennas = [], {}
+    for ant_name, ant_cfg in array_config.antennas.iteritems():
         antenna_positions.append(ant_cfg.observer.position_ecef)
         antennas[ant_name] = ant_cfg.observer
-        for nd_name, nd_file in ant_cfg.noise_diode_models.iteritems():
-            noise_diode_models[ant_name + "_" + nd_name] = nd_file
     antenna_positions = np.array(antenna_positions)
     antenna_diameter = antennas.values()[0].diameter
-    return antennas, antenna_positions, antenna_diameter, noise_diode_models
+    return antennas, antenna_positions, antenna_diameter
 
 def load_csv_with_header(csv_file):
     """Load CSV file containing commented-out header with key-value pairs.
@@ -331,10 +327,11 @@ smsg = "Found %d files to process" % len(files)
 print smsg
 activitylogger.info(smsg)
 
- # build an kat object for history gathering purposes
+# build an kat object for history gathering purposes
 print "Creating KAT connections..."
 kat = katcorelib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
- # check that we have basic connectivity (i.e. two antennas)
+
+# check that we have basic connectivity (i.e. two antennas)
 time.sleep(2)
 while not kat.rfe7.is_connected():
      # wait for at least rfe7 to become stable as we query it straight away.
@@ -345,22 +342,25 @@ while not kat.rfe7.is_connected():
     time.sleep(30)
     batch_count += 1
 initial_lo1 = 0
-dbe_client = getattr(kat, options.dbe_name)
-array_config = dbe_client.sensor.array_config.get_value()
- # get array config from the correlator we're using
-#kat.disconnect()
- # we dont need live connection anymore
+
+#kat.disconnect()   # we dont need live connection anymore
 section_reports['configuration'] = str(options.system)
 
+katconfig = katcorelib.conf.KatuilibConfig(str(options.system))
+arrpath = katconfig.conf.get("array","array_dbe7")
+arrconf = katconf.ArrayConfig(arrpath)
+array_config = katcorelib.targets.ArrayConfig(arrconf)
 
-array_cfg = katcorelib.targets.ArrayConfig(array_config)
  # retrieve array configuration object for correlator
-config_antennas, dbe_delay, real_to_dbe = get_input_info(array_cfg)
+config_antennas, dbe_delay, real_to_dbe = get_input_info(array_config)
  # return dicts showing the current mapping between dbe inputs and real antennas
-antennas, antenna_positions, antenna_diameter, noise_diode_models = get_antenna_info(array_cfg)
+antennas, antenna_positions, antenna_diameter = get_antenna_info(array_config)
  # build the description and position (in ecef coords) arrays for the antenna in the selected configuration
-diodes = set([name.split('_')[1] for name in noise_diode_models])
  # map of noise diode model names to filenames
+print "Antennas", antennas, antenna_positions, antenna_diameter
+for antenna in config_antennas:
+    ant_name = 'ant' + str(antenna)
+    print ant_name, sorted(array_config.antennas[ant_name].ant_config_dict.keys())
 input_map = sorted(('ant' + real, dbe) for real, dbe in real_to_dbe.items())
  # map of antenna inputs (e.g. ant1h) to dbe inputs (e.g. 0x)
 
@@ -435,16 +435,15 @@ while(len(files) > 0 or options.batch):
                     section_reports[ant_name + ' description'] = "Error: Cannot find description for antenna %r" % (ant_name,)
                 for pol in ['h','v']:
                     for nd in ['coupler','pin']:
-                        nd_name = "%s_%s_%s" % (ant_name, nd, pol)
+                        nd_name = "noise_diode_model_%s_%s" % (nd, pol)
                         nd_fname = "unknown"
                         model = np.zeros((1,2), dtype=np.float32)
                         attrs = {}
                         try:
-                            nd_fname = noise_diode_models[nd_name]
-                            model, attrs = load_csv_with_header(katconf.resource_stream(nd_fname))
+                            model, attrs = load_csv_with_header(array_config.antennas[ant_name].ant_config_dict[nd_name])
                         except Exception, e:
                             print_tb()
-                            smsg = "Failed to open noise diode model file %s (for %s). Inserting null noise diode model. (%s)" % (nd_fname, nd_name, e)
+                            smsg = "Failed to open noise diode model (for %s). Inserting null noise diode model. (%s)" % (nd_name, e)
                             print smsg
                             logger.error(smsg)
                         try:
