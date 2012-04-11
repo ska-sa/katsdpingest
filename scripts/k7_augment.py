@@ -103,28 +103,35 @@ def load_csv_with_header(csv_file):
     Parameters
     ----------
     csv_file : file object or string
-        File object of opened CSV file, or string containing the file name
+        File object of opened CSV file, or string containing the loaded csv lines
 
     Returns
     -------
-    csv : array, shape (N, M)
+    csv_array : array, shape (N, M)
         CSV data as a 2-dimensional array with N rows and M columns
     attrs : dict
         Key-value pairs extracted from header
 
     """
     try:
-        csv_file = open(csv_file) if isinstance(csv_file, basestring) else csv_file
+        if isinstance(csv_file, basestring):
+            csv_lines = csv_file.splitlines()
+            #Each line has comma-delimited string with "Frequency, Temperature" both as floats
+            csv_array = np.array([ [float(l[0]),float(l[1])] for l in [line.split(",") for line in csv_file.splitlines() if line[0] != '#']])
+        else:
+            open(csv_file)
+            start = csv_file.tell()
+            csv_array = np.loadtxt(csv_file, comments='#', delimiter=',')
+            csv_file.seek(start) #Go back to start of file
+            csv_lines = csv_file.readlines()
+            close(csv_file)
     except Exception, e:
         print "Failed to load csv_file (%s). %s\n" % (csv_file, e)
         raise
-    start = csv_file.tell()
-    csv = np.loadtxt(csv_file, comments='#', delimiter=',')
-    csv_file.seek(start)
-    header = [line[1:].strip() for line in csv_file.readlines() if line[0] == '#']
+    header = [line[1:].strip() for line in csv_lines if line[0] == '#']
     keyvalue = re.compile('\A([a-z]\w*)\s*[:=]\s*(.+)')
     attrs = dict([keyvalue.match(line).groups() for line in header if keyvalue.match(line)])
-    return csv, attrs
+    return csv_array, attrs
 
 
 def get_sensor_data(sensor, start_time, end_time, dither=1, initial_value=False):
