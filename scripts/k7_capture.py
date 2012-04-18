@@ -378,7 +378,7 @@ class k7Capture(threading.Thread):
             if idx==0 and self.ctl is not None:
                 # add script metadata after receiving first frame. This should ensure that the values pulled are fresh.
                 for s in script_sensors:
-                    f[observation_map].attrs[s] = kat.ctl.sensor.__getattribute__(s).get_value()
+                    f[observation_map].attrs[s] = kat.sys.sensor.__getattribute__(s).get_value()
                 logger.info("Added initial observation sensor values...\n")
             idx+=1
             f.flush()
