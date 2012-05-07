@@ -29,8 +29,8 @@ def create_correction(N):
     # Obtain corresponding output power values (this is the measurement y)
     y_mean, y_std = np.array([avg_squared_quant_norm_meanstd(levels, N, var=x) for x in x_grid]).T
     # Avoid standard deviations that are too small (they will get cubed in log_joint_pdf_dx2)
-    valid_std = y_std ** 3 > 0
-    x_grid, y_mean, y_std = x_grid[valid_std], y_mean[valid_std], y_std[valid_std]
+    valid_y = y_std ** 3 > 0
+    x_grid, y_mean, y_std = x_grid[valid_y], y_mean[valid_y], y_std[valid_y]
 
     # Fit input-output relationship (both in mean and uncertainty)
     y_mean_spline = scikits.fitting.Spline1DFit(s=0)
@@ -91,8 +91,14 @@ def create_correction(N):
     prior = 'uniform'
     # Joint pdf between input and output, P(x, y), used to obtain initial guess for correction function
     joint = np.array([log_joint_pdf(x, y_grid, prior) for x in x_grid])
+    # Trace out peak of joint pdf along x-axis and keep region where peak position increases monotonically
+    # This avoids areas where zero-finding will probably fail due to poor initial guess for x
+    x_peak_ind = np.argmax(joint, axis=0)
+    good_ind = np.nonzero(np.diff(x_peak_ind) > 0)[0]
+    valid_x = slice(good_ind[0], good_ind[-1] + 1)
+    y_grid, joint, x_peak_ind = y_grid[valid_x], joint[:, valid_x], x_peak_ind[valid_x]
     # Use Laplace's method to get stats of posterior pdf P(x | y), by finding peak in P(x, y) as function of x
-    x_mean_guess = x_grid[np.argmax(joint, axis=0)]
+    x_mean_guess = x_grid[x_peak_ind]
     x_mean = np.array([scipy.optimize.brentq(lambda x: log_joint_pdf_dx(x, y, prior), 0.9 * x0, 1.1 * x0)
                        for x0, y in zip(x_mean_guess, y_grid)])
     x_std = np.array([1 / np.sqrt(-log_joint_pdf_dx2(x, y, prior)) for x, y in zip(x_mean, y_grid)])
