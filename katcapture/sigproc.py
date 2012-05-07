@@ -56,9 +56,11 @@ class ProcBlock(object):
 
     def init_flags(self, flag_size=8):
         """Initialise a flag array based on the shape of current.
+
         Typically this is called after updating the current reference to the current data.
         Flags are stored in the final axis of the array (with size as given in flag_size).
         Flag size must be a multiple of 8 to allow packbits to work unambiguously.
+
         """
         if flag_size % 8 != 0:
             self.logger.error("given flag_size (%i) is not a multiple of 8." % flag_size)
@@ -109,9 +111,10 @@ class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.
 
     Parameters
-    ==========
+    ----------
     scale_factor : float
         The scale factor to use.
+
     """
     def __init__(self, scale_factor, *args, **kwargs):
         super(Scale, self).__init__(*args, **kwargs)
@@ -131,11 +134,12 @@ class RFIThreshold2(ProcBlock):
     of the supplied frame.
 
     Parameters
-    ==========
+    ----------
     n_sigma : float
        The number of std deviations allowed
+
     """
-    def __init__(self, axis=0, n_sigma=11.0,spike_width=3, *args, **kwargs):
+    def __init__(self, axis=0, n_sigma=11.0, spike_width=3, *args, **kwargs):
         super(RFIThreshold2, self).__init__(*args, **kwargs)
         self.n_sigma = n_sigma
         self.spike_width = spike_width
@@ -185,9 +189,10 @@ class RFIThreshold(ProcBlock):
     of the supplied frame.
 
     Parameters
-    ==========
+    ----------
     n_sigma : float
        The number of std deviations allowed
+
     """
     def __init__(self,axis=0, *args, **kwargs):
         super(RFIThreshold, self).__init__(*args, **kwargs)
@@ -229,6 +234,7 @@ class RFIThreshold(ProcBlock):
 #        return np.packbits(flags.astype(np.int8))
 
 ###################################################################################################################
+
 class GainCal(ProcBlock):
     """Produce weights for gain calibration.
     
@@ -244,6 +250,7 @@ class GainCal(ProcBlock):
         The number of dumps that make a single integration.
     nd_on_dumps : int
         The number of consecutive dumps in the integration during which the noise diode was firing.
+
     """
     def __init__(self, nd_power, int_dumps, nd_on_dumps, *args, **kwargs):
         self.nd_power = nd_power
@@ -259,6 +266,7 @@ class GainCal(ProcBlock):
         Off power is measured either side of the noise diode on interval (if firing is in the first dump then only the trailing dump is selected.)
         This allows us to calculate a counts per K conversion.
         Autocorrelations are assigned the average of the number for the two antenna/pols producing it.
+
         """
         if self.nd_on_dumps > 1:
             print "Support is currently limited to single dump."
