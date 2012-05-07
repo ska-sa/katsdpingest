@@ -3,6 +3,8 @@ import numpy as np
 from katsdisp.data import CorrProdRef
 import scipy.signal as signal
 import logging
+from .vanvleck import create_correction
+
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -98,14 +100,6 @@ class ProcBlock(object):
             descr.append("No current data.")
         return "\n".join(descr)
 
-class VanVleck(ProcBlock):
-    """Perform van vleck corrections on the incoming data."""
-    def __init__(self, *args, **kwargs):
-        super(VanVleck, self).__init__(*args, **kwargs)
-
-    def _proc(self):
-         # pass for now
-        return None
 
 class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.
@@ -126,6 +120,40 @@ class Scale(ProcBlock):
         self.current[:] = (np.float32(self.current.view(np.int32)) / (1.0 * self.scale_factor))[:]
          # avoid making a new current object. Just replace contents.
         return None
+
+
+class VanVleckOutOfRangeError(Exception):
+    """Input power is out of range of correction function."""
+    pass
+
+class VanVleck(ProcBlock):
+    """Perform Van Vleck (quantisation) correction on the incoming data.
+
+    This currently only corrects the autocorrelation values.
+
+    Parameters
+    ----------
+    accum_per_int : int, optional
+        Number of accumulations per dump / integration
+
+    """
+    def __init__(self, accum_per_int=390625, *args, **kwargs):
+        super(VanVleck, self).__init__(*args, **kwargs)
+        self.correct_mean, self.correct_std = create_correction(accum_per_int)
+
+    def _proc(self):
+        # Iterate over the auto correlations
+        for auto in self.cpref.autos:
+            # Since autocorrelations are real, ignore the imaginary part of visibilities
+            # Also take half the power to account for complex input data (correct_mean expects real data)
+            auto_power = 0.5 * self.current[:, auto, 0]
+            # Check whether input power is in the expected range (could indicate that correction was already done)
+            if np.any(auto_power < 0.0) or np.any(auto_power > 49.0):
+                raise VanVleckOutOfRangeError('Power out of range - bad indexing or Van Vleck correction already done')
+            self.current[:, auto, 0] = 2.0 * self.correct_mean(auto_power)
+        # Contents of current data are updated in-place
+        return None
+
 
 class RFIThreshold2(ProcBlock):
     """Simple RFI flagging through thresholding.
@@ -181,6 +209,7 @@ class RFIThreshold2(ProcBlock):
 
             self.flags[:,bl_index,4] = outliers
              # set appropriate flag bit for detected RFI
+
 
 class RFIThreshold(ProcBlock):
     """Simple RFI flagging through thresholding.
