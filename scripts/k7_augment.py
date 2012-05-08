@@ -354,7 +354,7 @@ initial_lo1 = 0
 section_reports['configuration'] = str(options.system)
 
 katconfig = katcorelib.conf.KatuilibConfig(str(options.system))
-arrpath = katconfig.conf.get("array","array_dbe7")
+arrpath = katconfig.conf.get("array","array_kat7")
 arrconf = katconf.ArrayConfig(arrpath)
 array_config = katcorelib.targets.ArrayConfig(arrconf)
 
