@@ -94,7 +94,9 @@ def create_correction(N):
     # Trace out peak of joint pdf along x-axis and keep region where peak position increases monotonically
     # This avoids areas where zero-finding will probably fail due to poor initial guess for x
     x_peak_ind = np.argmax(joint, axis=0)
-    good_ind = np.nonzero(np.diff(x_peak_ind) > 0)[0]
+    x_increasing = np.r_[np.diff(x_peak_ind) > 0, True]
+    x_not_clipped = (x_peak_ind > 0) & (x_peak_ind < joint.shape[0] - 1)
+    good_ind = np.nonzero(x_increasing & x_not_clipped)[0]
     valid_x = slice(good_ind[0], good_ind[-1] + 1)
     y_grid, joint, x_peak_ind = y_grid[valid_x], joint[:, valid_x], x_peak_ind[valid_x]
     # Use Laplace's method to get stats of posterior pdf P(x | y), by finding peak in P(x, y) as function of x
