@@ -50,7 +50,7 @@ sdisp_ips = {}
 def small_build(system):
     print "Creating KAT connections..."
     katconfig = katcorelib.conf.KatuilibConfig(system)
-    ctl_config = katconfig.clients['ctl']
+    ctl_config = katconfig.clients['sys']
     ctl = katcorelib.build_client(ctl_config.name, ctl_config.ip, ctl_config.port)
     count=0
     while not ctl.is_connected() and count < 6:
