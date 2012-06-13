@@ -190,7 +190,7 @@ class k7Capture(threading.Thread):
         self._label_idx += 1
 
     def init_file(self):
-        self.fname = "/var/kat/data/" + str(int(time.time())) + ".writing.h5"
+        self.fname = "/var/kat/data/staging/" + str(int(time.time())) + ".writing.h5"
         f = h5py.File(self.fname, mode="w")
         f['/'].attrs['version'] = hdf5_version
         f['/'].create_group('Data')
