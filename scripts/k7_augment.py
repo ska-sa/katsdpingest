@@ -336,7 +336,7 @@ activitylogger.info(smsg)
 
 # build an kat object for history gathering purposes
 print "Creating KAT connections..."
-kat = katcorelib.tbuild(options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
+kat = katcorelib.tbuild(system=options.system, log_file="kat.k7aug.log", log_level=logging.ERROR)
 
 # check that we have basic connectivity (i.e. two antennas)
 time.sleep(2)
