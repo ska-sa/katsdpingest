@@ -216,13 +216,6 @@ def create_group(f, name):
         ng = f[name]
     return ng
 
-def get_lo1_frequency(start_time):
-    try:
-        return kat.sensors.rfe7_rfe7_lo1_frequency.get_stored_history(select=False, start_seconds=start_time, end_seconds=start_time, last_known=True)[1][0]
-    except Exception:
-        section_reports['lo1_frequency'] = "Warning: Failed to get a stored value for lo1 frequency. Defaulting to 6022000000.0"
-        return 6022000000.0
-
 def terminate(_signum, _frame):
     print "augment - User requested terminate..."
     print "augment stopped"
@@ -429,7 +422,7 @@ while(len(files) > 0 or options.batch):
                 ac = create_group(acg, ant_name)
                 stime = time.time()
                 for sensor in antenna_sensors:
-                    insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
+                    insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=sensors_iv.has_key(sensor))
                 if options.verbose:
                     smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
                     print smsg
@@ -464,7 +457,7 @@ while(len(files) > 0 or options.batch):
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
-                insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=(sensors_iv.has_key(sensor) and True or False))
+                insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=sensors_iv.has_key(sensor))
 
             for sensor in rfe_sensors:
                 sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=True, default=initial_lo1)
