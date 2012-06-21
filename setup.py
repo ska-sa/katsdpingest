@@ -16,6 +16,7 @@ setup (
         ],
     install_requires = [
         'scikits.fitting',
+        'pysolr',
     ],
     zip_safe = False,
 )
