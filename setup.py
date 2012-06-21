@@ -14,5 +14,8 @@ setup (
         "scripts/k7_capture.py",
         "scripts/k7_simulator.py",
         ],
+    install_requires = [
+        'scikits.fitting',
+    ],
     zip_safe = False,
 )
