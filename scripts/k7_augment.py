@@ -184,7 +184,7 @@ def insert_sensor(name, dataset, obs_start, obs_end, int_time, iv=False, default
         if sensor_len == 0:
             if default is not None:
                 section_reports[name] = "Warning: Sensor %s has no data for the specified time period. Inserting default value of" % (default,)
-                s_dset = dataset.create_dataset(sensor_i.name, data=np.rec.fromarrays([[time.time()],[default],[0]], names='timestamp, value, status'))
+                s_dset = dataset.create_dataset(sensor_i.name, data=np.rec.fromarrays([[time.time()],[default],['failure']], names='timestamp, value, status'))
             else:
                 section_reports[name] = "Warning: Sensor %s has no data for the specified time period. Inserting empty dataset."
                 s_dset = dataset.create_dataset(sensor_i.name, [], maxshape=None)
@@ -302,12 +302,9 @@ enviro_sensors = ["asc_air_temperature","asc_air_pressure","asc_air_relative_hum
 rfe_sensors = ["rfe7_lo1_frequency"]
  # a list of RFE sensors to insert
 beam_sensors = ["%s_target" % (options.dbe_name,)]
- # a list of sensor for beam 0
+ # a list of sensors for beam 0
 
-sensors = {'ant':antenna_sensors, 'anc':enviro_sensors, 'rfe7':rfe_sensors}
- # mapping from sensors to proxy
-
-sensors_iv = {"rfe3_rfe15_noise_pin_on":True, "rfe3_rfe15_noise_coupler_on":True, "activity":True, "target":True,"observer":True,"lock":True}
+sensors_iv = ["rfe3_rfe15_noise_pin_on", "rfe3_rfe15_noise_coupler_on", "activity", "target", "rfe7_lo1_frequency"]
  # indicate which sensors will require an initial value fetch
 
 ######### Start of augment code #########
@@ -341,7 +338,6 @@ while not kat.rfe7.is_connected():
     sys.stdout.flush()
     time.sleep(30)
     batch_count += 1
-initial_lo1 = 0
 
 #kat.disconnect()   # we dont need live connection anymore
 section_reports['configuration'] = str(options.system)
@@ -350,7 +346,6 @@ katconfig = katcorelib.conf.KatuilibConfig(str(options.system))
 arrpath = katconfig.conf.get("array","array_kat7")
 arrconf = katconf.ArrayConfig(arrpath)
 array_config = katcorelib.targets.ArrayConfig(arrconf)
-
  # retrieve array configuration object for correlator
 config_antennas, dbe_delay, real_to_dbe = get_input_info(array_config)
  # return dicts showing the current mapping between dbe inputs and real antennas
@@ -422,7 +417,7 @@ while(len(files) > 0 or options.batch):
                 ac = create_group(acg, ant_name)
                 stime = time.time()
                 for sensor in antenna_sensors:
-                    insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=sensors_iv.has_key(sensor))
+                    insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
                 if options.verbose:
                     smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
                     print smsg
@@ -457,14 +452,14 @@ while(len(files) > 0 or options.batch):
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
-                insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=sensors_iv.has_key(sensor))
+                insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
 
             for sensor in rfe_sensors:
-                sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=True, default=initial_lo1)
+                insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv, default=0)
                 try:
                     conv_lo1 = rfeg[getattr(kat.sensors, "rfe7_" + sensor).name].value[-1][1]
                      # get the value of the last known good rfe7 lo1 frequency
-                    rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
+                    rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], ['nominal']], names='timestamp, value, status'))
                 except Exception:
                     print_tb()
                     smsg = "Centre frequency already saved. Not replacing existing center-frequency."
