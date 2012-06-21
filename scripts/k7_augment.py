@@ -174,7 +174,7 @@ def insert_sensor(name, dataset, obs_start, obs_end, int_time, iv=False, default
     pstime = time.time()
     sensor_len = 0
     try:
-        sensor_i = kat.sensors.__dict__[name]
+        sensor_i = getattr(kat.sensors, name)
         if sensor_i.name in dataset:
             sensor_len = dataset[sensor_i.name].len()
             section_reports[name] = "Success (Note: Existing data for this sensor was not changed.)"
@@ -462,7 +462,7 @@ while(len(files) > 0 or options.batch):
             for sensor in rfe_sensors:
                 sensor_len = insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=True, default=initial_lo1)
                 try:
-                    conv_lo1 = rfeg[kat.sensors.__dict__["rfe7_"+sensor].name].value[-1][1]
+                    conv_lo1 = rfeg[getattr(kat.sensors, "rfe7_" + sensor).name].value[-1][1]
                      # get the value of the last known good rfe7 lo1 frequency
                     rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], [0]], names='timestamp, value, status'))
                 except Exception:
