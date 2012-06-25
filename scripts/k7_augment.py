@@ -30,7 +30,7 @@ import katconf
 
 major_version = 2
  # only augment files of this major version
-augment_version = 0
+augment_version = 1
  # the minor version number created by this version of augment
  # will override any existing version
 
@@ -169,43 +169,44 @@ def get_sensor_data(sensor, start_time, end_time, dither=1, initial_value=False)
     print "Retrieved data of length",len(data[1]),"in",time.time()-stime,"s"
     return np.rec.fromarrays([initial_data[0] + data[0], initial_data[1] + data[1], initial_data[2] + data[2]], names='timestamp, value, status')
 
-def insert_sensor(name, dataset, obs_start, obs_end, int_time, iv=False, default=None):
+def insert_sensor(device, name, group, obs_start, obs_end, int_time, iv=False, default=None):
     global errors
     pstime = time.time()
     sensor_len = 0
+    full_name = device + "_" + name
     try:
-        sensor_i = getattr(kat.sensors, name)
-        if sensor_i.name in dataset:
-            sensor_len = dataset[sensor_i.name].len()
-            section_reports[name] = "Success (Note: Existing data for this sensor was not changed.)"
+        sensor_i = getattr(kat.sensors, full_name)
+        if sensor_i.name in group:
+            sensor_len = group[sensor_i.name].len()
+            section_reports[full_name] = "Success (Note: Existing data for this sensor was not changed.)"
             return sensor_len
         data = get_sensor_data(sensor_i, obs_start, obs_end, int_time, initial_value=iv)
         sensor_len = np.multiply.reduce(data.shape)
         if sensor_len == 0:
             if default is not None:
-                section_reports[name] = "Warning: Sensor %s has no data for the specified time period. Inserting default value of" % (default,)
-                s_dset = dataset.create_dataset(sensor_i.name, data=np.rec.fromarrays([[time.time()],[default],['failure']], names='timestamp, value, status'))
+                section_reports[full_name] = "Warning: Sensor %s has no data for the specified time period. Inserting default value of" % (default,)
+                s_dset = group.create_dataset(sensor_i.name, data=np.rec.fromarrays([[time.time()],[default],['failure']], names='timestamp, value, status'))
             else:
-                section_reports[name] = "Warning: Sensor %s has no data for the specified time period. Inserting empty dataset."
-                s_dset = dataset.create_dataset(sensor_i.name, [], maxshape=None)
+                section_reports[full_name] = "Warning: Sensor %s has no data for the specified time period. Inserting empty dataset."
+                s_dset = group.create_dataset(sensor_i.name, [], maxshape=None)
         else:
-            s_dset = dataset.create_dataset(sensor_i.name, data=data)
-            section_reports[name] = "Success"
+            s_dset = group.create_dataset(sensor_i.name, data=data)
+            section_reports[full_name] = "Success"
         s_dset.attrs['name'] = sensor_i.name
         s_dset.attrs['description'] = sensor_i.description
         s_dset.attrs['units'] = sensor_i.units
         s_dset.attrs['type'] = sensor_i.type
-    except KeyError:
+    except AttributeError:
          # sensor does not exist
-        section_reports[name] = "Error: Cannot find sensor %s. This is most likely a configuration issue." % (name,)
+        section_reports[full_name] = "Error: Cannot find sensor %s. This is most likely a configuration issue." % (full_name,)
         errors += 1
     except Exception, err:
         if not str(err).startswith('Name already exists'):
-            section_reports[name] = "Error: Failed to create dataset for "+ name + " (" + str(err) + ")"
+            section_reports[full_name] = "Error: Failed to create dataset for "+ full_name + " (" + str(err) + ")"
             errors += 1
         else:
-            section_reports[name] = "Success (Note: Existing data for this sensor was not changed.)"
-    smsg = "Creation of dataset for sensor " + name + " took " + str(time.time() - pstime) + "s"
+            section_reports[full_name] = "Success (Note: Existing data for this sensor was not changed.)"
+    smsg = "Creation of dataset for sensor " + full_name + " took " + str(time.time() - pstime) + "s"
     if options.verbose: print smsg
     return sensor_len
 
@@ -295,16 +296,22 @@ antenna_sensors = ["activity","target",
                    "pos_actual_scan_azim","pos_actual_scan_elev","pos_actual_refrac_azim","pos_actual_refrac_elev",
                    "pos_actual_pointm_azim","pos_actual_pointm_elev","pos_request_scan_azim","pos_request_scan_elev",
                    "pos_request_refrac_azim","pos_request_refrac_elev","pos_request_pointm_azim","pos_request_pointm_elev",
-                   "rfe3_rfe15_noise_pin_on","rfe3_rfe15_noise_coupler_on"]
+                   "rfe3_rfe15_noise_pin_on","rfe3_rfe15_noise_coupler_on",
+                   "rfe5_attenuator_horizontal", "rfe5_attenuator_vertical"]
  # a list of antenna sensors to insert
 enviro_sensors = ["asc_air_temperature","asc_air_pressure","asc_air_relative_humidity","asc_wind_speed","asc_wind_direction"]
  # a list of enviro sensors to insert
 rfe_sensors = ["rfe7_lo1_frequency"]
  # a list of RFE sensors to insert
-beam_sensors = ["%s_target" % (options.dbe_name,)]
+beam_sensors = ["target"]
  # a list of sensors for beam 0
+dbe_sensors = ["target", "auto_delay", "dbe_mode"]
+ # a (partial) list of DBE sensors to insert
+dbe_proxy = options.dbe_name
 
-sensors_iv = ["rfe3_rfe15_noise_pin_on", "rfe3_rfe15_noise_coupler_on", "activity", "target", "rfe7_lo1_frequency"]
+sensors_iv = ["activity", "target", "rfe3_rfe15_noise_pin_on", "rfe3_rfe15_noise_coupler_on",
+              "rfe5_attenuator_horizontal", "rfe5_attenuator_vertical",
+              "rfe7_lo1_frequency", "auto_delay", "dbe_mode"]
  # indicate which sensors will require an initial value fetch
 
 ######### Start of augment code #########
@@ -406,9 +413,10 @@ while(len(files) > 0 or options.batch):
             sg = create_group(f, "/MetaData/Sensors")
             ag = create_group(sg, "Antennas")
             acg = create_group(f, "/MetaData/Configuration/Antennas")
+            bg = create_group(sg, "Beams")
+            dbeg = create_group(sg, "DBE")
             rfeg = create_group(sg, "RFE")
             eg = create_group(sg, "Enviro")
-            bg = create_group(sg, "Beams")
 
             for antenna in range(1,8):
                 antenna = str(antenna)
@@ -417,7 +425,11 @@ while(len(files) > 0 or options.batch):
                 ac = create_group(acg, ant_name)
                 stime = time.time()
                 for sensor in antenna_sensors:
-                    insert_sensor(ant_name + "_" + sensor, a, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                    insert_sensor(ant_name, sensor, a, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                for pol in ('h', 'v'):
+                    sensor = "rfe7_downconverter_%s_%s_attenuation" % (ant_name, pol)
+                    insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=True)
+                 # add RFE7 attenuators too
                 if options.verbose:
                     smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
                     print smsg
@@ -449,31 +461,68 @@ while(len(files) > 0 or options.batch):
                             smsg = "Dataset %s.%s_%s_noise_diode_model already exists. Not replacing existing model." % (ac.name, pol, nd)
                             print smsg
                             logger.info(smsg)
+             # end of antenna loop
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
-                insert_sensor(sensor, b0, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                insert_sensor(dbe_proxy, sensor, b0, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+
+            for sensor in dbe_sensors:
+                insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+            try:
+                if hasattr(kat.sensors, dbe_proxy + "_dbe_centerfrequency"):
+                    insert_sensor(dbe_proxy, "dbe_centerfrequency", dbeg, obs_start, obs_end, int_time, iv=True)
+                    dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_dbe_centerfrequency").name].value
+                else:
+                    dbe_mode = dbeg[getattr(kat.sensors, dbe_proxy + "_dbe_mode").name].value[-1][1]
+                     # get the value of the last known good DBE mode
+                    sensor = 'dbe_' + dbe_mode + '_centerfrequency'
+                    insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=True)
+                    try:
+                        dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_" + sensor).name].value
+                        dbeg.create_dataset('dbe.centerfrequency', data=dbe_center_freq)
+                    except Exception:
+                        print_tb()
+                        smsg = "DBE center frequency already saved. Not replacing existing dbe.centerfrequency."
+                        print smsg
+                        logger.info(smsg)
+            except Exception:
+                print_tb()
+                smsg = "Failure obtaining DBE center frequency - using default of 200 MHz."
+                print smsg
+                logger.info(smsg)
+                dbe_center_freq = np.rec.fromarrays([[obs_start - 3600], [200e6], ['nominal']], names='timestamp, value, status')
+                # make it appear as if DBE center freq was set to the default value an hour before the observation
 
             for sensor in rfe_sensors:
-                insert_sensor("rfe7_" + sensor, rfeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv, default=0)
-                try:
-                    conv_lo1 = rfeg[getattr(kat.sensors, "rfe7_" + sensor).name].value[-1][1]
-                     # get the value of the last known good rfe7 lo1 frequency
-                    rfeg.create_dataset('center-frequency-hz', data=np.rec.fromarrays([[obs_start], [conv_lo1 - 4.2e9], ['nominal']], names='timestamp, value, status'))
-                except Exception:
-                    print_tb()
-                    smsg = "Centre frequency already saved. Not replacing existing center-frequency."
-                    print smsg
-                    logger.info(smsg)
+                insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv, default=np.nan)
+                if sensor == "rfe7_lo1_frequency":
+                    try:
+                        lo1_freq = np.sort(rfeg[getattr(kat.sensors, "rfe7_" + sensor).name].value, order=['timestamp'])
+                        dbe_center_freq = np.sort(dbe_center_freq, order=['timestamp'])
+                         # collect rfe7 lo1 frequencies and dbe center frequencies and ensure that they are sorted
+                        on_or_preceding = dbe_center_freq['timestamp'].searchsorted(lo1_freq['timestamp'] + int_time, side='right') - 1
+                         # find DBE center freq event preceding or within 1 dump of each lo1 freq change
+                         # this assumes that DBE center freq is only set once at the start or in lock-step with lo1 freq changes
+                        on_or_preceding[on_or_preceding < 0] = 0
+                         # since the first DBE center freq event still precedes the dataset, it is safe to revert to it
+                        center_freq = lo1_freq.copy()
+                        center_freq['value'] += 200e6 - dbe_center_freq['value'][on_or_preceding] - 4.2e9
+                         # calculate sky center frequency in Hz (see Mantis #1531)
+                        rfeg.create_dataset('center-frequency-hz', data=center_freq)
+                    except Exception:
+                        print_tb()
+                        smsg = "Center frequency already saved. Not replacing existing center-frequency-hz."
+                        print smsg
+                        logger.info(smsg)
 
             stime = time.time()
             for sensor in enviro_sensors:
-                insert_sensor("anc_" + sensor, eg, obs_start, obs_end, int_time)
+                insert_sensor("anc", sensor, eg, obs_start, obs_end, int_time)
             if options.verbose:
                 smsg = "Overall creation of enviro sensor table took " + str(time.time()-stime) + "s"
                 print smsg
                 logger.debug(smsg)
-             # end of antenna loop
             f['/'].attrs['augment_ts'] = time.time()
 
         except Exception, err:
