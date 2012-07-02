@@ -533,7 +533,7 @@ while(len(files) > 0 or options.batch):
             print smsg
             logger.error(smsg)
             activitylogger.error(smsg)
-            new_extension = "archive_failed.h5"
+            new_extension = "augment_failed.h5"
 
         try:
             log = np.rec.fromarrays([np.array(section_reports.keys()), np.array(section_reports.values())], names='section, message')
