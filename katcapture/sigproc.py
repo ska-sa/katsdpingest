@@ -47,7 +47,10 @@ class ProcBlock(object):
     _proc_times = []
     def __init__(self, **kwargs):
         self.cpref = CorrProdRef(**kwargs)
-        self.flag_types = ['reserved','static','cam','reserved','detected_rfi','predicted_rfi','reserved','reserved']
+        self.flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
+        self.flag_descriptions = ['reserved - bit 0','predefined static flag list','flag based on live CAM information',
+                                  'reserved - bit 3','RFI detected in the online system','RFI predicted from space based pollutants',
+                                  'reserved - bit 6','reserved - bit 7']
         self.expected_dtype = None
 
     def finalise_flags(self):
@@ -139,6 +142,7 @@ class VanVleck(ProcBlock):
     """
     def __init__(self, accum_per_int=390625, *args, **kwargs):
         super(VanVleck, self).__init__(*args, **kwargs)
+        self.expected_dtype = np.float32
         self.correct_mean, self.correct_std = create_correction(accum_per_int)
 
     def _proc(self):

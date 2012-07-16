@@ -23,6 +23,7 @@ import logging
 from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int, Float
 import katcapture.sigproc as sp
+from katsdisp.data import CorrProdRef
 
 try:
     import katconf
@@ -94,10 +95,10 @@ class k7Capture(threading.Thread):
         self._sd_metadata = None
         self.sdisp_ips = {}
         self._sd_count = 0
-        self.init_file()
         self.center_freq = 0
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
+        self.cpref = None
         self.int_time = 1.0
          # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
@@ -110,7 +111,12 @@ class k7Capture(threading.Thread):
          # at this stage the scale factor is unknown
         self.rfi = sp.RFIThreshold2()
          # basic rfi thresholding flagger
+        self.flags_description = [[nm,self.rfi.flag_descriptions[i]] for (i,nm) in enumerate(self.rfi.flag_names)]
+         # an array describing the flag produced by the rfi flagger
+        self.van_vleck = None
+         # defer creation until we know baseline ordering
         #### Done with blocks
+        self.init_file()
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
@@ -201,6 +207,7 @@ class k7Capture(threading.Thread):
         f['/'].create_group('Markup')
         f['/Markup'].create_dataset('labels', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('label', h5py.new_vlen(str))]))
          # create a label storage of variable length strings
+        f['/Markup'].create_dataset('flags_description',data=self.flags_description)
         f['/'].create_group('History')
         f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
         self._current_hdf5 = f
@@ -237,9 +244,9 @@ class k7Capture(threading.Thread):
         dump_size = 0
         datasets = {}
         datasets_index = {}
-        meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
+        meta_required = set(['n_chans','n_accs','n_bls','bls_ordering','bandwidth'])
          # we need these bits of meta data before being able to assemble and transmit signal display data
-        meta_desired = ['int_time', 'n_accs','center_freq']
+        meta_desired = ['int_time','center_freq']
          # if we find these, then what hey :)
         sd_slots = None
         sd_timestamp = None
@@ -261,15 +268,15 @@ class k7Capture(threading.Thread):
                     if name == 'int_time' and self.int_time == 1:
                         self.int_time = self.meta[name]
                         self._my_sensors["spead-dump-period"].set_value(self.meta[name])
+                if name in meta_required:
+                    logger.info("Meta data received (required) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
+                    self.meta[name] = ig[name]
+                    meta_required.remove(name)
                     if name == 'n_accs':
                         self.data_scale_factor = np.float32(ig[name])
                         self.scale.scale_factor = self.data_scale_factor
                         self._my_sensors["spead-accum-per-dump"].set_value(self.meta[name])
                         logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
-                if name in meta_required:
-                    logger.info("Meta data received (required) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
-                    self.meta[name] = ig[name]
-                    meta_required.remove(name)
                     if name == 'n_chans':
                         self._my_sensors["spead-num-chans"].set_value(self.meta[name])
                     if name == 'n_bls':
@@ -277,6 +284,10 @@ class k7Capture(threading.Thread):
                     if not meta_required:
                         self.set_baseline_mask()
                          # we first set the baseline mask in order to have the correct number of baselines
+                        self.van_vleck = sp.VanVleck(self.data_scale_factor, bls_ordering=self.meta['bls_ordering'])
+                        logger.info("Initialised Van Vleck correction using scale factor %i\n" % self.data_scale_factor)
+                        self.cpref = CorrProdRef(bls_ordering=self.meta['bls_ordering'])
+                         # since we now know the baseline ordering we can create the Van Vleck correction block
                         self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
                         logger.debug("Initialised sd frame to shape %s" % str(self.sd_frame.shape))
                         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
@@ -344,10 +355,20 @@ class k7Capture(threading.Thread):
                      # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
                     self.scale.proc()
                      # scale the data
+                    if self.van_vleck is not None:
+                        power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
+                        print power_before
+                        try:
+                            self.van_vleck.proc()
+                             # in place van vleck correction of the data
+                        except sp.VanVleckOutOfRangeError:
+                            logger.warning("Out of range error whilst applying Van Vleck data correction")
+                        power_after = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
+                        print "Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before)
                     sp.ProcBlock.current = sp.ProcBlock.current.copy()
                      # *** Dont delete this line ***
                      # since array uses advanced selection (baseline_mask not contiguous) we may
-                     # have a changed the striding underneath with can prevent the array being viewed
+                     # have a changed the striding underneath wich can prevent the array being viewed
                      # as complex64. A copy resets the stride to its natural form and fixes this.
                     sp.ProcBlock.current = sp.ProcBlock.current.view(np.complex64)[...,0]
                      # temporary reshape to complex, eventually this will be done by Scale
@@ -483,6 +504,11 @@ class CaptureDeviceServer(DeviceServer):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
+    @request()
+    @return_reply(Str())
+    def request_enable_van_vleck(self, sock):
+        """Enable Van Vleck correction of the auto-correlated visibilities."""
+        
     @request(Int())
     @return_reply(Str())
     def request_set_center_freq(self, sock, center_freq_hz):
