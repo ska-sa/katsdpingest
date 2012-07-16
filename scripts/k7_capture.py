@@ -508,7 +508,7 @@ class CaptureDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_enable_van_vleck(self, sock):
         """Enable Van Vleck correction of the auto-correlated visibilities."""
-        
+
     @request(Int())
     @return_reply(Str())
     def request_set_center_freq(self, sock, center_freq_hz):
@@ -521,6 +521,9 @@ class CaptureDeviceServer(DeviceServer):
         """
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
         self.rec_thread.center_freq = center_freq_hz
+        self.rec_thread.send_sd_metadata()
+        smsg = "SD Metadata resent"
+        activitylogger.info(smsg)
         return ("ok","set")
 
     @request(Str())
