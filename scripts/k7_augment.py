@@ -375,6 +375,7 @@ while(len(files) > 0 or options.batch):
         logger.info(smsg)
         activitylogger.info(smsg)
         new_extension = "h5"
+        new_path = ""
         try:
             f = File(fname, 'r+')
             current_version = f['/'].attrs.get('version', "0.0").split('.', 1)
@@ -534,6 +535,7 @@ while(len(files) > 0 or options.batch):
             logger.error(smsg)
             activitylogger.error(smsg)
             new_extension = "augment_failed.h5"
+            new_path = "./failed/"
 
         try:
             log = np.rec.fromarrays([np.array(section_reports.keys()), np.array(section_reports.values())], names='section, message')
@@ -568,7 +570,7 @@ while(len(files) > 0 or options.batch):
             #Drop the last two extensions of the file 123456789.xxxxx.h5 becomes 123456789.
             #And then add the new extension in its place thus 123456789.unaugmented.h5 becomes 123456789.h5 or 123456789.failed.h5
             lst = fname.split(".")
-            renfile = lst[0] + "." + new_extension
+            renfile = new_path + lst[0] + "." + new_extension
             os.rename(fname, renfile)
             smsg = "File has been renamed to " + str(renfile) + "\n"
             print smsg
