@@ -133,7 +133,9 @@ class k7Capture(threading.Thread):
         """Update the itemgroup for the signal display metadata to include any changes since last sent..."""
         self.ig_sd = spead.ItemGroup()
          # we need to clear the descriptor so as not to accidently send a signal display frame twice...
-        self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
+        if self.sd_frame is not None:
+            self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
+            self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape))
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
@@ -220,6 +222,10 @@ class k7Capture(threading.Thread):
             self._current_hdf5.close()
              # we may have ended capture before receiving any data packets and thus not have a current file
         self._current_hdf5 = None
+
+    def drop_sdisp_ip(self, ip):
+        logger.info("Removing ip %s from the signal display list." % (ip))
+        del self.sdisp_ips[ip]
 
     def add_sdisp_ip(self, ip, port):
         logger.info("Adding %s:%s to signal display list. Starting transport..." % (ip,port))
@@ -320,8 +326,6 @@ class k7Capture(threading.Thread):
                         item._changed = False
                     if name == 'xeng_raw':
                         f.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
-                        if self.rfi is not None:
-                            f[flags_dataset].attrs['flag_types'] = self.rfi.flag_types
                     if not item._changed:
                         continue
                      # if we built from an empty descriptor
@@ -333,24 +337,17 @@ class k7Capture(threading.Thread):
                         f[timestamps_dataset].resize(datasets_index[name]+1, axis=0)
                     if name == 'xeng_raw':
                         f[flags_dataset].resize(datasets_index[name]+1, axis=0)
-                if self.sd_frame is not None and name.startswith("xeng_raw"):
-                    sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
-                    if sd_slots is None:
-                        self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
-                         # make sure we have the right dtype for the sd data
-                        sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
-                        self.send_sd_metadata()
-                        t_it = self.ig_sd.get_item('sd_data')
-                        #print "Added SD frame dtype",t_it.dtype,"and shape",t_it.shape,". Metadata descriptors sent: %s" % self._sd_metadata
-                    scaled_data = np.float32(ig[name]) / self.data_scale_factor
-                    logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
-                    #logger.debug("Signal display frame: Max: %f, Min: %f, Mean: %f\n" % (np.max(scaled_data), np.min(scaled_data), np.mean(scaled_data)))
-                    self.ig_sd['sd_data'] = scaled_data[...,self.baseline_mask,:]
-                     # only send signal display data specified by baseline mask
-                    self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
-                    self.send_sd_data(self.ig_sd.get_heap())
                 if name.startswith("xeng_raw"):
-                     # we have data...
+                     # prepare signal display data handling if required
+                    if self.sd_frame is not None:
+                        sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
+                        if sd_slots is None:
+                            self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
+                             # make sure we have the right dtype for the sd data
+                            sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
+                            self.send_sd_metadata()
+                        self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
+
                     sp.ProcBlock.current = ig[name][...,self.baseline_mask,:]
                      # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
                     self.scale.proc()
@@ -383,6 +380,14 @@ class k7Capture(threading.Thread):
                      # write flags to file
                     f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
                      # write data to file (with temporary remap as mentioned above...)
+                    if self.sd_frame is not None:
+                        logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), \
+                                    "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
+                        self.ig_sd['sd_data'] = f[self.remap(name)][datasets_index[name]]
+                         # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
+                        self.ig_sd['sd_flags'] = flags
+                         # send out RFI flags with the data
+                        self.send_sd_data(self.ig_sd.get_heap())
                 else:
                     f[self.remap(name)][datasets_index[name]] = ig[name]
                 if name == 'timestamp':
@@ -509,7 +514,7 @@ class CaptureDeviceServer(DeviceServer):
     def request_enable_van_vleck(self, sock):
         """Enable Van Vleck correction of the auto-correlated visibilities."""
 
-    @request(Int())
+    @request(Float())
     @return_reply(Str())
     def request_set_center_freq(self, sock, center_freq_hz):
         """Set the center freq for use in the signal displays.
@@ -592,6 +597,17 @@ class CaptureDeviceServer(DeviceServer):
         smsg = "Script log entry added (%s)" % log
         activitylogger.info(smsg)
         return ("ok", smsg)
+
+    @request(Str())
+    @return_reply(Str())
+    def request_drop_sdisp_ip(self, sock, ip):
+        """Drop an IP address from the internal list of signal display data recipients."""
+        if self.rec_thread is not None:
+            if not self.sdisp_ips.has_key(ip):
+                return ("fail","The IP address specified (%s) does not exist in the current list of recipients." % (ip))
+            self.rec_thread.drop_sdisp_ip(ip)
+            return ("ok","The IP address has been dropped as a signal display recipient")
+        return ("fail","No active capture thread.")
 
     @request(Str())
     @return_reply(Str())
