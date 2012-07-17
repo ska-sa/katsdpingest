@@ -478,9 +478,11 @@ while(len(files) > 0 or options.batch):
                     dbe_mode = dbeg[getattr(kat.sensors, dbe_proxy + "_dbe_mode").name].value[-1][1]
                      # get the value of the last known good DBE mode
                     sensor = 'dbe_' + dbe_mode + '_centerfrequency'
-                    insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=True)
+                    sensor_len = insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=True)
+                    if sensor_len == 0:
+                        raise ValueError('DBE center frequency sensor not found or has no data')
+                    dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_" + sensor).name].value
                     try:
-                        dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_" + sensor).name].value
                         dbeg.create_dataset('dbe.centerfrequency', data=dbe_center_freq)
                     except Exception:
                         print_tb()
