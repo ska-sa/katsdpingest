@@ -34,7 +34,6 @@ except ImportError:
 hdf5_version = "2.0"
  # initial version describing indicating compatibility with our HDF5v2 spec. Minor revision may be incremented by augment at a later stage.
 
-
 mapping = {'xeng_raw':'/Data/correlator_data',
            'timestamp':'/Data/raw_timestamps'}
  # maps SPEAD element names to HDF5 paths
@@ -135,7 +134,7 @@ class k7Capture(threading.Thread):
          # we need to clear the descriptor so as not to accidently send a signal display frame twice...
         if self.sd_frame is not None:
             self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
-            self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape))
+            self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])

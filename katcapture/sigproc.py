@@ -22,8 +22,6 @@ class ProcBlock(object):
 
     Support for both inline modification and production of new data products is provided.
 
-    *** Preliminary ***
-
     A flag array is used to refer to values within the currently linked data that should be flagged. The flag array is eventually finalised
     into a packed int8 array hence the requirement for the flag column to be a multiple of 8. Currently the following bits are specified:
         0 - reserved
@@ -35,8 +33,9 @@ class ProcBlock(object):
         6 - reserved
         7 - reserved
 
-    *** End Preliminary ***
-
+    NOTE: Currently np.packbits is used to pack the boolean flag array into an integer value. This means that the flags
+          listed above are in MSB *first* order. e.g.. setting flag 4 (flag[:,:,4]=1) will toggle the 4th bit and produce an
+          integer value of 8 (00001000) once packed.
     """
     current = None
     history = None
