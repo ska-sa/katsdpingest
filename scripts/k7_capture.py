@@ -85,6 +85,7 @@ class k7Capture(threading.Thread):
         self.ctl = ctl
         self._label_idx = 0
         self._log_idx = 0
+        self._process_log_idx = 0
         self._current_hdf5 = None
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
@@ -116,6 +117,7 @@ class k7Capture(threading.Thread):
          # defer creation until we know baseline ordering
         #### Done with blocks
         self.init_file()
+        self.write_process_log(*self.rfi.description())
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
@@ -187,6 +189,14 @@ class k7Capture(threading.Thread):
         f['/History/script_log'][self._log_idx] = (time.time(), log)
         self._log_idx += 1
 
+    def write_process_log(self, process, args, revision):
+        """Write an entry into the process log."""
+        f = (self._current_hdf5 is None and self.init_file() or self._current_hdf5)
+        if self._process_log_idx > 0:
+            f['/History/process_log'].resize(self._process_log_idx+1, axis=0)
+        f['/History/process_log'][self._process_log_idx] = (process, args, revision)
+        self._process_log_idx += 1
+
     def write_label(self, label):
         """Write a sensor value directly into the current hdf5 at the specified locations.
            Note that this will create a new HDF5 file if one does not already exist..."""
@@ -211,6 +221,7 @@ class k7Capture(threading.Thread):
         f['/Markup'].create_dataset('flags_description',data=self.flags_description)
         f['/'].create_group('History')
         f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
+        f['/History'].create_dataset('process_log',[1], maxshape=[None], dtype=np.dtype([('process', h5py.new_vlen(str)), ('arguments', h5py.new_vlen(str)), ('revision', np.int32)]))
         self._current_hdf5 = f
         return f
 
@@ -280,6 +291,7 @@ class k7Capture(threading.Thread):
                     if name == 'n_accs':
                         self.data_scale_factor = np.float32(ig[name])
                         self.scale.scale_factor = self.data_scale_factor
+                        self.write_process_log(*self.scale.description())
                         self._my_sensors["spead-accum-per-dump"].set_value(self.meta[name])
                         logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
                     if name == 'n_chans':
@@ -290,6 +302,7 @@ class k7Capture(threading.Thread):
                         self.set_baseline_mask()
                          # we first set the baseline mask in order to have the correct number of baselines
                         self.van_vleck = sp.VanVleck(self.data_scale_factor, bls_ordering=self.meta['bls_ordering'])
+                        self.write_process_log(*self.van_vleck.description())
                         logger.info("Initialised Van Vleck correction using scale factor %i\n" % self.data_scale_factor)
                         self.cpref = CorrProdRef(bls_ordering=self.meta['bls_ordering'])
                          # since we now know the baseline ordering we can create the Van Vleck correction block
