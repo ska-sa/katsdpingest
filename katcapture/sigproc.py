@@ -3,7 +3,9 @@ import numpy as np
 from katsdisp.data import CorrProdRef
 import scipy.signal as signal
 import logging
+import inspect
 from .vanvleck import create_correction
+from .__init__ import __version__ as revision
 
 
 class ProcBlock(object):
@@ -46,11 +48,17 @@ class ProcBlock(object):
     _proc_times = []
     def __init__(self, **kwargs):
         self.cpref = CorrProdRef(**kwargs)
+        self.expected_dtype = None
         self.flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
         self.flag_descriptions = ['reserved - bit 0','predefined static flag list','flag based on live CAM information',
                                   'reserved - bit 3','RFI detected in the online system','RFI predicted from space based pollutants',
                                   'reserved - bit 6','reserved - bit 7']
-        self.expected_dtype = None
+        self._extracted_arguments = self._extract_args(inspect.currentframe(1))
+         # extract the arguments from the parent __init__
+
+    def _extract_args(self, frame):
+        args, _, _, values = inspect.getargvalues(frame)
+        return ", ".join(["%s=%s" % (k,values[k]) for k in args if k is not 'self'])
 
     def finalise_flags(self):
         """Packs flags into optimal structure and returns them to caller."""
@@ -101,6 +109,11 @@ class ProcBlock(object):
         else:
             descr.append("No current data.")
         return "\n".join(descr)
+
+    def description(self):
+        """Compact representation of Processing Block used in process logs in the hdf5 file."""
+        process = self.__class__.__name__
+        return (process, self._extracted_arguments, int(revision[1:]))
 
 
 class Scale(ProcBlock):
