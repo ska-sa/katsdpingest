@@ -121,9 +121,9 @@ class k7Capture(threading.Thread):
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
-        #if self._sd_count % 10 == 0:
-        #    logger.debug("Sending metadata heartbeat...")
-        #    self.send_sd_metadata()
+        if self._sd_count % 10 == 0:
+            logger.debug("Sending metadata heartbeat...")
+            self.send_sd_metadata()
 
         for tx in self.sdisp_ips.itervalues():
             tx.send_heap(data)
@@ -137,15 +137,15 @@ class k7Capture(threading.Thread):
         if self.sd_frame is not None:
             self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
             self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
-        self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
-                            shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
-        self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
-        logger.debug("Update metadata. Bls ordering: %s" % self.meta['bls_ordering'])
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
-        self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
+        self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
+                            shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
+        if self.meta.has_key('bls_ordering') and self.meta.has_key('bandwidth') and self.meta.has_key('n_chans'):
+            self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
+            self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.meta['bandwidth'])
-        self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
+            self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.meta['n_chans'])
         return copy.deepcopy(self.ig_sd.get_heap())
 
