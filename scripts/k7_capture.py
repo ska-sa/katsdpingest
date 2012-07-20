@@ -366,7 +366,6 @@ class k7Capture(threading.Thread):
                      # scale the data
                     if self.van_vleck is not None:
                         power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                        print power_before
                         try:
                             self.van_vleck.proc()
                              # in place van vleck correction of the data
