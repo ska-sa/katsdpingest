@@ -183,7 +183,7 @@ class RFIThreshold2(ProcBlock):
        The number of std deviations allowed
 
     """
-    def __init__(self, axis=0, n_sigma=11.0, spike_width=3, *args, **kwargs):
+    def __init__(self, axis=0, n_sigma=11.0, spike_width=6, *args, **kwargs):
         super(RFIThreshold2, self).__init__(*args, **kwargs)
         self.n_sigma = n_sigma
         self.spike_width = spike_width
