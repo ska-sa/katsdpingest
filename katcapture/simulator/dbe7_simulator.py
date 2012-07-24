@@ -282,15 +282,23 @@ class SimulatorDeviceServer(Device):
             return ("ok",str(len(self._model.labels)))
         else:
             inp = msg.arguments[0]
-            label = msg.arguments[1]
-
-        try:
-            self._model.set_antenna_mapping(inp, label)
+            if len(msg.arguments) > 1:
+                label = msg.arguments[1]
+            else:
+                label = None
+        if not label is None:
+            try:
+                self._model.set_antenna_mapping(inp, label)
+                return ('ok', label)
+            except ValueError:
+                return ("fail","Unknown input %s. Should be one of %s." % (
+                    inp, ', '.join(self._model.config.get_unmapped_channel_names())) )
+        else:
+            label = self._model.labels.get(inp)
+            if label is None:
+                return ("fail","Unknown input %s. Should be one of %s." % (
+                    inp, ', '.join(self._model.config.get_unmapped_channel_names())) )
             return ('ok', label)
-        except ValueError:
-            return ("fail","Unknown input %s. Should be one of %s." % (
-                inp, ', '.join(self._model.config.get_unmapped_channel_names())) )
-
 
     @request(Str(), Float(optional=True))
     @return_reply(Str())
@@ -310,14 +318,15 @@ class SimulatorDeviceServer(Device):
         activitylogger.info(smsg)
         return ("ok", smsg)
 
-    @return_reply()
+    @return_reply(Int())
     def request_capture_list(self, sock, req_msg):
         """list available data streams (?capture-list)"""
-        smsg = 'k7 %s %d' % (self._model.config['rx_meta_ip'],
-                             self._model.config['rx_udp_port'])
         self.reply_inform(
-            sock, Message.inform(req_msg.name, smsg), req_msg)
-        return ("ok", )
+            sock, Message.inform(req_msg.name, 'k7',
+                                 self._model.config['rx_meta_ip_str'],
+                                 self._model.config['rx_udp_port']),
+            req_msg)
+        return ("ok", 1)
 
 
     @return_reply(Str())

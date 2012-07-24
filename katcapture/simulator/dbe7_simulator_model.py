@@ -170,6 +170,8 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.add_sensor(Sensor(Sensor.INTEGER, "tone_freq",
                                "The frequency of the injected tone in Hz.","",
                                default=0, params=[0,2**32]))
+        self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
+
         dip_sens = Sensor(
             Sensor.STRING, "destination_ip",
             "The current destination address for data and metadata.","","")
@@ -183,9 +185,11 @@ class K7CorrelatorModel(TestInterfaceModel):
                             [0, 387.5*1000000])
         nbc_f_sens.set_value(0, Sensor.UNKNOWN)
         self.add_sensor(nbc_f_sens)
-        self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp_synchronised", "clock good", ""))
-        self.get_sensor('tone_freq').set_value(self.tone_freq, Sensor.NOMINAL)
-        self.get_sensor('ntp_synchronised').set_value(True, Sensor.NOMINAL)
+        self.add_sensor(Sensor(Sensor.BOOLEAN, 'corr.lru.available',
+                               'line replacement unit operational', ''))
+        self.get_sensor('corr.lru.available').set_value(True, Sensor.NOMINAL)
+        self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp.synchronised", "clock good", ""))
+        self.get_sensor('ntp.synchronised').set_value(True, Sensor.NOMINAL)
 
     def _init_test_sensors(self):
         self.add_test_sensor(Sensor(
