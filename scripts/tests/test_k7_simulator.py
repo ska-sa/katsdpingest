@@ -85,16 +85,6 @@ class SimulatorSetup(object):
                 katcp.Message.request('help')),
             katcp.KatcpClientError)
 
-        # Get spead udp port
-        cfg = ConfigParser.SafeConfigParser()
-        cfg.read(os.path.join(k7_conf_dir, 'config-wbc'))
-        spead_udp_port = cfg.getint('receiver', 'rx_udp_port')
-
-        # Set up spead client
-        self.speadrx = spead.TransportUDPrx(
-            spead_udp_port, pkt_count=1024, buffer_size=51200000)
-
-
     def katcp_req(self, *req, **kwargs):
         timeout = kwargs.get('timeout')
         return self.k7_simulator_katcp.blocking_request(
@@ -106,9 +96,6 @@ class SimulatorSetup(object):
             katcp.Message.request(*req), timeout=timeout)
 
     def tear_down_simulator(self):
-        # Stop the spead client
-        self.speadrx.stop()
-
         # Stop the katcp clients
         self.k7_simulator_katcp.stop(1)
         self.k7_testinterface_katcp.stop(1)
@@ -126,7 +113,7 @@ class ModuleSetupTestCase(unittest.TestCase):
         if fixtures.sim is None:
             sertup()
         fixtures.sim.katcp_test_req('hang-requests', 0)
-        self.set_mode_quickly('wbc')
+        self.set_mode_quickly('c16n400M1k')
         self.set_standard_mode_delay()
         self.set_standard_mapping()
 
@@ -144,10 +131,19 @@ class ModuleSetupTestCase(unittest.TestCase):
         fixtures.sim.katcp_req('mode', mode)
 
 
-class TestCorrelatorData(ModuleSetupTestCase):
+class TestCorrelatorDataWBC(ModuleSetupTestCase):
+    channels = 1024                    # c16n400M1k number of frequency channels
+    mode = 'c16n400M1k'
+    spead_udp_port = 7148
+
     def setUp(self):
-        super(TestCorrelatorData, self).setUp()
+        super(TestCorrelatorDataWBC, self).setUp()
         self.sim = fixtures.sim
+        self.set_mode_quickly(self.mode)
+        self.speadrx = spead.TransportUDPrx(
+            self.spead_udp_port, pkt_count=1024, buffer_size=51200000)
+        self.addCleanup(# Stop the spead client
+                        self.speadrx.stop)
 
     def test_data(self):
         # Set dump rate to 100ms to speed stuff up
@@ -187,7 +183,7 @@ class TestCorrelatorData(ModuleSetupTestCase):
 
     def verify_shapes(self, group):
         n_stokes = 4            # Number of stokes polarisation parameters
-        n_chans = 1024           # Number of wbc frequency channels
+        n_chans = self.channels           # Number of frequency channels
         self.assertEqual(group['n_chans'], n_chans)
         n_ants = group['n_ants']
         self.assertEqual(n_ants, 8) # Number of antennas supported by DBE7
@@ -207,7 +203,7 @@ class TestCorrelatorData(ModuleSetupTestCase):
             if not message.reply_ok():
                 raise RuntimeError('Error with katcp command')
         issue()
-        for i, heap in enumerate(spead.iterheaps(self.sim.speadrx)):
+        for i, heap in enumerate(spead.iterheaps(self.speadrx)):
             if i == 0: issue()
             itemgroup.update(heap)
             speadkeys = itemgroup.keys()
@@ -230,6 +226,11 @@ class TestCorrelatorData(ModuleSetupTestCase):
                     'Unable to obtain required spead data in %d iterations'
                     % max_spead_iters)
         return itemgroup
+
+class TestCorrelatorData_c16n13M4k(TestCorrelatorDataWBC):
+    channels = 4096
+    mode = 'c16n13M4k'
+    spead_udp_port = 7140
 
 class TestCorrelatorLabeling(ModuleSetupTestCase):
     def setUp(self):
@@ -300,7 +301,7 @@ class TestTestInterface(ModuleSetupTestCase):
         self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay',
                                 str(delay1))
         start = time.time()
-        reply, informs = self.sim.katcp_req('mode', 'nbc')
+        reply, informs = self.sim.katcp_req('mode', 'c16n13M4k')
         duration = time.time() - start
         self.assertTrue(reply.reply_ok())
         # Mode change should take at least delay1 seconds
@@ -310,7 +311,7 @@ class TestTestInterface(ModuleSetupTestCase):
         self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay',
                                 str(delay2))
         start = time.time()
-        reply, informs = self.sim.katcp_req('mode', 'wbc')
+        reply, informs = self.sim.katcp_req('mode', 'c16n400M1k')
         duration = time.time() - start
         # Mode change should take at least delay2 seconds
         self.assertGreaterEqual(duration, delay2)
@@ -329,7 +330,7 @@ class TestReadyMode(ModuleSetupTestCase):
         reply, informs = fixtures.sim.katcp_req('label-input', '0x', 'bananans')
         self.assertFalse(reply.reply_ok())
         # Now check that it actually would have worked in another mode!
-        self.set_mode_quickly('wbc')
+        self.set_mode_quickly('c16n400M1k')
         reply, informs = fixtures.sim.katcp_req('label-input')
         self.assertTrue(reply.reply_ok())
         reply, informs = fixtures.sim.katcp_req('label-input', '0x', 'bananans')

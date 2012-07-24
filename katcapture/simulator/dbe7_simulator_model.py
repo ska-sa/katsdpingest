@@ -83,15 +83,19 @@ class K7CorrelatorModel(TestInterfaceModel):
     # In standalone mode a default antenna mapping is set up. The
     # standalone variable needs to be set before start() is called
     standalone = False
+    valid_modes = ('ready', 'c16n400M1k', 'c16n400M8k', 'c16n13M4k',
+                   'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k')
 
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
         self.config_dir = config_dir
+
         # A signal indicating that a sensor has been added. The signal
         # is sent with self as the sender, and the keyword arguments:
         #
         # sensor: katcp Sensor object -- the new sensor
         self.sensor_added = blinker.Signal()
+
         # A signal indicating that a sensor has been changed. The signal
         # is sent with self as the sender, and the keyword arguments:
         #
@@ -100,6 +104,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         # It is assumed that the subscriber will arrange to remove
         # listeners or sampling strategies from the sensor as required.
         self.sensor_changed = blinker.Signal()
+
         # A signal indicating that a sensor has been removed. The signal
         # is sent with self as the sender, and the keyword arguments:
         #
@@ -111,6 +116,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         # from the old to the new sensor object should that be
         # required.
         self.sensor_removed = blinker.Signal()
+
         # Lock that should be held whenever something that could
         # effect data generation and associated SPEAD meta data is
         # modified. For instance, while changing the dump period.
@@ -164,6 +170,9 @@ class K7CorrelatorModel(TestInterfaceModel):
             self.sensor_changed.send(self, sensor=sensor, old_sensor=old_sensor)
 
     def _init_sensors(self):
+        self.add_sensor(Sensor(Sensor.BOOLEAN, 'corr.lru.available',
+                               'line replacement unit operational', ''))
+        self.get_sensor('corr.lru.available').set_value(True, Sensor.NOMINAL)
         self.add_sensor(Sensor(
                 Sensor.INTEGER, "sync_time", "Last sync time in epoch seconds.","seconds",
                 default=0, params=[0,2**32]))
@@ -176,20 +185,31 @@ class K7CorrelatorModel(TestInterfaceModel):
             Sensor.STRING, "destination_ip",
             "The current destination address for data and metadata.","","")
         self.add_sensor(dip_sens)
-        msens = Sensor(Sensor.DISCRETE, 'mode', 'Current DBE operating mode', '',
-                       ['basic', 'ready', 'wbc', 'nbc'])
+
+        msens = Sensor(Sensor.STRING, 'mode', 'Current DBE operating mode', '')
         msens.set_value('ready', Sensor.NOMINAL, time.time())
         self.add_sensor(msens)
-        nbc_f_sens = Sensor(Sensor.INTEGER, 'nbc.frequency.current',
-                            'current selected center frequency', 'Hz',
-                            [0, 387.5*1000000])
-        nbc_f_sens.set_value(0, Sensor.UNKNOWN)
-        self.add_sensor(nbc_f_sens)
-        self.add_sensor(Sensor(Sensor.BOOLEAN, 'corr.lru.available',
-                               'line replacement unit operational', ''))
-        self.get_sensor('corr.lru.available').set_value(True, Sensor.NOMINAL)
+
         self.add_sensor(Sensor(Sensor.BOOLEAN, "ntp.synchronised", "clock good", ""))
         self.get_sensor('ntp.synchronised').set_value(True, Sensor.NOMINAL)
+
+        f0_sens = Sensor(Sensor.INTEGER, 'centerfrequency',
+                         'current selected center frequency', 'Hz',
+                         [0, 400*1000000])
+        f0_sens.set_value(0, Sensor.UNKNOWN)
+        self.add_sensor(f0_sens)
+        bw_sens = Sensor(Sensor.INTEGER, 'bandwidth',
+                         'The bandwidth currently available', 'Hz',
+                         [0, 400*1000000])
+        bw_sens.set_value(0, Sensor.UNKNOWN)
+        self.add_sensor(bw_sens)
+
+        chan_sens = Sensor(Sensor.INTEGER, 'channels',
+                           'the number of frequency channels that the '
+                           'correlator provides when in the current mode.',
+                           'Hz', [0, 10000])
+        chan_sens.set_value(0, Sensor.UNKNOWN)
+        self.add_sensor(chan_sens)
 
     def _init_test_sensors(self):
         self.add_test_sensor(Sensor(
@@ -224,7 +244,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     _test_el = AddLockSettersGetters.add()
 
     def start(self, *names, **kwargs):
-        self.set_mode('wbc', mode_delay=0)
+        self.set_mode('c16n400M1k', mode_delay=0)
         self.spead_issue()
         super(K7CorrelatorModel, self).start(*names, **kwargs)
 
@@ -270,24 +290,32 @@ class K7CorrelatorModel(TestInterfaceModel):
             yield (inp, int(time.time()*1000),
                    [random.randint(-127, 127) for i in range(no_samples)])
 
-    def k7_frequency_select(self, centre_frequency):
+    def k7_frequency_select(self, center_frequency):
         """Set the nbc centre frequency to the closest nbc channel
 
         Returns the actual centre frequency used. Will fail if the correlator is
         not in narrow-band (nbc) mode
+        Returns the actual centre frequency used
         """
-        # TODO Should see if we can get this from actual DBE code/config
-        min_f0 = 0 ; max_f0 = 400e6 ; d_f0 = 12.5e6
-        assert(centre_frequency >= min_f0)
-        assert(centre_frequency <= max_f0)
-        mode = self.get_sensor('mode').value()
-        if mode != 'nbc':
+        mode_type = self.config.get('mode')
+        if mode_type != 'nbc':
             raise RuntimeError('Correlator must be in nbc mode to set nbc '
                                'centre frequency. Correleator is currently in '
                                '%s mode' % mode)
+        min_f0 = 0
+        max_f0 = self.config['adc_clk'] / 2   # Nyquist rate from ADC clock
+        wideband_bw = max_f0 - min_f0
 
-        f0 = int(round(centre_frequency/d_f0)*d_f0)
-        self.get_sensor('nbc.frequency.current').set_value(
+        if not (center_frequency >= min_f0 and center_frequency <= max_f0):
+            raise RuntimeError('center_frequency must be between %f and %f Hz'
+                               % (min_f0, max_f0))
+
+
+        # Spacing of coarse channels that f0 is based on
+        d_f0 = wideband_bw / self.config['coarse_chans']
+        # Quantise requested center_frequency to nearest bin
+        f0 = int(round(center_frequency/d_f0)*d_f0)
+        self.get_sensor('centerfrequency').set_value(
             f0, Sensor.NOMINAL, time.time())
         return f0
 
@@ -390,12 +418,12 @@ class K7CorrelatorModel(TestInterfaceModel):
         return self._dump_period
 
     def set_mode(self, mode, progress_callback=None, mode_delay=None):
-        """Set DBE mode, can be one of 'wbc' or 'nbc'
+        """Set DBE mode
 
         Parameters
         ==========
 
-        mode -- 'nbc' or 'wbc', the desired mode
+        mode -- the desired mode; any mode listed in attribute valid_modes may be used
         progress_callback -- optional callback that is called with a string
             describing the 'progress' of mode changing.
         mode_delay -- optional number of seconds to delay while doing
@@ -403,14 +431,13 @@ class K7CorrelatorModel(TestInterfaceModel):
             'mode-change-delay'
 
         """
-        valid_modes = ('nbc', 'wbc', 'ready')
         if mode_delay is None:
             mode_delay = self.get_test_sensor('mode-change-delay').value()
 
         if progress_callback is None: progress_callback = lambda x: x
-        if mode not in valid_modes:
-            raise ValueError('Mode should be one of ' + ','.join(
-                "'%s'" %m for m in valid_modes))
+        if mode not in self.valid_modes:
+            raise ValueError('Bad mode %s. Mode should be one of %s.' % (
+                mode, ','.join( "'%s'" %m for m in self.valid_modes)))
         if mode == self.get_sensor('mode').value():
             progress_callback('Correlator already in mode %s' % mode)
             return
@@ -427,16 +454,30 @@ class K7CorrelatorModel(TestInterfaceModel):
             smsg = 'Doing some mode changing stuff on DBE.'
             progress_callback(smsg)
 
-        if mode != 'nbc':
-            nbc_f_sens = self.get_sensor('nbc.frequency.current')
-            nbc_f_sens.set_value(nbc_f_sens.value(), Sensor.UNKNOWN)
 
         if mode == 'ready':
-            # Fake ready mode using the wbc config as basis
-            config_file = os.path.join(self.config_dir, 'config-wbc')
+            # Fake ready mode using the c16n400M1k config as basis
+            config_file = os.path.join(self.config_dir, 'c16n400M1k')
         else:
-            config_file = os.path.join(self.config_dir, 'config-'+mode)
+            config_file = os.path.join(self.config_dir, mode)
         self.config = ModelCorrConf(config_file)
+
+        # can be wbc for wideband modes (i.e. uses the whole ADC range) or nbc
+        # for narrow band modes that select sub-windows of the ADC range
+        try: mode_type = self.config['mode']
+        except KeyError: mode_type = None
+        f0_sens = self.get_sensor('centerfrequency')
+        max_bw = self.config['adc_clk'] / 2   # Nyquist rate from ADC clock
+
+        if  mode_type == 'wbc':
+            # For wbc modes the centre frequency cannot be selected and is 'hard
+            # coded' to half the available bandwidth
+            f0_sens.set_value(max_bw / 2, Sensor.NOMINAL)
+            self.get_sensor('bandwidth').set_value(max_bw, Sensor.NOMINAL)
+        elif mode_type == 'nbc':
+            f0_sens.set_value(f0_sens.value(), Sensor.NOMINAL)
+            self.get_sensor('bandwidth').set_value(
+                max_bw/self.config['coarse_chans'], Sensor.NOMINAL)
         self._spead_model = DBE7SpeadData(self.config)
         self._spead_model.set_acc_time(self.get_dump_period())
         self._update_roaches()
@@ -444,6 +485,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.get_sensor('sync_time').set_value(self._spead_model.sync_time, Sensor.NOMINAL)
         self.get_sensor('destination_ip').set_value(self.config['rx_meta_ip_str'])
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
+        self.get_sensor('channels').set_value(self.config['n_chans'])
         if mode != 'ready':
             self._thread_paused = False
 

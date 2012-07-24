@@ -13,6 +13,8 @@ from katcapture.simulator import dbe7_simulator
 from katcapture.simulator import dbe7_simulator_model
 
 EXPECTED_SENSOR_LIST = [
+    ('bandwidth', 'The bandwidth currently available', 'Hz', 'integer', '0', '400000000'),
+    ('channels', 'the number of frequency channels that the correlator provides when in the current mode.', 'Hz', 'integer', '0', '10000'),
     ('corr.lru.available', 'line replacement unit operational', '', 'boolean'),
     ('ntp.synchronised', 'clock good', '', 'boolean'),
     ('roach030279.1x.adc.power', 'approximate input signal strength', '', 'float', '-1e+09', '0'),
@@ -51,7 +53,7 @@ EXPECTED_SENSOR_LIST = [
     ('roach030277.fpga.synchronised', 'signal processing clock stable', '', 'boolean'),
     ('roach030263.lru.available', 'line replacement unit operational', '', 'boolean'),
     ('roach030265.2x.fft.overrange', 'fft overrange indicator', '', 'boolean'),
-    ('mode', 'Current DBE operating mode', '', 'discrete', 'basic', 'ready', 'wbc', 'nbc'),
+    ('mode', 'Current DBE operating mode', '', 'string'),
     ('roach030267.6x.adc.amplitude', 'approximate input signal strength', '', 'float', '0', '1'),
     ('roach030277.7x.adc.overrange', 'adc overrange indicator', '', 'boolean'),
     ('sync_time', 'Last sync time in epoch seconds.', 'seconds', 'integer', '0', '4294967296'),
@@ -86,7 +88,7 @@ EXPECTED_SENSOR_LIST = [
     ('roach030269.5y.adc.terminated', 'adc disabled', '', 'boolean'),
     ('roach030269.5x.adc.amplitude', 'approximate input signal strength', '', 'float', '0', '1'),
     ('roach030276.lru.available', 'line replacement unit operational', '', 'boolean'),
-    ('nbc.frequency.current', 'current selected center frequency', 'Hz', 'integer', '0', '387500000'),
+    ('centerfrequency', 'current selected center frequency', 'Hz', 'integer', '0', '400000000'),
     ('roach030265.2y.fft.overrange', 'fft overrange indicator', '', 'boolean'),
     ('roach030267.6x.adc.overrange', 'adc overrange indicator', '', 'boolean'),
     ('roach030268.0x.adc.terminated', 'adc disabled', '', 'boolean'),
@@ -155,7 +157,7 @@ class TestDbeKat7(unittest.TestCase, SimulatorTestMixin):
         corr_confdir = os.path.join(os.path.dirname(katcapture.__file__), 'conf')
         self.addCleanup(self.tear_down_threads)
         self.proxy = self.add_device(
-            dbe7_simulator.SimulatorDeviceServer,
+            dbe7_simulator.DBE7DeviceServer,
             model=dbe7_simulator_model.K7CorrelatorModel(corr_confdir))
         self.client = self.add_client(self.proxy._sock.getsockname())
 
@@ -189,15 +191,10 @@ class TestDbeKat7(unittest.TestCase, SimulatorTestMixin):
         self.client.assert_request_succeeds("k7-snap-shot", "adc", "0x")
         self.client.assert_request_succeeds("k7-snap-shot", "quant", "1y")
 
-    # def test_gain_setting(self):
-    #     self.client.assert_request_succeeds("k7-gain", "0x", *(["2000"] * 1024))
-    #     reply, informs = self.client.blocking_request(Message.request("gain-list"))
-    #     self.assertEqual(reply, Message.reply("k7-gain", "ok", 1))
-    #     self.assertEqual(informs, [Message.inform("k7-gain", 0, "x", *(["2000"] * 1024))])
+    def test_gain_setting(self):
+        self.client.assert_request_succeeds("k7-gain", "0x", *(["2000"] * 1024))
 
-    # def test_complex_gain_setting(self):
-    #     self.client.assert_request_succeeds("k7-gain", "0x", *(["2000+1000j"] * 1024))
-    #     reply, informs = self.client.blocking_request(Message.request("gain-list"))
-    #     self.assertEqual(reply, Message.reply("gain-list", "ok", 1))
-    #     self.assertEqual(informs, [Message.inform("gain-list", 0, "x", *(["2000+1000j"] * 1024))])
+    def test_complex_gain_setting(self):
+        self.client.assert_request_succeeds("k7-gain", "0x", *(["2000+1000j"] * 1024))
+
 

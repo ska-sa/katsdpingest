@@ -69,13 +69,14 @@ logger = logging.getLogger(log_name)
 # watchannounce -> leave?
 # xport -> leave?
 
-class SimulatorDeviceServer(Device):
-
-    VERSION_INFO = ("k7-simulator",0,1)
-    BUILD_INFO = ("k7-simulator",0,1,"rc1")
+class SensorSignalDeviceServer(Device):
+    """A device class that subscribes to signals on the device model that lets
+    it know when sensors are added, removed or changed. The device will then
+    issue #device-changed informs everytime a sensor is added or removed
+    """
 
     def setup_sensors(self):
-        super(SimulatorDeviceServer, self).setup_sensors()
+        super(SensorSignalDeviceServer, self).setup_sensors()
         # Subscribe to model signals indicating a change in sensors
         self._model.sensor_changed.connect(self.handle_sensor_update)
         self._model.sensor_removed.connect(self.handle_sensor_remove)
@@ -135,11 +136,36 @@ class SimulatorDeviceServer(Device):
 
         self.add_sensor(sensor)
 
+    def issue_device_changed(self, change):
+        """
+        Issue a device-changed inform to all clients.
+
+        Parameter change indicates what part of the device has changed. e.g.
+
+        issue_device_changed('sensor-list')
+
+        will result in the inform
+
+        #device-changed sensor-list.
+
+        The change description is tested for validity; currently only
+        'sensor-list' is considered valid.
+        """
+        if not change in ['sensor-list']:
+            raise ValueError('Unknown change notification %s' % change)
+        msg = Message.inform('device-changed', change)
+        self.mass_inform(msg)
+
+class DBE7DeviceServer(SensorSignalDeviceServer):
+
+    VERSION_INFO = ("k7-simulator",0,1)
+    BUILD_INFO = ("k7-simulator",0,1,"rc1")
+
     def handle_request(self, sock, msg):
         hang_requests = self._model.get_test_sensor('hang-requests').value()
         if not hang_requests or msg.name == 'watchdog':
-            return super(SimulatorDeviceServer, self).handle_request(sock, msg)
-        # If hang_requests is set we never reply
+            return super(DBE7DeviceServer, self).handle_request(sock, msg)
+        # If hang_requests is set we never reply (except for watchdogs)
         return
 
     @request(Str())
@@ -220,13 +246,13 @@ class SimulatorDeviceServer(Device):
         actual_centre_frequency = self._model.k7_frequency_select(centre_frequency)
         return ('ok', actual_centre_frequency)
 
-    @request(Str(), Str())
+    @request(Str(), Str(multiple=True))
     @return_reply(Str())
-    def request_k7_gain(self, sock, input, gains):
+    def request_k7_gain(self, sock, input, *gains):
         """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
         # TODO Check that valid inputs were specified
         # TODO Check format of 'gains'. Talk to DBE team?
-        return ("ok","OK")
+        return ("ok","Gain set for %d channels" % len(gains))
 
     @request(Float(optional=True, default=5.0))
     @return_reply(Str())
@@ -336,24 +362,6 @@ class SimulatorDeviceServer(Device):
         self._model.send_stop()
         smsg = "Data stream stopped."
         activitylogger.info(smsg)
+        self.log.warn(smsg)
         return ("ok", smsg)
 
-    def issue_device_changed(self, change):
-        """
-        Issue a device-changed inform to all clients.
-
-        Parameter change indicates what part of the device has changed. e.g.
-
-        issue_device_changed('sensor-list')
-
-        will result in the inform
-
-        #device-changed sensor-list.
-
-        The change description is tested for validity; currently only
-        'sensor-list' is considered valid.
-        """
-        if not change in ['sensor-list']:
-            raise ValueError('Unknown change notification %s' % change)
-        msg = Message.inform('device-changed', change)
-        self.mass_inform(msg)

@@ -11,7 +11,7 @@ import logging
 from pkg_resources import resource_filename
 
 import katconf
-from katcapture.simulator.dbe7_simulator import SimulatorDeviceServer
+from katcapture.simulator.dbe7_simulator import DBE7DeviceServer
 from katcapture.simulator.dbe7_simtest import SimTestDevice, NotHidden
 from katcapture.simulator.dbe7_simulator_model import K7CorrelatorModel
 from katcore.dev.base import SimpleModel
@@ -106,7 +106,7 @@ if __name__ == '__main__':
 
     restart_queue = Queue.Queue()
     model = K7CorrelatorModel(opts.config)
-    server = SimulatorDeviceServer(model, opts.host, opts.port)
+    server = DBE7DeviceServer(model, opts.host, opts.port)
     test_host, test_port = address(opts.test_addr)
     testserver = SimTestDevice(model, test_host, test_port)
     testserver.set_device(server)

@@ -1,10 +1,8 @@
-import iniparse,exceptions,socket,struct,numpy,os
+import iniparse, exceptions, socket, struct, numpy, os
 """
 Library for parsing CASPER correlator configuration files
 
 Author: Jason Manley
-
-Almost verbatim copy of cn_conf.py from the corr package (Neilen Marais)
 """
 """
 Revs:
@@ -28,33 +26,40 @@ Revs:
 LISTDELIMIT = ','
 PORTDELIMIT = ':'
 
-VAR_RUN='./run'
+VAR_RUN = '/var/run/corr'
+
+MODE_WB  = 'wbc'
+MODE_NB  = 'nbc'
+MODE_DDC = 'ddc'
 
 class CorrConf:
     def __init__(self, config_file):
         self.config_file = config_file
-        self.cp = iniparse.INIConfig(open(self.config_file,'rb'))
+        self.config_file_name = os.path.split(self.config_file)[1]
+        self.cp = iniparse.INIConfig(open(self.config_file, 'rb'))
         self.config = dict()
         self.read_mode()
-        if self.config['mode'] == 0:
+        available_modes = [MODE_WB, MODE_NB, MODE_DDC]
+        if self.config['mode'] == MODE_WB:
             self.read_wideband()
-        elif self.config['mode'] == 1:
+        elif self.config['mode'] == MODE_NB:
             self.read_narrowband()
-        elif self.config['mode'] == 2:
+        elif self.config['mode'] == MODE_DDC:
             self.read_narrowband_ddc()
         else:
-            raise RuntimeError('Unknown correlator mode, %i' % self.config['mode'])
+            print "Available modes are", available_modes
+            raise RuntimeError('Unknown correlator mode,', self.config['mode'])
         self.read_common()
 
-    def __getitem__(self,item):
+    def __getitem__(self, item):
         if item == 'sync_time':
-            fp=open(VAR_RUN+'/'+item,'r')
-            val=float(fp.readline())
+            fp = open(VAR_RUN + '/' + item + '.' + self.config_file_name, 'r')
+            val = float(fp.readline())
             fp.close()
             return val
-        elif item =='antenna_mapping':
-            fp=open(VAR_RUN+'/'+item,'r')
-            val=(fp.readline()).split(LISTDELIMIT)
+        elif item == 'antenna_mapping':
+            fp = open(VAR_RUN + '/' + item + '.' + self.config_file_name, 'r')
+            val = (fp.readline()).split(LISTDELIMIT)
             fp.close()
             return val
         else:
@@ -66,7 +71,7 @@ class CorrConf:
     def file_exists(self):
         try:
             #f = open(self.config_file)
-            f = open(self.config_file,'r')
+            f = open(self.config_file, 'r')
         except IOError:
             exists = False
             raise RuntimeError('Error opening config file at %s.'%self.config_file)
@@ -74,13 +79,13 @@ class CorrConf:
             exists = True
             f.close()
 
-        #check for runtime files and create if necessary:
+        # check for runtime files and create if necessary:
         if not os.path.exists(VAR_RUN):
             os.mkdir(VAR_RUN)
             #os.chmod(VAR_RUN,0o777)
-        for item in ['antenna_mapping','sync_time']:
-            if not os.path.exists(VAR_RUN+'/' + item):
-                f= open(VAR_RUN+'/' + item,'w')
+        for item in ['antenna_mapping', 'sync_time']:
+            if not os.path.exists(VAR_RUN + '/' + item + '.' + self.config_file_name):
+                f = open(VAR_RUN + '/' + item + '.' + self.config_file_name, 'w')
                 f.write(chr(0))
                 f.close()
                 #os.chmod(VAR_RUN+'/' + item,0o777)
@@ -131,7 +136,7 @@ class CorrConf:
     def read_mode(self):
         if not self.file_exists():
             raise RuntimeError('Error opening config file or runtime variables.')
-        self.read_int('correlator', 'mode')
+        self.read_str('correlator', 'mode')
 
     def read_common(self):
         if not self.file_exists():
@@ -182,6 +187,8 @@ class CorrConf:
         self.read_int('correlator','n_xaui_ports_per_ffpga')
         self.read_int('correlator','adc_bits')
         self.read_int('correlator','adc_levels_acc_len')
+        self.read_int('correlator','feng_sync_period')
+        self.read_int('correlator','feng_sync_delay')
         #self.read_int('correlator','sync_time') #moved to /var/run/...
         self.config['10gbe_ip']=struct.unpack('>I',socket.inet_aton(self.get_line('correlator','10gbe_ip')))[0]
         #print '10GbE IP address is %i'%self.config['10gbe_ip']
@@ -211,18 +218,18 @@ class CorrConf:
         self.config['rf_bandwidth'] = self.config['adc_clk'] / 2.
         # is a DDC being used in the F engine?
         if self.config['ddc_mix_freq'] > 0:
-            if self.config['mode'] == 0:
+            if self.config['mode'] == MODE_WB:
                 self.config['bandwidth'] = float(self.config['adc_clk']) / self.config['ddc_decimation']
                 self.config['center_freq'] = float(self.config['adc_clk']) * self.config['ddc_mix_freq']
             else:
                 raise RuntimeError("Undefined for other modes.")
         else:
-            if self.config['mode'] == 0:
+            if self.config['mode'] == MODE_WB:
                 self.config['bandwidth'] = self.config['adc_clk'] / 2.
-                self.config['center_freq'] = self.config['adc_clk'] / 4.
-            elif self.config['mode'] == 1:
+                self.config['center_freq'] = self.config['bandwidth'] / 2.
+            elif self.config['mode'] == MODE_NB:
                 self.config['bandwidth'] = (self.config['adc_clk'] / 2.) / self.config['coarse_chans']
-                self.config['center_freq'] = 0 #self.config['bandwidth'] / 2.
+                self.config['center_freq'] = self.config['bandwidth'] / 2.
             else:
                 raise RuntimeError("Undefined for other modes.")
 
@@ -305,21 +312,21 @@ class CorrConf:
     def write(self,section,variable,value):
         print 'Writing to the config file. Mostly, this is a bad idea. Mostly. Doing nothing.'
         return
-        self.config[variable]=value
-        self.cp[section][variable]=str(value)
-        fpw=open(self.config_file,'w')
+        self.config[variable] = value
+        self.cp[section][variable] = str(value)
+        fpw=open(self.config_file, 'w')
         print >>fpw,self.cp
         fpw.close()
 
-    def write_var(self,filename,value):
-        fp=open(VAR_RUN+'/'+filename,'w')
+    def write_var(self, filename, value):
+        fp=open(VAR_RUN + '/' + filename + '.' + self.config_file_name, 'w')
         fp.write(value)
         fp.close()
 
-    def write_var_list(self,filename,list_to_store):
-        fp=open(VAR_RUN+'/'+filename,'w')
+    def write_var_list(self, filename, list_to_store):
+        fp=open(VAR_RUN + '/' + filename + '.' + self.config_file_name, 'w')
         for v in list_to_store:
-            fp.write(v+LISTDELIMIT)
+            fp.write(v + LISTDELIMIT)
         fp.close()
 
     def get_line(self,section,variable):

@@ -27,7 +27,7 @@ basic_roach_sensors = (dict(
         initial_value=True,
         initial_status=Sensor.NOMINAL),
                        )
-                                              
+
 # Extra sensor templates for DBE7 roach f-engines, excluding
 # per-channel sensors
 f_engine_extra_sensors = (dict(
@@ -81,7 +81,7 @@ f_engine_channel_sensors = (dict(
         initial_value=0.1,
         initial_status=Sensor.NOMINAL),
         )
-        
+
 
 class Roach(SimpleModel):
     def __init__(self, name, *args, **kwargs):
@@ -101,18 +101,18 @@ class Roach(SimpleModel):
                            time.time())
             return sens
 
-            
+
 class XEngine(Roach): pass
 
 class FEngine(Roach):
     CHANNEL_POLARIZATIONS = ('x', 'y')
-    
+
     def __init__(self, name, channel_number):
         self.channel_number = channel_number
         self.channels = tuple('%d%s' % (channel_number, pol)
                               for pol in self.CHANNEL_POLARIZATIONS)
         super(FEngine, self).__init__(name, channel_number)
-        
+
     def _init_sensors(self):
         super(FEngine, self)._init_sensors()
         for sensor_def in f_engine_extra_sensors:
@@ -127,7 +127,7 @@ class FEngine(Roach):
                     'channel': chan}
                 self.add_sensor(self._setup_sensor(sname, sensor_def))
 
-                
+
 class RoachEngines(SimpleModel):
     RoachClass = Roach
 
@@ -142,11 +142,11 @@ class RoachEngines(SimpleModel):
             roach = self.RoachClass(roach_name)
             self._roaches[roach_name] = roach
             for s in roach.get_sensors(): self.add_sensor(s)
-            
+
 
 class XEngines(RoachEngines):
     RoachClass = XEngine
-    
+
 class FEngines(RoachEngines):
     RoachClass = FEngine
 
