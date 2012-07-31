@@ -299,9 +299,8 @@ class K7CorrelatorModel(TestInterfaceModel):
         """
         mode_type = self.config.get('mode')
         if mode_type != 'nbc':
-            raise RuntimeError('Correlator must be in nbc mode to set nbc '
-                               'centre frequency. Correleator is currently in '
-                               '%s mode' % mode)
+            # Apparently this is the error returned by the real DBE :)
+            raise RuntimeError('unavailable')
         min_f0 = 0
         max_f0 = self.config['adc_clk'] / 2   # Nyquist rate from ADC clock
         wideband_bw = max_f0 - min_f0

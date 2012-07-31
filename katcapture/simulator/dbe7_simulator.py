@@ -168,7 +168,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         # If hang_requests is set we never reply (except for watchdogs)
         return
 
-    @request(Str())
+    @request(Str(optional=True, default=''))
     @return_reply(Str())
     def request_mode(self, sock, mode):
         """mode change command (?mode [new-mode])
@@ -179,11 +179,12 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
         def progress_callback(smsg):
             self.log.info(smsg)
-        self._model.set_mode(mode, progress_callback)
-        smsg = 'Correlator mode changed to ' + mode
-        activitylogger.info(smsg)
+        if mode:
+            self._model.set_mode(mode, progress_callback)
+            smsg = 'Correlator mode changed to ' + mode
+            activitylogger.info(smsg)
 
-        return ('ok', smsg)
+        return ('ok', self._model.get_sensor('mode').value())
 
     @return_reply(Str())
     def request_start_tx(self, sock, msg):

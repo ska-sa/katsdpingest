@@ -14,6 +14,10 @@ class ModelCorrConf(upstream_correlator_conf.CorrConf):
         self._sync_time = int(time.time())
         self._antenna_mapping = self.get_unmapped_channel_names()
 
+    def get(self, key, default=None):
+        try: return self[key]
+        except KeyError: return default
+
     def __getitem__(self, item):
         if item == 'sync_time':
             return self._get_sync_time()
