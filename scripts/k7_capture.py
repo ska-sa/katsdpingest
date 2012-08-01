@@ -301,9 +301,14 @@ class k7Capture(threading.Thread):
                     if not meta_required:
                         self.set_baseline_mask()
                          # we first set the baseline mask in order to have the correct number of baselines
-                        self.van_vleck = sp.VanVleck(self.data_scale_factor, bls_ordering=self.meta['bls_ordering'])
-                        self.write_process_log(*self.van_vleck.description())
-                        logger.info("Initialised Van Vleck correction using scale factor %i\n" % self.data_scale_factor)
+                        if self.data_scale_factor >= 1:
+                            self.van_vleck = sp.VanVleck(self.data_scale_factor, bls_ordering=self.meta['bls_ordering'])
+                            self.write_process_log(*self.van_vleck.description())
+                            logger.info("Initialised Van Vleck correction using scale factor %i\n" % self.data_scale_factor)
+                        else:
+                            logger.error("Refused to initialize Van Vleck correction with scale factor of 0. Van Vleck will *NOT* be applied for this capture session.")
+                            self.data_scale_factor=1
+                             # at least ensure that valid (but unscaled) data can be written...
                         self.cpref = CorrProdRef(bls_ordering=self.meta['bls_ordering'])
                          # since we now know the baseline ordering we can create the Van Vleck correction block
                         self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
@@ -490,6 +495,7 @@ class CaptureDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_sd_metadata_issue(self, sock, msg):
         """Resend the signal display metadata packets..."""
+        if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
         self.rec_thread.send_sd_metadata()
         smsg = "SD Metadata resent"
         activitylogger.info(smsg)
