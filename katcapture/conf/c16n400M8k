@@ -9,25 +9,22 @@ servers_x = roach030274,roach030271,roach030270,roach030273,roach030266,roach030
 #This is the control port to use when communicating with BORPH. By default, ROACHes use 7147.
 katcp_port = 7147
 #bitstream to load the FPGAs. Should be present and load-able by ROACH's KATCP server - corr will not do this for you.
-bitstream_f = c05f12_01_2012_Jun_26_0804.bof
-bitstream_x = r_2x_8a_16x_4k_r352_2012_Jun_22_1035.bof
+bitstream_f = r_128w_8k_16x_1a_r421_2012_Jan_27_1447.bof
+bitstream_x = r_2x_8a_16x_8k_r352_2012_Jan_27_1022.bof
 
 [correlator]
-#what mode is the correlator running?
-mode = nbc
+# the correlator mode
+mode = wbc
 #type of ADC. katadc or iadc.
 adc_type = katadc
 #number of frequency channels
-n_chans = 4096
-coarse_chans = 16
+n_chans = 8192
 #number of antennas in the design.
 n_ants = 8
-#fft shifting schedule in decimal. A binary '1' shifts, a zero does not.
-fft_shift_coarse = 31
-# shift on every stage
-fft_shift_fine = 0
-#Number of spectra to integrate in DRAM. - 24 for 2s dump, 12 for 1s dump, 6 for 0.5s dump
-acc_len = 48
+#fft shifting schedule in decimal. A binary '1' shifts, a zero does not. 00 1111 1111 1100 = 0FFC
+fft_shift = 4092
+#Number of spectra to integrate in DRAM.
+acc_len = 188
 #Number of accumulations performed in the X engine cores.
 xeng_acc_len = 128
 #Clockrate of ADCs in Hz.
@@ -47,7 +44,7 @@ feng_fix_pnt_pos = 3
 #pkt len of 10GbE exchange data in 64 bit words.
 10gbe_pkt_len = 32
 #Starting ip address to use for FPGA cores (will be auto-incremented for different x engines and auto decremented for F engines)
-10gbe_ip = 10.0.0.192
+10gbe_ip = 10.0.0.128
 #UDP data port to use for 10GbE cores.
 10gbe_port = 8888
 #clock rate in MHz for X engine boards.
@@ -70,9 +67,9 @@ n_xaui_ports_per_ffpga = 1
 mcnt_bits = 48
 #number of bits used in the packet header for timestamping
 pcnt_bits = 48
-# the sync period set in the f-engine design
-feng_sync_period = 67108864
-feng_sync_delay=5
+feng_sync_period = 134217728
+# the number of 1PPS pulses that we expect to elapse between arming the system and actually triggering. This is usually 2, to allow any sync pulses in the pipeline to flush before resyncing.
+feng_sync_delay=2
 
 [receiver]
 #How is data to be retrieved from the correlator? either ppc or 10GbE. Only 10GbE is fully (ie automatically) supported. ppc will require manual intervention with the cn_tx.py script.
@@ -87,11 +84,11 @@ rx_meta_ip = 127.0.0.1
 rx_pkt_payload_len = 4096
 #signal display config:
 sig_disp_ip = 127.0.0.1
-sig_disp_port = 7149
+sig_disp_port=7149
 
 [equalisation]
 #Decimation. Adjacent frequency channels share coefficients. The center equalisation value is chosen for adjacent bins. n_eq_coeffs_per_polarisation == n_chans/eq_decimation
-eq_decimation=1
+eq_decimation=8
 #Equaliser type (complex or scalar)
 eq_type=complex
 #Default values for equaliser (digital gain) derived from eq_poly values (poly) or set to eq_coeff values (coef).
@@ -125,22 +122,22 @@ rf_gain_15 = 4
 #eq_poly_0x = 10,30,40
 #corresponds to 10c^2 + 30c + 40 where c is the frequency channel index.
 #In the event of complex equaliser types, these values are applied to both the real and imaginary components (ie scalar). If you want to be able to configure these coefficients separately, use the eq_coeff configuration mode.
-eq_poly_0  = 10
-eq_poly_1  = 10
-eq_poly_2  = 10
-eq_poly_3  = 10
-eq_poly_4  = 10
-eq_poly_5  = 10
-eq_poly_6  = 10
-eq_poly_7  = 10
-eq_poly_8  = 10
-eq_poly_9  = 10
-eq_poly_10  = 10
-eq_poly_11  = 10
-eq_poly_12  = 10
-eq_poly_13  = 10
-eq_poly_14  = 10
-eq_poly_15  = 10
+eq_poly_0  = 1500
+eq_poly_1  = 1500
+eq_poly_2  = 1500
+eq_poly_3  = 1500
+eq_poly_4  = 1500
+eq_poly_5  = 1500
+eq_poly_6  = 1500
+eq_poly_7  = 1500
+eq_poly_8  = 1500
+eq_poly_9  = 1500
+eq_poly_10  = 1500
+eq_poly_11  = 1500
+eq_poly_12  = 1500
+eq_poly_13  = 1500
+eq_poly_14  = 1500
+eq_poly_15  = 1500
 #The eq_coeff lines are used for setting the equalisers manually, specifying each frequency channel for every polarisation input.
 #Each line should have n_chans/eq_decimation entries.
 #Entries are python lists (comma separated values within square brackets).

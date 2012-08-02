@@ -230,7 +230,7 @@ class TestCorrelatorDataWBC(ModuleSetupTestCase):
 class TestCorrelatorData_c16n13M4k(TestCorrelatorDataWBC):
     channels = 4096
     mode = 'c16n13M4k'
-    spead_udp_port = 7140
+    spead_udp_port = 7148
 
 class TestCorrelatorLabeling(ModuleSetupTestCase):
     def setUp(self):

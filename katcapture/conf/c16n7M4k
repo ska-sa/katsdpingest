@@ -81,13 +81,13 @@ out_type = 10gbe
 spead_flavour=64,40
 #UDP receiver for output data
 rx_udp_ip = 10.0.0.2
-rx_udp_port = 7140
+rx_udp_port = 7148
 rx_meta_ip = 127.0.0.1
 #Output packet payload length in bytes. Does not include SPEAD options fields.
 rx_pkt_payload_len = 4096
 #signal display config:
 sig_disp_ip = 127.0.0.1
-sig_disp_port = 7141
+sig_disp_port = 7149
 
 [equalisation]
 #Decimation. Adjacent frequency channels share coefficients. The center equalisation value is chosen for adjacent bins. n_eq_coeffs_per_polarisation == n_chans/eq_decimation
