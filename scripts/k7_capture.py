@@ -121,9 +121,9 @@ class k7Capture(threading.Thread):
         threading.Thread.__init__(self)
 
     def send_sd_data(self, data):
-        if self._sd_count % 10 == 0:
-            logger.debug("Sending metadata heartbeat...")
-            self.send_sd_metadata()
+        #if self._sd_count % 10 == 0:
+        #    logger.debug("Sending metadata heartbeat...")
+        #    self.send_sd_metadata()
 
         for tx in self.sdisp_ips.itervalues():
             tx.send_heap(data)
@@ -278,7 +278,7 @@ class k7Capture(threading.Thread):
                 if name in meta_desired:
                     logger.info("Meta data received (desired) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
                     self.meta[name] = ig[name]
-                    if name == 'center_freq' and self.center_freq == 0:
+                    if name == 'center_freq':
                         self.center_freq = self.meta[name]
                         self._my_sensors["spead-center-freq"].set_value(self.meta[name])
                     if name == 'int_time' and self.int_time == 1:
