@@ -13,7 +13,7 @@ each roach name.
 """
 
 import time
-from katcore.dev.base import SimpleModel
+from katcore.dev_base import SimpleModel
 from katcp import Sensor
 
 

@@ -14,8 +14,8 @@ import katconf
 from katcapture.simulator.dbe7_simulator import DBE7DeviceServer
 from katcapture.simulator.dbe7_simtest import SimTestDevice, NotHidden
 from katcapture.simulator.dbe7_simulator_model import K7CorrelatorModel
-from katcore.dev.base import SimpleModel
-from katcore.syslaunch import address
+from katcore.dev_base import SimpleModel
+from katcore.utils import address
 
 def parse_opts(argv):
     parser = optparse.OptionParser()

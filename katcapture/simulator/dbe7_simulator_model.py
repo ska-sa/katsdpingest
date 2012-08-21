@@ -10,7 +10,7 @@ import numpy as np
 from .dbe7_roach_models import XEngines, FEngines
 from .dbe7_spead_model import DBE7SpeadData
 from .model_correlator_conf import ModelCorrConf
-from katcore.dev.base import ThreadedModel
+from katcore.dev_base import ThreadedModel
 from katcp import Sensor
 import random
 import blinker

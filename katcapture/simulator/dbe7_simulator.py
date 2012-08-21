@@ -4,7 +4,7 @@ import logging
 import sys
 
 from katcp import Sensor, Message
-from katcore.dev.base import Device
+from katcore.dev_base import Device
 # XXX TODO
 # Evil hack to make kattypes support variable number of
 # arguments. Should be ported to katcp when we start working on it
