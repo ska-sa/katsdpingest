@@ -1,6 +1,6 @@
 import logging
 import re
-from katcore.sim import base
+from katcore import sim_base
 from katcp import Sensor
 from katcp.kattypes import request, return_reply
 from katcp.kattypes import Str, Int, Bool, Discrete, Timestamp
