@@ -12,7 +12,7 @@ logger = logging.getLogger(log_name)
 class AlreadyHidden(Exception): pass
 class NotHidden(Exception): pass
 
-class SimTestDevice(base.SimTestDevice):
+class SimTestDevice(sim_base.SimTestDevice):
     VERSION_INFO = ("k7-simulator-test-device",0,1)
     BUILD_INFO = ("k7-simulator-test-device",0,1,"rc1")
 
