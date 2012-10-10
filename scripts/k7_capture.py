@@ -597,7 +597,6 @@ class CaptureDeviceServer(DeviceServer):
         try:
             self._my_sensors[sensor_string].set_value(value_string)
             self.rec_thread.write_obs_param(sensor_string, value_string)
-            if sensor_string == 'script-ants': self.rec_thread._script_ants = value_string
         except ValueError, e:
             return ("fail", "Could not parse sensor name or value string '%s=%s': %s" % (sensor_string, value_string, e))
         smsg = "%s=%s" % (sensor_string, value_string)
