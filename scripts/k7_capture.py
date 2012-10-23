@@ -279,7 +279,7 @@ class k7Capture(threading.Thread):
                     logger.info("Meta data received (desired) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
                     self.meta[name] = ig[name]
                     if name == 'center_freq':
-                        self.center_freq = self.meta[name]
+                        #self.center_freq = self.meta[name]
                         self._my_sensors["spead-center-freq"].set_value(self.meta[name])
                     if name == 'int_time' and self.int_time == 1:
                         self.int_time = self.meta[name]
