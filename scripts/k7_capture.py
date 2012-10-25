@@ -99,6 +99,8 @@ class k7Capture(threading.Thread):
         self.meta = {}
         self.ig_sd = spead.ItemGroup()
         self.cpref = None
+        self.timestamps = []
+         # temporary timestamp store
         self.int_time = 1.0
          # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
@@ -197,6 +199,23 @@ class k7Capture(threading.Thread):
         f['/History/process_log'][self._process_log_idx] = (process, args, revision)
         self._process_log_idx += 1
 
+    def write_timestamps(self):
+        """Write the accumulated timestamps into a dataset.
+        Previously these timestamps were written alongside each received data frame, but this
+        results in a highly fragmented timestamp array. This in turns leads to exceptionally long load
+        times for this dataset, even though it contains very little data. By deferring writing, we can
+        instead locate the timestamp data contiguously on disk and thus obviate the read overhead.
+
+        As this MUST be called before the file is closed, it may get called multiple times as security to
+        ensure that it is done - it is therefore safe to call multiple times."""
+        if self._current_hdf5 is not None:
+            if timestamps_dataset not in self._current_hdf5:
+             # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
+             # regularly - hence this check.
+                f.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
+                 # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
+                 # distributed across the entire file.
+
     def write_label(self, label):
         """Write a sensor value directly into the current hdf5 at the specified locations.
            Note that this will create a new HDF5 file if one does not already exist..."""
@@ -228,6 +247,7 @@ class k7Capture(threading.Thread):
     def close_file(self):
         """Close file handle reference and mark file is not current."""
         if self._current_hdf5 is not None:
+            self.write_timestamps()
             self._current_hdf5.flush()
             self._current_hdf5.close()
              # we may have ended capture before receiving any data packets and thus not have a current file
@@ -339,7 +359,6 @@ class k7Capture(threading.Thread):
                     datasets[name] = f[self.remap(name)]
                     datasets_index[name] = 0
                     if name == 'timestamp':
-                        f.create_dataset(timestamps_dataset,[1] + new_shape, maxshape=[None] + new_shape, dtype=np.float64)
                         item._changed = False
                     if name == 'xeng_raw':
                         f.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
@@ -350,8 +369,6 @@ class k7Capture(threading.Thread):
                     if not item._changed:
                         continue
                     f[self.remap(name)].resize(datasets_index[name]+1, axis=0)
-                    if name == 'timestamp':
-                        f[timestamps_dataset].resize(datasets_index[name]+1, axis=0)
                     if name == 'xeng_raw':
                         f[flags_dataset].resize(datasets_index[name]+1, axis=0)
                 if name.startswith("xeng_raw"):
@@ -410,8 +427,8 @@ class k7Capture(threading.Thread):
                     try:
                         current_ts = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
                         self._my_sensors["last-dump-timestamp"].set_value(current_ts)
-                        f[timestamps_dataset][datasets_index[name]] = current_ts
-                         # insert derived timestamps
+                        self.timestamps.append(current_ts)
+                         # temporarily store derived timestamps
                     except KeyError:
                         f[timestamps_dataset][datasets_index[name]] = -1.0
                 datasets_index[name] += 1
@@ -431,7 +448,6 @@ class k7Capture(threading.Thread):
             del datasets_index['bls_ordering']
             f[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
              # we have generated a new baseline mask, so fix bls_ordering attribute...
-
         logger.info("Capture complete at %f" % time.time())
         logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
@@ -666,6 +682,8 @@ class CaptureDeviceServer(DeviceServer):
         tx.end()
         time.sleep(2)
          # wait for thread to settle...
+        self.rec_thread.close_file()
+         # try to make sure file is sane at least...
         self.rec_thread.join()
         self._my_sensors["capture-active"].set_value(0)
         smsg = "Capture stoppped at %s" % time.ctime()
