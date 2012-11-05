@@ -212,7 +212,7 @@ class k7Capture(threading.Thread):
             if timestamps_dataset not in self._current_hdf5:
              # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
              # regularly - hence this check.
-                f.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
+                self._current_hdf5.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
                  # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
                  # distributed across the entire file.
 
