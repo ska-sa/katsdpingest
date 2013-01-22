@@ -187,8 +187,9 @@ def insert_sensor(device, name, group, obs_start, obs_end, int_time, iv=False, d
                 section_reports[full_name] = "Warning: Sensor %s has no data for the specified time period. Inserting default value of" % (default,)
                 s_dset = group.create_dataset(sensor_i.name, data=np.rec.fromarrays([[time.time()],[default],['failure']], names='timestamp, value, status'))
             else:
-                section_reports[full_name] = "Warning: Sensor %s has no data for the specified time period. Inserting empty dataset."
+                section_reports[full_name] = "Error: Sensor %s has no data for the specified time period. Inserting empty dataset."
                 s_dset = group.create_dataset(sensor_i.name, [], maxshape=None)
+                errors += 1
         else:
             s_dset = group.create_dataset(sensor_i.name, data=data)
             section_reports[full_name] = "Success"
