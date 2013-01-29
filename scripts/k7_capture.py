@@ -470,20 +470,20 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
-        self._my_sensors["status"] = Sensor(Sensor.STRING, "status", "The current status of the capture thread.","")
-        self._my_sensors["label"] = Sensor(Sensor.STRING, "label", "The label applied to the data as currently captured.","")
-        self._my_sensors["script-ants"] = Sensor(Sensor.STRING, "script-ants","The antennas specified by the user for use by the executed script.","")
-        self._my_sensors["script-log"] = Sensor(Sensor.STRING, "script-log", "The most recent script log entry.","")
-        self._my_sensors["script-name"] = Sensor(Sensor.STRING, "script-name", "Current script name", "")
-        self._my_sensors["script-experiment-id"] = Sensor(Sensor.STRING, "script-experiment-id", "Current experiment id", "")
-        self._my_sensors["script-observer"] = Sensor(Sensor.STRING, "script-observer", "Current experiment observer", "")
-        self._my_sensors["script-description"] = Sensor(Sensor.STRING, "script-description", "Current experiment description", "")
-        self._my_sensors["script-rf-params"] = Sensor(Sensor.STRING, "script-rf-params", "Current experiment RF parameters", "")
-        self._my_sensors["script-nd-params"] = Sensor(Sensor.STRING, "script-nd-params", "Current experiment Noise Diode parameters", "")
-        self._my_sensors["script-arguments"] = Sensor(Sensor.STRING, "script-arguments", "Options and parameters of script - from sys.argv", "")
-        self._my_sensors["script-status"] = Sensor(Sensor.STRING, "script-status", "Current status reported by running script", "")
-        self._my_sensors["script-starttime"] = Sensor(Sensor.STRING, "script-starttime", "Start time of current script", "")
-        self._my_sensors["script-endtime"] = Sensor(Sensor.STRING, "script-endtime", "End time of current script", "")
+        self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
+        self._my_sensors["label"] = Sensor.string("label", "The label applied to the data as currently captured.","")
+        self._my_sensors["script-ants"] = Sensor.string("script-ants","The antennas specified by the user for use by the executed script.","")
+        self._my_sensors["script-log"] = Sensor.string("script-log", "The most recent script log entry.","")
+        self._my_sensors["script-name"] = Sensor.string("script-name", "Current script name", "")
+        self._my_sensors["script-experiment-id"] = Sensor.string("script-experiment-id", "Current experiment id", "")
+        self._my_sensors["script-observer"] = Sensor.string("script-observer", "Current experiment observer", "")
+        self._my_sensors["script-description"] = Sensor.string("script-description", "Current experiment description", "")
+        self._my_sensors["script-rf-params"] = Sensor.string("script-rf-params", "Current experiment RF parameters", "")
+        self._my_sensors["script-nd-params"] = Sensor.string("script-nd-params", "Current experiment Noise Diode parameters", "")
+        self._my_sensors["script-arguments"] = Sensor.string("script-arguments", "Options and parameters of script - from sys.argv", "")
+        self._my_sensors["script-status"] = Sensor.string("script-status", "Current status reported by running script", "")
+        self._my_sensors["script-starttime"] = Sensor.string("script-starttime", "Start time of current script", "")
+        self._my_sensors["script-endtime"] = Sensor.string("script-endtime", "End time of current script", "")
         self._my_sensors["spead-num-chans"] = Sensor(Sensor.INTEGER, "spead_num_chans","Number of channels reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
         self._my_sensors["spead-num-bls"] = Sensor(Sensor.INTEGER, "spead_num_bls","Number of baselines reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
         self._my_sensors["spead-dump-period"] = Sensor(Sensor.FLOAT, "spead_dump_period","Dump period reported via SPEAD header from the DBE","",default=0,params=[0,2**31])
@@ -509,7 +509,7 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["status"].set_value("init")
 
     @return_reply(Str())
-    def request_sd_metadata_issue(self, sock, msg):
+    def request_sd_metadata_issue(self, req, msg):
         """Resend the signal display metadata packets..."""
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
         self.rec_thread.send_sd_metadata()
@@ -518,15 +518,15 @@ class CaptureDeviceServer(DeviceServer):
         return ("ok", smsg)
 
     @return_reply(Str())
-    def request_capture_start(self, sock, msg):
+    def request_capture_start(self, req, msg):
         """Dummy capture start command - calls capture init."""
-        self.request_capture_init(sock, msg)
+        self.request_capture_init(req, msg)
         smsg = "Capture initialised at %s" % time.ctime()
         activitylogger.info(smsg)
         return ("ok", smsg)
 
     @return_reply(Str())
-    def request_capture_init(self, sock, msg):
+    def request_capture_init(self, req, msg):
         """Spawns a new capture thread that waits for a SPEAD start stream packet."""
         if self.rec_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
@@ -544,14 +544,14 @@ class CaptureDeviceServer(DeviceServer):
 
     @request()
     @return_reply(Str())
-    def request_enable_van_vleck(self, sock):
+    def request_enable_van_vleck(self, req):
         """Enable Van Vleck correction of the auto-correlated visibilities."""
 
     @request(Float())
     @return_reply(Str())
-    def request_set_center_freq(self, sock, center_freq_hz):
+    def request_set_center_freq(self, req, center_freq_hz):
         """Set the center freq for use in the signal displays.
-    
+
         Parameters
         ----------
         center_freq_hz : int
@@ -566,7 +566,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_set_antenna_mask(self, sock, ant_mask):
+    def request_set_antenna_mask(self, req, ant_mask):
         """Set the antennas to be used to select which baseline are recorded (and sent to signal display targets).
         This must be done after a capture_init and before data starts being recorded.
 
@@ -584,7 +584,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str(), Str())
     @return_reply(Str())
-    def request_set_script_param(self, sock, sensor_string, value_string):
+    def request_set_script_param(self, req, sensor_string, value_string):
         """Set the desired script parameter.
 
         Parameters
@@ -593,7 +593,7 @@ class CaptureDeviceServer(DeviceServer):
             The script parameter to be set. [script-ants, script-name, script-experiment-id, script-observer, script-description, script-rf-params, script-nd-params, script-arguments, script-status, script-starttime, script-endtime]
         value_string : str
             A string containing the value to be set
-            
+
         Returns
         -------
         success : {'ok', 'fail'}
@@ -602,12 +602,12 @@ class CaptureDeviceServer(DeviceServer):
             Name of sensor that was set
         value_string : str
             A string containing the sensor value it was set to
-            
+
         Examples
         --------
         ?set_script_param script-name Test
         !set_script_param ok script-name
-        
+
         """
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
         try:
@@ -621,7 +621,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_script_log(self, sock, log):
+    def request_script_log(self, req, log):
         """Add an entry to the script log."""
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
         self._my_sensors["script-log"].set_value(log)
@@ -632,7 +632,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_drop_sdisp_ip(self, sock, ip):
+    def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
         if self.rec_thread is not None:
             if not self.sdisp_ips.has_key(ip):
@@ -643,7 +643,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_add_sdisp_ip(self, sock, ip):
+    def request_add_sdisp_ip(self, req, ip):
         """Add the supplied ip and port (ip[:port]) to the list of signal display data recipients.If not port is supplied default of 7149 is used."""
         ipp = ip.split(":")
         ip = ipp[0]
@@ -657,7 +657,7 @@ class CaptureDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_set_label(self, sock, label):
+    def request_set_label(self, req, label):
         """Set the current scan label to the supplied value."""
         if self.rec_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
         self._my_sensors["label"].set_value(label)
@@ -665,7 +665,7 @@ class CaptureDeviceServer(DeviceServer):
         return ("ok","Label set to %s" % label)
 
     @return_reply(Str())
-    def request_get_current_file(self, sock, msg):
+    def request_get_current_file(self, req, msg):
         """Return the name of the current (or most recent) capture file."""
         if self.rec_thread is not None: self.current_file = self.rec_thread.fname
         if self.current_file is None:
@@ -673,7 +673,7 @@ class CaptureDeviceServer(DeviceServer):
         return ("ok", self.current_file)
 
     @return_reply(Str())
-    def request_capture_stop(self, sock, msg):
+    def request_capture_stop(self, req, msg):
         """Attempts to gracefully shut down current capture thread by sending a SPEAD stop packet to local receiver."""
         logger.warning("Forceable capture stop called (%f)" % (time.time()))
         if self.rec_thread is None:
@@ -691,7 +691,7 @@ class CaptureDeviceServer(DeviceServer):
         return ("ok", smsg)
 
     @return_reply(Str())
-    def request_capture_done(self, sock, msg):
+    def request_capture_done(self, req, msg):
         """Closes the current capture file and renames it for use by augment."""
         logger.info("Capture done called at %f (%s)" % (time.time(), time.ctime()))
         if self.rec_thread is None:
@@ -702,7 +702,7 @@ class CaptureDeviceServer(DeviceServer):
              # the stop packet will only be sent at the end of the next dump
             if self.rec_thread.is_alive():
                  # capture thread is persistent...
-                self.request_capture_stop(sock, msg)
+                self.request_capture_stop(req, msg)
                  # perform a hard stop if we have not stopped yet.
         self.rec_thread.close_file()
          # no further correspondence will be entered into
@@ -783,4 +783,3 @@ if __name__ == '__main__':
         activitylogger.info("Activity logging stopped")
         server.stop()
         server.join()
-
