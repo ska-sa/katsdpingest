@@ -5,10 +5,6 @@ import sys
 
 from katcp import Sensor, Message
 from katcore.dev_base import Device
-# XXX TODO
-# Evil hack to make kattypes support variable number of
-# arguments. Should be ported to katcp when we start working on it
-import monkeypatch_kattypes
 
 from katcp.kattypes import request, return_reply
 from katcp.kattypes import Str, Int, Float, Discrete, Timestamp
@@ -72,7 +68,7 @@ logger = logging.getLogger(log_name)
 class SensorSignalDeviceServer(Device):
     """A device class that subscribes to signals on the device model that lets
     it know when sensors are added, removed or changed. The device will then
-    issue #device-changed informs everytime a sensor is added or removed
+    issue #interface-changed informs everytime a sensor is added or removed
     """
 
     def setup_sensors(self):
@@ -86,20 +82,20 @@ class SensorSignalDeviceServer(Device):
         assert(model is self._model)
         logger.debug('New sensor %s added signal.' % sensor.name)
         self.add_sensor(sensor)
-        self.issue_device_changed('sensor-list')
+        self.issue_interface_changed('sensor-list')
 
     def handle_sensor_remove(self, model, sensor, **kwargs):
         assert(model is self._model)
         logger.info('Sensor %s removed signal.' % sensor.name)
         self.remove_sensor(sensor)
-        self.issue_device_changed('sensor-list')
+        self.issue_interface_changed('sensor-list')
 
     def handle_sensor_update(self, model, sensor, old_sensor, **kwargs):
         assert(model is self._model)
         logger.debug('Sensor %s changed signal.' % sensor.name)
         assert(sensor.name == old_sensor.name)
         self.replace_sensor(sensor, old_sensor)
-        self.issue_device_changed('sensor-list')
+        self.issue_interface_changed('sensor-list')
 
     def replace_sensor(self, sensor, old_sensor=None):
         # TODO Perhaps one wants to put this method in the katcp
@@ -136,24 +132,24 @@ class SensorSignalDeviceServer(Device):
 
         self.add_sensor(sensor)
 
-    def issue_device_changed(self, change):
+    def issue_interface_changed(self, change):
         """
-        Issue a device-changed inform to all clients.
+        Issue a interface-changed inform to all clients.
 
         Parameter change indicates what part of the device has changed. e.g.
 
-        issue_device_changed('sensor-list')
+        issue_interface_changed('sensor-list')
 
         will result in the inform
 
-        #device-changed sensor-list.
+        #interface-changed sensor-list.
 
         The change description is tested for validity; currently only
         'sensor-list' is considered valid.
         """
         if not change in ['sensor-list']:
             raise ValueError('Unknown change notification %s' % change)
-        msg = Message.inform('device-changed', change)
+        msg = Message.inform('interface-changed', change)
         self.mass_inform(msg)
 
 class DBE7DeviceServer(SensorSignalDeviceServer):
@@ -161,16 +157,17 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
     VERSION_INFO = ("k7-simulator",0,1)
     BUILD_INFO = ("k7-simulator",0,1,"rc1")
 
-    def handle_request(self, sock, msg):
+    def handle_request(self, client_conn, msg):
         hang_requests = self._model.get_test_sensor('hang-requests').value()
         if not hang_requests or msg.name == 'watchdog':
-            return super(DBE7DeviceServer, self).handle_request(sock, msg)
+            return super(DBE7DeviceServer, self).handle_request(
+                client_conn, msg)
         # If hang_requests is set we never reply (except for watchdogs)
         return
 
     @request(Str(optional=True, default=''))
     @return_reply(Str())
-    def request_mode(self, sock, mode):
+    def request_mode(self, req, mode):
         """mode change command (?mode [new-mode])
 
         Currently a dummy operation in simulator, just pauses to test
@@ -187,7 +184,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         return ('ok', self._model.get_sensor('mode').value())
 
     @return_reply(Str())
-    def request_start_tx(self, sock, msg):
+    def request_start_tx(self, req, msg):
         """Start the data stream."""
         self._mode.start_data_stream()
         smsg = "Data stream started."
@@ -196,7 +193,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_k7_accumulation_length(self, sock, period):
+    def request_k7_accumulation_length(self, req, period):
         """Set the accumulation length. (?k7-accumlation-length accumulation-period)"""
         self._model.set_dump_period(float(period) / 1000.0)
         dump_period = self._model.get_dump_period()
@@ -208,22 +205,20 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
     @request(Discrete(('pps', 'now')), Int(min=0, max=127), Str(multiple=True),
              include_msg=True)
     @return_reply()
-    def request_k7_adc_snap_shot(self, sock, req_msg, when, level, *inputs):
+    def request_k7_adc_snap_shot(self, req, req_msg, when, level, *inputs):
         """retrieve an adc snapshot (?k7-adc-snap-shot [pps|now] threshold input+)
 
         The simulator returns some dummy values.
         """
         for input, timestamp, values in self._model.get_adc_snap_shot(
                 when, level, inputs):
-            imsg = Message.inform(req_msg.name, input, '%d' % timestamp, *(
-                "%d" % v for v in values))
-            self.reply_inform(sock, imsg, req_msg)
+            req.inform(input, '%d' % timestamp, *("%d" % v for v in values))
 
         return ('ok', )
 
     @request(Str(), Timestamp(), Timestamp(), Float(), Float(), Float())
     @return_reply()
-    def request_k7_delay(self, sock, board_input, time_, delay,
+    def request_k7_delay(self, req, board_input, time_, delay,
                          delay_rate, fringe_offset, fringe_rate):
         """set the delay and fringe correction (?k7-delay board-input time delay-value delay-rate fringe-offset fringe-rate)
 
@@ -234,7 +229,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Int(min=0, max=400000000))
     @return_reply(Int())
-    def request_k7_frequency_select(self, sock, centre_frequency):
+    def request_k7_frequency_select(self, req, centre_frequency):
         """select a frequency for fine channelisation (?k7-frequency-select center-frequency)
 
         Frequency in Hertz. The actual centre frequency will be
@@ -249,7 +244,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Str(), Str(multiple=True))
     @return_reply(Str())
-    def request_k7_gain(self, sock, input, *gains):
+    def request_k7_gain(self, req, input, *gains):
         """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
         # TODO Check that valid inputs were specified
         # TODO Check format of 'gains'. Talk to DBE team?
@@ -257,14 +252,14 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Float(optional=True, default=5.0))
     @return_reply(Str())
-    def request_fire_nd(self, sock, duration):
+    def request_fire_nd(self, req, duration):
         """Insert noise diode spike into output data."""
         self._model.noise_diode = duration
         return ("ok","Fired")
 
     @request(Float(optional=True, default=0.5))
     @return_reply(Str())
-    def request_cycle_nd(self, sock, duty_cycle):
+    def request_cycle_nd(self, req, duty_cycle):
         """Fire the noise diode with the requested duty cycle. Set to 0 to disable."""
         self._model.nd_duty_cycle = duty_cycle
         return("ok","Duty cycle firing enabled")
@@ -272,7 +267,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Float(),Float(),Float(optional=True,default=20.0))
     @return_reply(Str())
-    def request_test_target(self, sock, az, el, flux):
+    def request_test_target(self, req, az, el, flux):
         """Add a test target to the simulator. ?test-target <az> <el> [<flux_scale>]"""
         self._model.set_target_az(az)
         self._model.set_target_el(el)
@@ -283,7 +278,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Float())
     @return_reply(Str())
-    def request_pointing_el(self, sock, el):
+    def request_pointing_el(self, req, el):
         """Sets the current simulator elevation pointing."""
         self._model.set_test_el(el)
         smsg = "Pointing elevation set to %f" % el
@@ -292,7 +287,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Float())
     @return_reply(Str())
-    def request_pointing_az(self, sock, az):
+    def request_pointing_az(self, req, az):
         """Sets the current simulator azimuth pointing."""
         self._model.set_test_az(az)
         smsg = "Pointing azimuth set to %f" % az
@@ -301,11 +296,11 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
 
     @return_reply(Str())
-    def request_label_input(self, sock, msg):
+    def request_label_input(self, req, msg):
         """Label the specified input with a string."""
         if not msg.arguments:
             for (inp,label) in sorted(self._model.labels.iteritems()):
-                self.reply_inform(sock, Message.inform("label-input", label, inp), msg)
+                req.inform(label, inp)
             return ("ok",str(len(self._model.labels)))
         else:
             inp = msg.arguments[0]
@@ -329,7 +324,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Str(), Float(optional=True))
     @return_reply(Str())
-    def request_capture_start(self, sock, destination, time_):
+    def request_capture_start(self, req, destination, time_):
         """Start a capture (?capture-start k7 [time]). Mostly a dummy, does a spead_issue."""
         self._model.spead_issue()
         smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip_str'])
@@ -338,7 +333,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Str(optional=True))
     @return_reply(Str())
-    def request_capture_stop(self, sock, destination):
+    def request_capture_stop(self, req, destination):
         """For compatibility with dbe_proxy. Does nothing :)."""
         self._model.send_stop()
         smsg = "Capture stopped. (dummy)"
@@ -346,18 +341,16 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         return ("ok", smsg)
 
     @return_reply(Int())
-    def request_capture_list(self, sock, req_msg):
+    def request_capture_list(self, req, req_msg):
         """list available data streams (?capture-list)"""
-        self.reply_inform(
-            sock, Message.inform(req_msg.name, 'k7',
-                                 self._model.config['rx_meta_ip_str'],
-                                 self._model.config['rx_udp_port']),
-            req_msg)
+        req.inform('k7',
+                    self._model.config['rx_meta_ip_str'],
+                    self._model.config['rx_udp_port'])
         return ("ok", 1)
 
 
     @return_reply(Str())
-    def request_stop_tx(self, sock, msg):
+    def request_stop_tx(self, req, msg):
         """Stop the data stream."""
         self._model._thread_paused = True
         self._model.send_stop()

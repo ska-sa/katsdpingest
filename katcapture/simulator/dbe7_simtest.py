@@ -24,7 +24,7 @@ class SimTestDevice(sim_base.SimTestDevice):
         """Set device server interfaced to the model
 
         The device needs to implement add/remove_sensor() methods and
-        an issue_device_changed() method that informs all clients that
+        an issue_interface_changed() method that informs all clients that
         the device has changed.
         """
         self._device = device
@@ -42,7 +42,7 @@ class SimTestDevice(sim_base.SimTestDevice):
         assert(sensor is self._device.get_sensor(sensor_name))
         self._hidden_sensors[sensor.name] = sensor
         self._device.remove_sensor(sensor)
-        self._device.issue_device_changed('sensor-list')
+        self._device.issue_interface_changed('sensor-list')
         logger.info('Hide sensor %s.' % sensor.name)
 
     def unhide_sensor(self, sensor_name):
@@ -50,7 +50,7 @@ class SimTestDevice(sim_base.SimTestDevice):
         try: del(self._hidden_sensors[sensor.name])
         except KeyError: raise NotHidden('Sensor %s is not hidden' % sensor.name)
         self._device.add_sensor(sensor)
-        self._device.issue_device_changed('sensor-list')
+        self._device.issue_interface_changed('sensor-list')
         logger.info('Unhide Sensor %s.' % sensor.name)
 
     def _get_sensor_names(self, sensor_name_re):
@@ -90,9 +90,9 @@ class SimTestDevice(sim_base.SimTestDevice):
 
         return list(set(sensor_names) - not_unhidden)
 
-    @request(Str(), include_msg=True)
+    @request(Str())
     @return_reply(Int())
-    def request_hide_sensors(self, sock, req_msg, name_re):
+    def request_hide_sensors(self, req, name_re):
         """Hide all sensors matching (python) regular expression name_re
 
         Returns the number of sensors that were hidden. Issues and
@@ -106,12 +106,12 @@ class SimTestDevice(sim_base.SimTestDevice):
 
         sensor_names = self.hide_sensor_re(name_re, already_hidden_ok=True)
         for sn in sensor_names:
-            self.reply_inform(sock, Message.inform(req_msg.name, sn), req_msg)
+            req.inform(sn)
         return ('ok', len(sensor_names))
 
-    @request(Str(), include_msg=True)
+    @request(Str())
     @return_reply(Int())
-    def request_unhide_sensors(self, sock, req_msg, name_re):
+    def request_unhide_sensors(self, req, name_re):
         """Unhide all sensors matching (python) regular expression name_re
 
         Returns the number of sensors that were hidden. Issues and
@@ -125,20 +125,20 @@ class SimTestDevice(sim_base.SimTestDevice):
 
         sensor_names = self.unhide_sensor_re(name_re, not_hidden_ok=True)
         for sn in sensor_names:
-            self.reply_inform(sock, Message.inform(req_msg.name, sn), req_msg)
+            req.inform(sn)
         return ('ok', len(sensor_names))
 
     @return_reply(Int())
-    def request_list_hidden_sensors(self, sock, req_msg):
+    def request_list_hidden_sensors(self, req, req_msg):
         """List all hidden sensors names, one inform per sensor"""
         hidden_sensor_names = sorted(self._hidden_sensors.keys())
         for sn in hidden_sensor_names:
-            self.reply_inform(sock, Message.inform(req_msg.name, sn), req_msg)
+            req.inform(sn)
         return ('ok', len(hidden_sensor_names))
 
     @request(Bool())
     @return_reply()
-    def request_hang_requests(self, sock, hang):
+    def request_hang_requests(self, req, hang):
         """Make device hang on all requests other than watchdog"""
         self._model.get_test_sensor('hang-requests').set_value(hang)
         return ('ok',)
@@ -147,7 +147,7 @@ class SimTestDevice(sim_base.SimTestDevice):
              Discrete(('unknown','nominal','warn','error','failure'), optional=True),
              Timestamp(optional=True))
     @return_reply()
-    def request_set_test_sensor_value(self, sock, sensorname, value, status, timestamp):
+    def request_set_test_sensor_value(self, req, sensorname, value, status, timestamp):
         """Set a test sensor's value, status and timestamp.
 
         Parameters
