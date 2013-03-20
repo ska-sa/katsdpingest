@@ -192,7 +192,7 @@ def fetch_sensor_data(sensors, start_time, end_time, initial_value):
     start_time : Sensor data start time in seconds
     end_time : Sensor data end time in seconds
     initial_value : bool
-        Fetch initial value if no values are returned
+        Fetch initial value
 
 
     Return value
@@ -720,6 +720,11 @@ while(len(files) > 0 or options.batch):
     if options.batch:
         time.sleep(2)
         status = "\rChecking for new files in %s: %s" % (options.dir,str(state[batch_count % 4]))
+
+        # Clear out the prefetch cache
+        sensor_data_cache.clear()
+        sensor_data_cache_parameters.clear()
+
         sys.stdout.write(status)
         sys.stdout.flush()
         files = get_files_in_dir(options.dir)
