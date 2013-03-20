@@ -19,14 +19,17 @@ import os
 import signal
 import logging
 import traceback
-from optparse import OptionParser
 
 import numpy as np
-from h5py import File
 
 import katcorelib
 import katcorelib.targets
 import katconf
+
+from h5py import File
+from optparse import OptionParser
+from katcorelib.katcp_client import escape_name as escape_sensor_name
+
 
 major_version = 2
  # only augment files of this major version
@@ -36,6 +39,10 @@ augment_version = 1
 
 errors = 0
 section_reports = {}
+sensor_data_cache = {}
+sensor_data_cache_parameters = {}
+
+NO_ANTS = 7
 
 def get_input_info(array_config):
     """Get correlator input mapping and delays from config system.
@@ -157,17 +164,127 @@ def get_sensor_data(sensor, start_time, end_time, dither=1, initial_value=False)
     -------
     array : dtype=[('timestamp','float'),('value', '<f4')]
     """
-    print "Pulling data for sensor %s from %i to %i\n" % (sensor.name, start_time, end_time)
     start_time = start_time - dither
     end_time = end_time + dither
-    initial_data = [[], [], []]
+    # Check that the request matches the cache data
+    assert sensor_data_cache_parameters['start'] == start_time
+    assert sensor_data_cache_parameters['end'] == end_time
+
+    sensor_name = escape_sensor_name(sensor.parent_name + '_' +  sensor.name)
+    _, value_times, statusses, values = sensor_data_cache[sensor_name]
     if initial_value:
-        initial_data = sensor.get_stored_history(select=False,start_seconds=start_time,end_seconds=start_time, last_known=True)
-        print "Initial value fetch:",initial_data
+        # Check that we have a value before start_time
+        assert value_times[0] < start_time
+        print "Initial value: ", [value_times[0], values[0], statusses[0]]
+
+    print "Retrieved data of length", len(values)
+    return np.rec.fromarrays([value_times, values, statusses],
+                             names='timestamp, value, status')
+
+def fetch_sensor_data(sensors, start_time, end_time, initial_value):
+    """Do a multi-sensor request to katstore to fetch data for all sensors at once
+
+    Arguments
+    ---------
+
+    sensors : list
+        list of sensor names (relative to kat.sensors)
+    start_time : Sensor data start time in seconds
+    end_time : Sensor data end time in seconds
+    initial_value : bool
+        Fetch initial value if no values are returned
+
+
+    Return value
+    ------------
+    dict: sensorname : [[update_times],[value_times],[statusses],[values]]
+    """
+    sensors = sorted(set(sensors))
+    # A pretty little hack to get at a katstore client
+    katstore_client = kat.dbe7.sensor.sorted_values()[0]._katstore
+    regexised_sensors = ['/^'+sn.replace('_', '.')+'$/' for sn in sensors]
     stime = time.time()
-    data = sensor.get_stored_history(select=False,start_seconds=start_time,end_seconds=end_time)
-    print "Retrieved data of length",len(data[1]),"in",time.time()-stime,"s"
-    return np.rec.fromarrays([initial_data[0] + data[0], initial_data[1] + data[1], initial_data[2] + data[2]], names='timestamp, value, status')
+    print ("Pulling data from %i to %i %s initial value fetch for sensors:"
+           "\n\n%s \n" % (
+               start_time, end_time,
+               'with' if initial_value else 'without',
+               '\n'.join(sensors)) )
+    raw_values = katstore_client.get_data_multi(
+        ','.join(regexised_sensors), start_time, end_time,
+        last_known=initial_value)
+    print 'Fetched data for %d sensors in %f seconds' % (
+        len(raw_values), time.time() - stime)
+    if len(raw_values) < len(sensors):
+        retrieved_sensors = set(escape_sensor_name(s) for s in raw_values.keys())
+        print 'No data retrieved for %d sensors:\n\n%s' % (
+            len(sensors) - len(raw_values),
+            '\n'.join(sorted(set(sensors) - retrieved_sensors)))
+    values = {}
+    for sensor, raw_vals in raw_values.items():
+        # Convert sensor names back to _ notation
+        sensor_name = escape_sensor_name(sensor)
+        sensor_obj = getattr(kat.sensors, sensor_name)
+        update_times, val_times, statusses, vals = [], [], [], []
+        for rv in raw_vals:
+            # maxsplit = 3, since the last part of the string is the sensor
+            # value that may itself contain commas
+            ut, vt, s, v = rv.split(',', 3)
+            update_times.append(float(ut))
+            val_times.append(float(vt))
+            statusses.append(s)
+            vals.append(sensor_obj.format_type(v))
+        values[sensor_name] = [update_times, val_times, statusses, vals]
+    # Deal with sensors that have no values
+    for sn in sensors:
+        if sn not in values:
+            values[sn] = [[], [], [], []]
+    return values
+
+def prefetch_sensor_data(f):
+    #list of tuples (sensor-name, get_initial)
+    sensors_to_get = []
+
+    int_time = get_single_value(f['/MetaData/Configuration/Correlator'], 'int_time')
+    obs_start = f['/Data/timestamps'].value[1]
+    obs_end = f['/Data/timestamps'].value[-1]
+    data_start_time = obs_start - int_time
+    data_end_time = obs_end + int_time
+
+    for antenna in range(1,NO_ANTS+1):
+        antenna = str(antenna)
+        ant_name = 'ant' + antenna
+        for sensor in antenna_sensors:
+            sensors_to_get.append((ant_name+'_'+sensor, sensor in sensors_iv))
+        for pol in ('h', 'v'):
+            sensor = "rfe7_downconverter_%s_%s_attenuation" % (ant_name, pol)
+            sensors_to_get.append(("rfe7_"+sensor, True))
+    for sensor in beam_sensors:
+        sensors_to_get.append(('dbe7_'+sensor, sensor in sensors_iv))
+
+    for sensor in dbe_sensors:
+        sensors_to_get.append(('dbe7_'+sensor, sensor in sensors_iv))
+
+    sensors_to_get.append(('dbe7_'+"dbe_centerfrequency", True))
+    for sensor in rfe_sensors:
+        sensors_to_get.append(("rfe7_"+sensor, sensor in sensors_iv))
+    for sensor in enviro_sensors:
+        sensors_to_get.append(("anc_"+sensor, False))
+
+    no_iv_sensors = [sens_data[0] for sens_data in sensors_to_get if not sens_data[1]]
+    iv_sensors = [sens_data[0] for sens_data in sensors_to_get if sens_data[1]]
+
+    # Request data without initial values
+    no_iv_sensor_data = fetch_sensor_data(
+        no_iv_sensors, data_start_time, data_end_time, False)
+    # Request data including intial values
+    iv_sensor_data = fetch_sensor_data(
+        iv_sensors, data_start_time, data_end_time, True)
+
+    # Update the global sensor data cache
+    sensor_data_cache.update(no_iv_sensor_data)
+    sensor_data_cache.update(iv_sensor_data)
+    sensor_data_cache_parameters['start'] = data_start_time
+    sensor_data_cache_parameters['end'] = data_end_time
 
 def insert_sensor(device, name, group, obs_start, obs_end, int_time, iv=False, default=None):
     global errors
@@ -203,6 +320,7 @@ def insert_sensor(device, name, group, obs_start, obs_end, int_time, iv=False, d
         errors += 1
     except Exception, err:
         if not str(err).startswith('Name already exists'):
+            print_tb()
             section_reports[full_name] = "Error: Failed to create dataset for "+ full_name + " (" + str(err) + ")"
             errors += 1
         else:
@@ -420,17 +538,18 @@ while(len(files) > 0 or options.batch):
             rfeg = create_group(sg, "RFE")
             eg = create_group(sg, "Enviro")
 
-            for antenna in range(1,8):
+            prefetch_sensor_data(f)
+            for antenna in range(1,NO_ANTS+1):
                 antenna = str(antenna)
                 ant_name = 'ant' + antenna
                 a = create_group(ag, ant_name)
                 ac = create_group(acg, ant_name)
                 stime = time.time()
                 for sensor in antenna_sensors:
-                    insert_sensor(ant_name, sensor, a, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                    insert_sensor(ant_name, sensor, a, obs_start, obs_end, int_time, iv=sensor in sensors_iv) # done
                 for pol in ('h', 'v'):
                     sensor = "rfe7_downconverter_%s_%s_attenuation" % (ant_name, pol)
-                    insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=True)
+                    insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=True) # done
                  # add RFE7 attenuators too
                 if options.verbose:
                     smsg = "Overall creation of sensor table for antenna " + antenna + " took " + str(time.time()-stime) + "s"
@@ -467,19 +586,19 @@ while(len(files) > 0 or options.batch):
 
             b0 = create_group(bg, "Beam0")
             for sensor in beam_sensors:
-                insert_sensor(dbe_proxy, sensor, b0, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                insert_sensor(dbe_proxy, sensor, b0, obs_start, obs_end, int_time, iv=sensor in sensors_iv) # done
 
             for sensor in dbe_sensors:
-                insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv)
+                insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv) # done
             try:
                 if hasattr(kat.sensors, dbe_proxy + "_dbe_centerfrequency"):
-                    insert_sensor(dbe_proxy, "dbe_centerfrequency", dbeg, obs_start, obs_end, int_time, iv=True)
+                    insert_sensor(dbe_proxy, "dbe_centerfrequency", dbeg, obs_start, obs_end, int_time, iv=True) # done
                     dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_dbe_centerfrequency").name].value
                 else:
                     dbe_mode = dbeg[getattr(kat.sensors, dbe_proxy + "_dbe_mode").name].value[-1][1]
                      # get the value of the last known good DBE mode
                     sensor = 'dbe_' + dbe_mode + '_centerfrequency'
-                    sensor_len = insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=True)
+                    sensor_len = insert_sensor(dbe_proxy, sensor, dbeg, obs_start, obs_end, int_time, iv=True) # Not doing this once, only for outdated mode-named-sensor history
                     if sensor_len == 0:
                         raise ValueError('DBE center frequency sensor not found or has no data')
                     dbe_center_freq = dbeg[getattr(kat.sensors, dbe_proxy + "_" + sensor).name].value
@@ -499,7 +618,7 @@ while(len(files) > 0 or options.batch):
                 # make it appear as if DBE center freq was set to the default value an hour before the observation
 
             for sensor in rfe_sensors:
-                insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv, default=np.nan)
+                insert_sensor("rfe7", sensor, rfeg, obs_start, obs_end, int_time, iv=sensor in sensors_iv, default=np.nan) # done
                 if sensor == "rfe7_lo1_frequency":
                     try:
                         lo1_freq = np.sort(rfeg[getattr(kat.sensors, "rfe7_" + sensor).name].value, order=['timestamp'])
@@ -576,10 +695,10 @@ while(len(files) > 0 or options.batch):
             renfile = new_path + lst[0] + "." + new_extension
              #Drop the last two extensions of the file 123456789.xxxxx.h5 becomes 123456789.
              #And then add the new extension in its place thus 123456789.unaugmented.h5 becomes 123456789.h5 or 123456789.failed.h5
-            os.rename(fname, renfile)
-            smsg = "File has been renamed to " + str(renfile) + "\n"
-            print smsg
-            logger.info(smsg)
+            # os.rename(fname, renfile)
+            # smsg = "File has been renamed to " + str(renfile) + "\n"
+            # print smsg
+            # logger.info(smsg)
         except Exception:
             print_tb()
             smsg = "Failed to rename " + str(fname) + " to " + str(renfile)
