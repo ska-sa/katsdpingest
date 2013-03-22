@@ -203,6 +203,9 @@ def fetch_sensor_data(sensors, start_time, end_time, initial_value):
     # A pretty little hack to get at a katstore client
     katstore_client = kat.dbe7.sensor.sorted_values()[0]._katstore
     regexised_sensors = ['/^'+sn.replace('_', '.')+'$/' for sn in sensors]
+    s_per_hour = 3600
+    # 60 s of timeout per hour of observation time.
+    scaled_timeout = (end_time - start_time) / s_per_hour * 60
     stime = time.time()
     print ("Pulling data from %i to %i %s initial value fetch for sensors:"
            "\n\n%s \n" % (
@@ -211,7 +214,7 @@ def fetch_sensor_data(sensors, start_time, end_time, initial_value):
                '\n'.join(sensors)) )
     raw_values = katstore_client.get_data_multi(
         ','.join(regexised_sensors), start_time, end_time,
-        last_known=initial_value)
+        last_known=initial_value, timeout=scaled_timeout)
     print 'Fetched data for %d sensors in %f seconds' % (
         len(raw_values), time.time() - stime)
     if len(raw_values) < len(sensors):
@@ -241,6 +244,9 @@ def fetch_sensor_data(sensors, start_time, end_time, initial_value):
     return values
 
 def prefetch_sensor_data(f):
+    # Clear out the prefetch cache
+    sensor_data_cache.clear()
+    sensor_data_cache_parameters.clear()
     #list of tuples (sensor-name, get_initial)
     sensors_to_get = []
 
@@ -486,6 +492,7 @@ input_map = sorted(('ant' + real, dbe) for real, dbe in real_to_dbe.items())
  # map of antenna inputs (e.g. ant1h) to dbe inputs (e.g. 0x)
 
 while(len(files) > 0 or options.batch):
+    section_reports.clear()
     for fname in files:
         errors = 0
         fst = time.time()
@@ -717,13 +724,13 @@ while(len(files) > 0 or options.batch):
 
     # if in batch mode check for more files...
     files = []
+    # Clear all global dicts to prevent sticky memory.
+    section_reports.clear()
+    sensor_data_cache.clear()
+    sensor_data_cache_parameters.clear()
     if options.batch:
         time.sleep(2)
         status = "\rChecking for new files in %s: %s" % (options.dir,str(state[batch_count % 4]))
-
-        # Clear out the prefetch cache
-        sensor_data_cache.clear()
-        sensor_data_cache_parameters.clear()
 
         sys.stdout.write(status)
         sys.stdout.flush()
