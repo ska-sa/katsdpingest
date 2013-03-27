@@ -390,6 +390,7 @@ parser.add_option("-d", "--dir", default='/var/kat/data', help="Process all unau
 parser.add_option("-f", "--file", default="", help="Fully qualified path to a specific file to augment. [default=%default]")
 parser.add_option("-s", "--system", default="systems/local.conf", help="System configuration file to use. [default=%default]")
 parser.add_option("-o", "--override", dest="force", action="store_true", default=False, help="If set, previously augmented files will be re-augmented. Only useful in conjunction with a single specified file.")
+parser.add_option("--unaugment", dest="unaugment", action="store_true", default=False, help="If set, discard augmented sensor data and replace with currently available sensor data from katstore. Useful if katstore was faulty at time of initial augment.")
 parser.add_option("--dbe", dest="dbe_name", default="dbe7", help="Name of kat client to use as the correlator proxy. [default=%default]")
 parser.add_option("-v", "--verbose", action="store_true", default=False, help="Verbose output.")
 parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
@@ -510,6 +511,9 @@ while(len(files) > 0 or options.batch):
                 print smsg
                 logger.info(smsg)
                 continue
+            if (options.unaugment):
+                del f['/MetaData/Sensors']
+                f['/MetaData/'].create_group('Sensors')
             last_run = f['/'].attrs.get('augment_ts',None)
             f['/'].attrs['augment_errors'] = 0
             if last_run:
