@@ -99,7 +99,7 @@ class ProcBlock(object):
     def __str__(self):
         """Accumulated processing statistics of this block."""
         descr = ["Processing Block: %s" % self.__class__.__name__]
-        descr.append("Parameters: " + ", ".join(["%s == %s" % (k,v) for k,v in self.__dict__.iteritems() if not k.startswith("_")]))
+        descr.append("Parameters: " + ", ".join(["%s == %s" % (k,v) for k,v in vars(self).iteritems() if not k.startswith("_")]))
         if len(self._proc_times) > 0:
             descr.append("Processed %i frame(s) in %.3fs. Last: %.3fs, Avg: %.3fs" % (len(self._proc_times), np.sum(self._proc_times), self._proc_times[-1], np.average(self._proc_times)))
         else:
