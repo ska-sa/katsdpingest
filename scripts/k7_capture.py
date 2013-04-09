@@ -284,6 +284,11 @@ class k7Capture(threading.Thread):
          # we need these bits of meta data before being able to assemble and transmit signal display data
         meta_desired = ['int_time','center_freq']
          # if we find these, then what hey :)
+        current_dbe_target = ''
+        dbe_target_since = 0.0
+        current_ant_activities = {}
+        ant_activities_since = {}
+         # track the current DBE target and antenna activities via sensor updates
         sd_slots = None
         sd_timestamp = None
         for heap in spead.iterheaps(rx):
@@ -335,6 +340,28 @@ class k7Capture(threading.Thread):
                         logger.debug("Initialised sd frame to shape %s" % str(self.sd_frame.shape))
                         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
                         sd_slots = None
+                if name.startswith('sensor_'):
+                    if not item._changed: continue
+                    logger.info("Sensor data received %s: %s => %s" % (time.ctime(), name, str(ig[name])))
+                    sensor_name = name.partition('_')[2]
+                    update = item.get_value()[0]
+                    head, sep, tail = update.partition(' ')
+                    update_timestamp = float(head)
+                    update_status, sep, update_value = tail.partition(' ')
+                     # unpack sensor name and split update into timestamp + status + value
+                    if sensor_name == 'dbe7_target':
+                        current_dbe_target = update_value
+                        dbe_target_since = update_timestamp
+                    elif sensor_name.endswith('activity'):
+                        ant_name = sensor_name.partition('_')[0]
+                        current_ant_activities[ant_name] = update_value
+                        ant_activities_since[ant_name] = update_timestamp
+                    logger.debug("Updated sensor %s: DBE target '%s' since %r, %s" %
+                                 (sensor_name, current_dbe_target, dbe_target_since,
+                                  ', '.join([("antenna '%s' did '%s' since %r" % (ant, current_ant_activities[ant], ant_activities_since[ant]))
+                                             for ant in current_ant_activities])))
+                    item._changed = False
+                    continue
                 if not name in datasets:
                  # check to see if we have encountered this type before
                     if name == 'xeng_raw' and self._script_ants is not None and self.baseline_mask is None:
