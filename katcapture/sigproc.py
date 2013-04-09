@@ -280,8 +280,8 @@ class RFIThreshold(ProcBlock):
 
 ###################################################################################################################
 
-class GainCal(ProcBlock):
-    """Produce weights for gain calibration.
+class InjectedNoiseCal(ProcBlock):
+    """Produce weights for gain calibration based on injected noise.
     
     This method expects a block of historical data in which the noise diode is
     on for some integer number of dumps. A single gaincal number is produced for this block.
@@ -301,7 +301,7 @@ class GainCal(ProcBlock):
         self.nd_power = nd_power
         self.int_dumps = int_dumps
         self.nd_on_dumps = nd_on_dumps
-        super(GainCal, self).__init__(*args, **kwargs)
+        super(InjectedNoiseCal, self).__init__(*args, **kwargs)
 
     def _proc(self):
         """Process a block of dumps to produce a counts per kelvin value for each baseline.
