@@ -115,7 +115,7 @@ class k7Capture(threading.Thread):
          # basic rfi thresholding flagger
         self.flags_description = [[nm,self.rfi.flag_descriptions[i]] for (i,nm) in enumerate(self.rfi.flag_names)]
          # an array describing the flag produced by the rfi flagger
-        self.van_vleck = None
+        self.van_vleck = self.ant_gains = None
          # defer creation until we know baseline ordering
         #### Done with blocks
         self.init_file()
@@ -336,7 +336,8 @@ class k7Capture(threading.Thread):
                             self.data_scale_factor=1
                              # at least ensure that valid (but unscaled) data can be written...
                         self.cpref = CorrProdRef(bls_ordering=self.meta['bls_ordering'])
-                         # since we now know the baseline ordering we can create the Van Vleck correction block
+                        self.ant_gains = sp.AntennaGains(bls_ordering=self.meta['bls_ordering'])
+                         # since we now know the baseline ordering we can create the Van Vleck correction and antenna gain blocks
                         self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
                         logger.debug("Initialised sd frame to shape %s" % str(self.sd_frame.shape))
                         meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
@@ -346,9 +347,9 @@ class k7Capture(threading.Thread):
                     logger.info("Sensor data received %s: %s => %s" % (time.ctime(), name, str(ig[name])))
                     sensor_name = name.partition('_')[2]
                     update = item.get_value()[0]
-                    head, sep, tail = update.partition(' ')
-                    update_timestamp = float(head)
-                    update_status, sep, update_value = tail.partition(' ')
+                    part1, sep, tail = update.partition(' ')
+                    part2, sep, part3 = tail.partition(' ')
+                    update_timestamp, update_status, update_value = float(part1), part2, eval(part3, {})
                      # unpack sensor name and split update into timestamp + status + value
                     if sensor_name == 'dbe7_target':
                         current_dbe_target = update_value
@@ -440,6 +441,9 @@ class k7Capture(threading.Thread):
                      # finalise flagging operations and return flag data to write
                     f[flags_dataset][datasets_index[name]] = flags
                      # write flags to file
+                    if self.ant_gains is not None:
+                        self.ant_gains.proc(current_dbe_target, dbe_target_since, current_ant_activities, ant_activities_since,
+                                            self.center_freq, self.meta['bandwidth'], self._my_sensors)
                     f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
                      # write data to file (with temporary remap as mentioned above...)
                     if self.sd_frame is not None:
@@ -519,6 +523,7 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
         self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
+        self._my_sensors["antenna-gain-corrections"] = Sensor.string("antenna-gain-corrections", "Antenna gain corrections determined during recent visit to calibrator source", "")
 
         super(CaptureDeviceServer, self).__init__(*args, **kwargs)
 

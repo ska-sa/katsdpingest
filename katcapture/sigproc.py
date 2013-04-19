@@ -1,10 +1,14 @@
-import time
-import numpy as np
-from katsdisp.data import CorrProdRef
-import scipy.signal as signal
 import logging
 import inspect
+import time
+
+import numpy as np
+import scipy.signal as signal
+
+import katpoint
+from katsdisp.data import CorrProdRef
 from .vanvleck import create_correction
+from .antsol import stefcal
 from .__init__ import __version__ as revision
 
 
@@ -334,3 +338,82 @@ class InjectedNoiseCal(ProcBlock):
             weights[:,cross] = np.average([weights[:,i1],weights[:,i2]])
 
         return weights
+
+
+class AntennaGains(ProcBlock):
+    """Determine antenna-based gain corrections for quality assurance and beamformer weights.
+
+    Parameters
+    ----------
+    solution_interval : float, optional
+        The minimum duration of a solution interval, in seconds
+
+    """
+    def __init__(self, solution_interval=60.0, *args, **kwargs):
+        super(AntennaGains, self).__init__(*args, **kwargs)
+        self.solution_interval = solution_interval
+        self._reset_state()
+
+    def _reset_state(self, target=None, track_start=0):
+        """Reset state of processing block (vis buffer + target info)."""
+        self.target = '' if target is None else target
+        self.track_start = track_start
+        self.vis_buffer = []
+
+    def _proc(self, current_dbe_target, dbe_target_since, current_ant_activities, ant_activities_since, center_freq, bandwidth, output_sensors):
+        """Determine antenna gain corrections based on target and antenna sensors."""
+        # Use start of last dump as reference for current data
+        last_dump = output_sensors["last-dump-timestamp"].value()
+        # Only continue if all script antennas having been tracking for the entire dump (and make sure we have 4 antennas to keep solver happy)
+        tracking_ants = [ant for ant in current_ant_activities if current_ant_activities[ant] == 'track' and ant_activities_since[ant] < last_dump]
+        required_ants = max(len(current_ant_activities), 4)
+        if len(tracking_ants) < required_ants:
+            # Reset the state the moment antennas slew off a target
+            self.logger.log(logging.INFO if self.track_start > 0 else logging.DEBUG,
+                            "AntennaGains: Resetting state because only %d antennas are tracking (need %d)" % (len(tracking_ants), required_ants))
+            self._reset_state()
+            return
+        # Ensure we have a valid target suitable for gain cal (point source with known spectrum)
+        target = katpoint.Target(current_dbe_target)
+        if 'gaincal' not in target.tags:
+            self.logger.debug("AntennaGains: Quitting because target '%s' is not a gain calibrator" % (target.description,))
+            return
+        num_chans = self.current.shape[0]
+        channel_width = bandwidth / num_chans
+        channel_freqs = center_freq - channel_width * (np.arange(num_chans) - num_chans / 2)
+        point_source_spectrum = target.flux_density(channel_freqs / 1e6)
+        if np.isnan(point_source_spectrum).any():
+            self.logger.debug("AntennaGains: Quitting because target '%s' does not have complete spectral model over range %g - %g MHz - missing freqs: %s" %
+                              (target.description, channel_freqs.min() / 1e6, channel_freqs.max() / 1e6, channel_freqs[np.isnan(point_source_spectrum)] / 1e6))
+            return
+        # Initialise state once we see a new valid target
+        if self.target != current_dbe_target:
+            self.logger.info("AntennaGains: Initiating data collection on calibrator source '%s' tracked by antennas %s" % (target.description, tracking_ants))
+            self._reset_state(current_dbe_target, last_dump)
+        # Buffer the visibilities and return if we don't have a full solution interval
+        self.vis_buffer.append(self.current)
+        if (self.track_start == 0) or (last_dump - self.track_start < self.solution_interval):
+            self.logger.debug("AntennaGains: Quitting because solution interval not reached yet (%d seconds so far, need %d)" %
+                              (last_dump - self.track_start, self.solution_interval))
+            return
+        for pol in ['h', 'v']:
+            # Restrict ourselves to cross-correlations involving tracking antennas and current polarisation
+            select_bl = [(bl[0][:-1] in tracking_ants and bl[0][-1] == pol and bl[0][:-1] != bl[1][:-1] and
+                          bl[1][:-1] in tracking_ants and bl[1][-1] == pol) for bl in self.cpref.bls_ordering]
+            if not any(select_bl):
+                continue
+            # Normalise visibilities by source model (simple point source with known spectrum)
+            norm_vis = np.dstack(self.vis_buffer).mean(axis=2)[:, np.array(select_bl)] / point_source_spectrum[:, np.newaxis]
+            antA = [tracking_ants.index(bl[0][:-1]) for n, bl in enumerate(self.cpref.bls_ordering) if select_bl[n]]
+            antB = [tracking_ants.index(bl[1][:-1]) for n, bl in enumerate(self.cpref.bls_ordering) if select_bl[n]]
+            # Augment visibilities with complex conjugate values (i.e. add swapped baseline pairs)
+            augm_vis, augm_antA, augm_antB = np.hstack([norm_vis, norm_vis.conj()]), np.r_[antA, antB], np.r_[antB, antA]
+            # Solve for gains per channel, invert them to get gain corrections and emit sensor values
+            gains_per_channel = np.array([stefcal(augm_vis[chan], len(tracking_ants), augm_antA, augm_antB) for chan in range(num_chans)])
+            corrections = 1. / gains_per_channel
+            for n, ant in enumerate(tracking_ants):
+                correct_str = ' '.join([("%5.3f%+5.3fj" % (corrections[chan, n].real, corrections[chan, n].imag)) for chan in range(num_chans)])
+                output_sensors['antenna-gain-corrections'].set_value(ant + pol + ' ' + correct_str)
+            self.logger.info("AntennaGains: Updated gain corrections for pol '%s' on target '%s' - average magnitude: %s" %
+                             (pol, target.name, ' '.join([('%5.3f' % g) for g in np.abs(corrections).mean(axis=0)])))
+        self._reset_state()
