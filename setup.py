@@ -13,6 +13,7 @@ setup (
         "scripts/k7_augment.py",
         "scripts/k7_capture.py",
         "scripts/k7_simulator.py",
+        "scripts/katcp2spead.py",
         ],
     install_requires = [
         'scikits.fitting',

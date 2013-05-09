@@ -1,12 +1,18 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
-# Ludwig Schwardt
-# 4 April 2013
+# Server that pushes KATCP sensor data to a SPEAD stream.
 #
 
-import numpy as np
+import optparse
+import Queue
+import logging
+import time
+import sys
+
 import spead
+import katconf
 import katcorelib
+from katcapture.katcp2spead import Katcp2SpeadDeviceServer
 
 sensors = [
     ('dbe7_target', 'event', ''),
@@ -20,52 +26,71 @@ sensors = [
 #    ('ant2_pos_actual_scan_azim', 'period', '0.4'),
 #    ('ant2_pos_actual_scan_elev', 'period', '0.4'),
 ]
-listeners = []
-start_id = 0x7000
 
-site, system = katcorelib.conf.get_system_configuration()
+# Parse command-line options
+parser = optparse.OptionParser(usage='%prog [options]',
+                               description="Stream KATCP sensors via SPEAD.")
+parser.add_option('-s', '--system',
+                  help='System configuration file (default = site default)')
+parser.add_option('-c', '--sysconfig', default='/var/kat/katconfig',
+                  help='Configuration directory, can be overrided by KATCONF '
+                       'environment variable (default=%default)')
+parser.add_option('--spead-host',
+                  help='Address of host where SPEAD sensor data is sent')
+parser.add_option('--spead-port', type=int, default=7148,
+                  help='Port on spead-host where SPEAD sensor data is sent '
+                       '(default=%default)')
+parser.add_option('--ctl-host', default='',
+                  help='Address of host that will receive KATCP commands '
+                       '(default all hosts)')
+parser.add_option('--ctl-port', type=int, default=2045,
+                  help='Port on which to receive KATCP commands '
+                       '(default=%default)')
+parser.add_option('-l', '--logging',
+                  help='Level to use for basic logging or name of logging '
+                       'configuration file (default log/log.<SITENAME>.conf)')
+opts, args = parser.parse_args()
+
+# Setup configuration source and configure logging (via conf file or directly)
+katconf.set_config(katconf.environ(opts.sysconfig))
+katconf.configure_logging(opts.logging)
+# Suppress SPEAD info messages
+spead.logger.setLevel(logging.WARNING)
+logger = logging.getLogger("kat.katcp2spead")
+
+# Get host object through which to access system sensors
+kat = katcorelib.tbuild(system=opts.system)
+# Wait for at least dbe7 to become stable as basic connectivity check
+state = ["|","/","-","\\"]
+batch_count = 0
+time.sleep(2)
+while not kat.dbe7.is_connected() or not kat.dbe7.synced:
+    sys.stdout.write("\r%s Waiting for connection to DBE7 to be established..."
+                     % state[batch_count % 4])
+    sys.stdout.flush()
+    time.sleep(30)
+    batch_count += 1
+
+# Create device server that is main bridge between KATCP and SPEAD
+server = Katcp2SpeadDeviceServer(kat, sensors, opts.spead_host, opts.spead_port,
+                                 host=opts.ctl_host, port=opts.ctl_port)
+server.set_restart_queue(Queue.Queue())
+# Spawn new thread to handle KATCP requests to device server
+server.start()
+# Use the rest of this thread to manage restarts of the device server
 try:
-    kat = katcorelib.tbuild(system=system)
-except ValueError:
-    raise ValueError("Could not build KAT connection for %s" % (system,))
-
-tx = spead.Transmitter(spead.TransportUDPtx('192.168.56.101', 7148))
-ig = spead.ItemGroup()
-
-class Listener(object):
-    def __init__(self, name):
-        self.name = name
-    def listen(self, update_seconds, value_seconds, status, value):
-        """Push sensor update to SPEAD stream."""
-        update = "%r %s %r" % (value_seconds, status, value)
-        print "Updating sensor %r: %s" % (self.name, update)
-        ig['sensor_' + self.name] = update
-        tx.send_heap(ig.get_heap())
-
-for n, (name, strategy, param) in enumerate(sensors):
-    try:
-        sensor = getattr(kat.sensors, name)
-    except AttributeError:
-        continue
-    sensor.set_strategy(strategy, param)
-    history = sensor.get_stored_history(start_seconds=-1, last_known=True)
-    last_update = "%r %s %r" % (history[0][-1], history[2][-1], history[1][-1])
-    print "Adding sensor %r: %s" % (name, last_update)
-    ig.add_item(name='sensor_' + name, id=start_id + n, description=sensor.description,
-                shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=last_update)
-    listeners.append(Listener(name))
-
-tx.send_heap(ig.get_heap())
-
-for listener in listeners:
-    print "Registering sensor %r" % (listener.name,)
-    sensor = getattr(kat.sensors, listener.name)
-    sensor.register_listener(listener.listen)
-
-try:
-    while(True): pass
+    while True:
+        try:
+            device = server._restart_queue.get(timeout=0.5)
+        except Queue.Empty:
+            device = None
+        if device is not None:
+            logger.info("Stopping")
+            device.stop()
+            device.join()
+            logger.info("Restarting")
+            device.start()
+            logger.info("Started")
 finally:
-    for listener in listeners:
-        sensor = getattr(kat.sensors, listener.name)
-        sensor.unregister_listener(listener.listen)
-    kat.disconnect()
+    server.stop()
+    server.join()
