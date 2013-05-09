@@ -6,8 +6,6 @@
 import optparse
 import Queue
 import logging
-import time
-import sys
 
 import spead
 import katconf
@@ -60,17 +58,6 @@ logger = logging.getLogger("kat.katcp2spead")
 
 # Get host object through which to access system sensors
 kat = katcorelib.tbuild(system=opts.system)
-# Wait for at least dbe7 to become stable as basic connectivity check
-state = ["|","/","-","\\"]
-batch_count = 0
-time.sleep(2)
-while not kat.dbe7.is_connected() or not kat.dbe7.synced:
-    sys.stdout.write("\r%s Waiting for connection to DBE7 to be established..."
-                     % state[batch_count % 4])
-    sys.stdout.flush()
-    time.sleep(30)
-    batch_count += 1
-
 # Create device server that is main bridge between KATCP and SPEAD
 server = Katcp2SpeadDeviceServer(kat, sensors, opts.spead_host, opts.spead_port,
                                  host=opts.ctl_host, port=opts.ctl_port)

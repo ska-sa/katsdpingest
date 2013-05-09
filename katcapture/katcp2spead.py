@@ -22,24 +22,43 @@ class SensorBridge(object):
         self.name, self.katcp_sensor, self.server = name, katcp_sensor, server
         self.spead_id = SensorBridge.next_available_spead_id
         SensorBridge.next_available_spead_id += 1
+        self.strategy = 'none'
+        self.param = ''
         self.listening = False
+        self.last_update = ''
+
+    def store_strategy(self, strategy, param):
+        """Store sensor strategy if it has changed."""
+        if strategy == self.strategy and param == self.param:
+            return
+        self.strategy = strategy
+        self.param = param
+        logger.info("Registered KATCP sensor %r with strategy (%r, %r) and SPEAD id 0x%x" %
+                    (self.name, self.strategy, self.param, self.spead_id))
 
     def listen(self, update_seconds, value_seconds, status, value):
         """Callback that pushes KATCP sensor update to SPEAD stream."""
-        # Assemble sensor data into string for transport over SPEAD
+        # All KATCP events are sent as strings containing space-separated
+        # value_timestamp + status + value, regardless of KATCP type
+        # (consistent with the fact that KATCP data is string-based on the wire)
         update = "%r %s %r" % (value_seconds, status, value)
         logger.debug("Updating sensor %r: %s" % (self.name, update))
         # A lock is needed because each KATCP device client runs in its own
         # thread while calling this callback and the main SPEAD item group
         # of the server is shared among them (blame ig.get_heap()...)
-        with self.server._spead_lock:
-            self.server.ig['sensor_' + self.name] = update
-            self.server.tx.send_heap(self.server.ig.get_heap())
+        if self.server.streaming:
+            with self.server._spead_lock:
+                self.server.ig['sensor_' + self.name] = update
+                self.server.tx.send_heap(self.server.ig.get_heap())
+        self.last_update = update
 
     def start_listening(self):
         """Start listening to sensor and send updates to SPEAD stream."""
         if not self.listening:
+            self.katcp_sensor.set_strategy(self.strategy, self.param)
             self.katcp_sensor.register_listener(self.listen)
+            # This triggers the callback to obtain a valid last_update
+            self.katcp_sensor.get_value()
             logger.debug("Start listening to sensor %r" % (self.name,))
             self.listening = True
 
@@ -47,6 +66,7 @@ class SensorBridge(object):
         """Stop listening to sensor and stop updates to SPEAD stream."""
         if self.listening:
             self.katcp_sensor.unregister_listener(self.listen)
+            self.katcp_sensor.set_strategy('none')
             logger.debug("Stopped listening to sensor %r" % (self.name,))
             self.listening = False
 
@@ -73,78 +93,70 @@ class Katcp2SpeadDeviceServer(DeviceServer):
 
     def __init__(self, kat, sensors, spead_host, spead_port, *args, **kwargs):
         super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
-        self.kat = kat
+        self.kat, self.sensor_strategies = kat, sensors
         self.tx = spead.Transmitter(spead.TransportUDPtx(spead_host, spead_port))
-        self.ig = spead.ItemGroup()
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
-        # In future we might want to re-register sensors when starting stream
-        for name, strategy, param in sensors:
-            self.register_katcp_sensor(name, strategy, param)
+        self.streaming = False
 
     def setup_sensors(self):
         """Populate the dictionary of sensors (none so far)."""
         pass
 
-    def register_katcp_sensor(self, name, strategy, param):
-        """Register KATCP sensor, set sensor strategy and create bridge."""
-        if name not in self.sensor_bridges:
-            try:
-                katcp_sensor = getattr(self.kat.sensors, name)
-            except AttributeError:
-                logger.warning("Could not register unavailable KATCP sensor %r" % (name,))
-                return False
-            self.sensor_bridges[name] = SensorBridge(name, katcp_sensor, self)
-        self.sensor_bridges[name].katcp_sensor.set_strategy(strategy, param)
-        logger.info("Registered KATCP sensor %r with strategy (%r, %r) and SPEAD id 0x%x" %
-                    (name, strategy, param, self.sensor_bridges[name].spead_id))
-        return True
+    def register_sensors(self):
+        """Register all requested KATCP sensors, skipping the unknown ones."""
+        for name, strategy, param in self.sensor_strategies:
+            if name not in self.sensor_bridges:
+                try:
+                    sensor = getattr(self.kat.sensors, name)
+                except AttributeError:
+                    logger.warning("Could not register unavailable KATCP sensor %r" % (name,))
+                    continue
+                self.sensor_bridges[name] = SensorBridge(name, sensor, self)
+            # It is possible to change the strategy on an existing sensor bridge
+            self.sensor_bridges[name].store_strategy(strategy, param)
 
     def send_initial_spead_packet(self):
-        """Send initial SPEAD packet (or resend it later to re-establish SPEAD metadata)."""
-        # Use a fresh item group if this is a resend of SPEAD metadata so as not to disturb main item group
-        resend = len(self.ig.keys()) > 0
-        ig = spead.ItemGroup() if resend else self.ig
-        for name, sensor_bridge in self.sensor_bridges.iteritems():
-            # Resend existing value if available, else consult the monitor store (slow)
-            if resend:
-                last_update = self.ig['sensor_' + name]
-            else:
-                # This could eventually be replaced by sensor.get_value()
-                # if timestamp + status + value can be kept in sync
-                history = sensor_bridge.katcp_sensor.get_stored_history(start_seconds=-1, last_known=True)
-                # All KATCP events are sent as strings containing space-separated
-                # value_timestamp + status + value, regardless of KATCP type
-                # (consistent with the fact that KATCP data is string-based on the wire)
-                last_update = "%r %s %r" % (history[0][-1], history[2][-1], history[1][-1])
+        """Send initial SPEAD packet to establish metadata / item structure."""
+        ig = spead.ItemGroup()
+        for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial packet: %s" %
-                         (name, sensor_bridge.spead_id, last_update))
-            ig.add_item(name='sensor_' + name, id=sensor_bridge.spead_id,
-                        description=sensor_bridge.katcp_sensor.description,
-                        shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=last_update)
+                         (name, bridge.spead_id, bridge.last_update))
+            ig.add_item(name='sensor_' + name, id=bridge.spead_id,
+                        description=bridge.katcp_sensor.description,
+                        shape=-1, fmt=spead.mkfmt(('s', 8)),
+                        init_val=bridge.last_update)
         self.tx.send_heap(ig.get_heap())
-        logger.info('%s initial SPEAD packet containing %d items to %s' %
-                    ('Resent' if resend else 'Sent', len(ig.ids()), self.tx.t._tx_ip_port))
+        logger.info('Sent initial SPEAD packet containing %d items to %s' %
+                    (len(ig.ids()), self.tx.t._tx_ip_port))
+        return ig
 
     def start_listening(self):
         """Start listening to all registered sensors."""
-        for sensor_bridge in self.sensor_bridges.itervalues():
-            sensor_bridge.start_listening()
+        for bridge in self.sensor_bridges.itervalues():
+            bridge.start_listening()
 
     def stop_listening(self):
         """Stop listening to all registered sensors."""
-        for sensor_bridge in self.sensor_bridges.itervalues():
-            sensor_bridge.stop_listening()
+        for bridge in self.sensor_bridges.itervalues():
+            bridge.stop_listening()
 
     @return_reply(Str())
     def request_start_stream(self, req, msg):
-        """Start the SPEAD stream of KATCP sensor data (or resend metadata)."""
-        self.send_initial_spead_packet()
+        """Start the SPEAD stream of KATCP sensor data."""
+        self.register_sensors()
         self.start_listening()
-        return ("ok", "SPEAD stream started")
+        self.ig = self.send_initial_spead_packet()
+        self.streaming = True
+        smsg = "SPEAD stream started"
+        logger.info(smsg)
+        return ("ok", smsg)
 
     @return_reply(Str())
     def request_stop_stream(self, req, msg):
         """Stop the SPEAD stream of KATCP sensor data."""
+        self.streaming = False
         self.stop_listening()
-        return ("ok", "SPEAD stream stopped")
+        smsg = "SPEAD stream stopped"
+        logger.info(smsg)
+        return ("ok", smsg)
