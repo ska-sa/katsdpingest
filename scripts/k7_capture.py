@@ -210,11 +210,15 @@ class k7Capture(threading.Thread):
         ensure that it is done - it is therefore safe to call multiple times."""
         if self._current_hdf5 is not None:
             if timestamps_dataset not in self._current_hdf5:
-             # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
-             # regularly - hence this check.
-                self._current_hdf5.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
-                 # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
-                 # distributed across the entire file.
+            # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
+            # regularly - hence this check.
+                if self.timestamps:
+                    self._current_hdf5.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
+                    # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
+                    # distributed across the entire file.
+                else:
+                    logger.warning("H5 file contains no data and hence no timestamps")
+                    # exception if there is no data (and hence no timestamps) in the file.
 
     def write_label(self, label):
         """Write a sensor value directly into the current hdf5 at the specified locations.
