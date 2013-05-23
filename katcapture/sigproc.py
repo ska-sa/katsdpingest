@@ -46,7 +46,7 @@ class ProcBlock(object):
     current = None
     history = None
     flags = None
-    logger = logging.getLogger("katcapture.sigproc")
+    logger = logging.getLogger("kat.k7capture.sigproc")
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
     _proc_times = []
@@ -117,7 +117,12 @@ class ProcBlock(object):
     def description(self):
         """Compact representation of Processing Block used in process logs in the hdf5 file."""
         process = self.__class__.__name__
-        return (process, self._extracted_arguments, int(revision[1:]))
+        if revision == 'unknown':
+            svn_rev = 0
+        else:
+            svn_rev = int(revision[1:])
+
+        return (process, self._extracted_arguments, svn_rev)
 
 
 class Scale(ProcBlock):
@@ -413,7 +418,10 @@ class AntennaGains(ProcBlock):
             corrections = 1. / gains_per_channel
             for n, ant in enumerate(tracking_ants):
                 correct_str = ' '.join([("%5.3f%+5.3fj" % (corrections[chan, n].real, corrections[chan, n].imag)) for chan in range(num_chans)])
-                output_sensors['antenna-gain-corrections'].set_value(ant + pol + ' ' + correct_str)
+                #output_sensors['antenna-gain-corrections'].set_value(ant + pol + ' ' + correct_str)
+                sens_name = '{0}{1}-gain-correction-per-channel'.format(ant,pol)
+                output_sensors[sens_name].set_value(correct_str)
+
             self.logger.info("AntennaGains: Updated gain corrections for pol '%s' on target '%s' - average magnitude: %s" %
                              (pol, target.name, ' '.join([('%5.3f' % g) for g in np.abs(corrections).mean(axis=0)])))
         self._reset_state()

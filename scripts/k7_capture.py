@@ -25,11 +25,7 @@ from katcp.kattypes import request, return_reply, Str, Int, Float
 import katcapture.sigproc as sp
 from katsdisp.data import CorrProdRef
 
-try:
-    import katconf
-    found_katconf = True
-except ImportError:
-    found_katconf = False
+import katconf
 
 hdf5_version = "2.0"
  # initial version describing indicating compatibility with our HDF5v2 spec. Minor revision may be incremented by augment at a later stage.
@@ -495,8 +491,9 @@ class CaptureDeviceServer(DeviceServer):
     VERSION_INFO = ("k7-capture", 0, 1)
     BUILD_INFO = ("k7-capture", 0, 1, "rc1")
 
-    def __init__(self, sdisp_ips, sdisp_port, *args, **kwargs):
+    def __init__(self, sdisp_ips, sdisp_port, system_config, *args, **kwargs):
         self.rec_thread = None
+        self.system_config = system_config
         self.current_file = None
         self.sdisp_ips = {}
         self.sdisp_ips['127.0.0.1'] = sdisp_port
@@ -527,7 +524,16 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
         self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
-        self._my_sensors["antenna-gain-corrections"] = Sensor.string("antenna-gain-corrections", "Antenna gain corrections determined during recent visit to calibrator source", "")
+
+        arrpath = self.system_config.conf.get("array","array_kat7")
+        arrconf = katconf.ArrayConfig(arrpath)
+        inputs = [''.join(vv.strip() for vv in  v.split(',')[0:2])
+                for v in arrconf.correlator['inputs'].values()]
+        for inp in inputs:
+            sens_name = "{0}-gain-correction-per-channel".format(inp)
+            self._my_sensors[sens_name] = Sensor.string(
+                sens_name, "Gain corrections for input {0} determined "
+                "during recent visit to calibrator source".format(inp), "")
 
         super(CaptureDeviceServer, self).__init__(*args, **kwargs)
 
@@ -777,17 +783,15 @@ if __name__ == '__main__':
             sys.exit(0)
         ctl = small_build(opts.system)
 
-    found_katconf = False
-    if found_katconf:
-        # Setup configuration source
-        katconf.set_config(katconf.environ(opts.sysconfig))
-        # set up Python logging
-        katconf.configure_logging(opts.logging)
+    # Setup configuration source
+    katconf.set_config(katconf.environ(opts.sysconfig))
+    # Get the system config object
+    system_config = katconf.sysconf.SystemConfig(opts.system)
+    # set up Python logging
+    katconf.configure_logging(opts.logging)
 
     logger = logging.getLogger("kat.k7capture")
-    if not found_katconf:
-        if opts.logging is None: logger.warning("Defaulting to log level INFO. To override use the -l [DEBUG | INFO | WARNING | ERROR] switch.")
-        logger.setLevel(logging.INFO if opts.logging is None else opts.logging)
+    logger.debug('Hello world!')
 
     spead.logger.setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
@@ -799,7 +803,8 @@ if __name__ == '__main__':
     activitylogger.info("Activity logging started")
 
     restart_queue = Queue.Queue()
-    server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
+    server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, system_config,
+                                 opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     activitylogger.info("Started k7_capture server.")
