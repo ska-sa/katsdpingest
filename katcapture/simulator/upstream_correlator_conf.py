@@ -1,8 +1,11 @@
-import iniparse, exceptions, socket, struct, numpy, os
+import iniparse, exceptions, socket, struct, numpy, os, logging
 """
 Library for parsing CASPER correlator configuration files
 
 Author: Jason Manley
+
+Originally cn_conf.py, part of the corr package. Modified only to remove
+dependency on corr package logging config so that it can work standalone
 """
 """
 Revs:
@@ -32,24 +35,33 @@ MODE_WB  = 'wbc'
 MODE_NB  = 'nbc'
 MODE_DDC = 'ddc'
 
+
 class CorrConf:
-    def __init__(self, config_file):
+    def __init__(self, config_file,log_handler=None,log_level=logging.INFO):
+        self.logger = logging.getLogger('cn_conf')
+        self.logger.setLevel(log_level)
+
         self.config_file = config_file
         self.config_file_name = os.path.split(self.config_file)[1]
+        self.logger.info('Trying to open log file %s.'%self.config_file)
         self.cp = iniparse.INIConfig(open(self.config_file, 'rb'))
         self.config = dict()
         self.read_mode()
         available_modes = [MODE_WB, MODE_NB, MODE_DDC]
         if self.config['mode'] == MODE_WB:
+            self.logger.info('Found a wideband correlator.')
             self.read_wideband()
         elif self.config['mode'] == MODE_NB:
+            self.logger.info('Found a narrowband correlator.')
             self.read_narrowband()
         elif self.config['mode'] == MODE_DDC:
+            self.logger.info('Found a correlator with a DDC.')
             self.read_narrowband_ddc()
         else:
-            print "Available modes are", available_modes
-            raise RuntimeError('Unknown correlator mode,', self.config['mode'])
+            self.logger.error("Mode %s not understood."%(self.config['mode']))
+            raise RuntimeError('Unknown correlator mode %s.'%self.config['mode'])
         self.read_common()
+        self.read_bf()
 
     def __getitem__(self, item):
         if item == 'sync_time':
@@ -74,6 +86,7 @@ class CorrConf:
             f = open(self.config_file, 'r')
         except IOError:
             exists = False
+            self.logger.error('Error opening config file at %s.'%self.config_file)
             raise RuntimeError('Error opening config file at %s.'%self.config_file)
         else:
             exists = True
@@ -108,7 +121,7 @@ class CorrConf:
             return input_n
         except:
             raise RuntimeError('Unable to map antenna')
-
+        
     def map_input_to_ant(self,input_n):
         """Maps an input number to an antenna string."""
         return self._get_ant_mapping_list()[input_n]
@@ -120,14 +133,15 @@ class CorrConf:
     def read_wideband(self):
         if not self.file_exists():
             raise RuntimeError('Error opening config file or runtime variables.')
-        self.read_int('correlator','fft_shift')
+        self.read_int('correlator', 'fft_shift')
 
     def read_narrowband(self):
         if not self.file_exists():
             raise RuntimeError('Error opening config file or runtime variables.')
-        self.read_int('correlator','fft_shift_fine')
-        self.read_int('correlator','fft_shift_coarse')
-        self.read_int('correlator','coarse_chans')
+        self.read_int('correlator', 'fft_shift_fine')
+        self.read_int('correlator', 'fft_shift_coarse')
+        self.read_int('correlator', 'coarse_chans')
+        self.config['current_coarse_chan'] = 0
 
     def read_narrowband_ddc(self):
         if not self.file_exists():
@@ -287,7 +301,7 @@ class CorrConf:
         self.read_str('equalisation','eq_type')
         self.read_int('equalisation','eq_decimation')
         #self.read_int('equalisation','eq_brams_per_pol_interleave')
-
+        
         if not self.config['eq_default'] in ['poly','coeffs']: raise RuntimeError('ERR invalid eq_default')
 
         if self.config['eq_default'] == 'poly':
@@ -309,6 +323,72 @@ class CorrConf:
                         raise RuntimeError('ERR eq_coeffs_%i... incorrect number of coefficients. Expecting %i, got %i.'%(input_n,n_coeffs,len(self.config['eq_coeffs_%i'%(input_n)])))
                 except: raise RuntimeError('ERR eq_coeffs_%i'%(input_n))
 
+    def read_bf(self):
+        try:
+            self.read_int('beamformer', 'bf_n_beams')
+            self.read_str('beamformer', 'bf_register_prefix')
+            self.read_int('beamformer', 'bf_be_per_fpga')
+            self.read_int('beamformer', 'bf_n_beams_per_be')
+            self.read_str('beamformer', 'bf_data_type')
+            self.read_int('beamformer', 'bf_bits_out')
+            self.read_str('beamformer', 'bf_cal_type')
+            self.read_int('beamformer', 'bf_cal_n_bits')
+            self.read_int('beamformer', 'bf_cal_bin_pt')
+            
+            for beam_n in range(self.config['bf_n_beams']):
+
+                self.read_int('beamformer', 'bf_centre_frequency_beam%i'%beam_n)
+                print 'reading: bf_bandwidth_beam%i'%beam_n
+                self.read_int('beamformer', 'bf_bandwidth_beam%i'%beam_n)
+
+                self.read_str('beamformer', 'bf_name_beam%i'%(beam_n))
+                self.read_int('beamformer', 'bf_location_beam%i'%(beam_n))
+
+                #ip destination for data
+                udp_ip_str=self.get_line('beamformer','bf_rx_udp_ip_str_beam%i'%beam_n)
+                self.config['bf_rx_udp_ip_str_beam%i'%(beam_n)]=udp_ip_str
+                self.config['bf_rx_udp_ip_beam%i'%(beam_n)]=struct.unpack('>I',socket.inet_aton(udp_ip_str))[0]
+                #port destination for data
+                self.read_int('beamformer', 'bf_rx_udp_port_beam%i'%(beam_n))
+
+                #ip destination for spead meta data
+                meta_ip_str=self.get_line('beamformer','bf_rx_meta_ip_str_beam%i'%(beam_n))
+                self.config['bf_rx_meta_ip_str_beam%i'%(beam_n)]=meta_ip_str
+                self.config['bf_rx_meta_ip_beam%i'%(beam_n)]=struct.unpack('>I',socket.inet_aton(meta_ip_str))[0]
+                #port destination for spead meta data
+                self.read_int('beamformer', 'bf_rx_meta_port_beam%i'%(beam_n))
+
+                #calibration
+
+                n_coeffs = self.config['n_chans']
+            for input_n in range(self.config['n_ants']):
+                try:
+                    cal_default=self.get_line('beamformer', 'bf_cal_default_input%i_beam%i'%(input_n, beam_n))
+                    self.config['bf_cal_default_input%i_beam%i'%(input_n, beam_n)]=cal_default
+                except:
+                    raise RuntimeError('ERR reading bf_cal_default_input%i_beam%i'%(input_n, beam_n))
+            if cal_default == 'poly':
+                try:
+                    ant_cal_str=self.get_line('beamformer','bf_cal_poly_input%i_beam%i'%(input_n, beam_n))
+                    self.config['bf_cal_poly_input%i_beam%i'%(input_n, beam_n)]=[int(coef) for coef in ant_cal_str.split(LISTDELIMIT)]
+                except:
+                    raise RuntimeError('ERR bf_cal_coeffs_input%i_beam%i'%(input_n, beam_n))
+            elif cal_default == 'coeffs':
+                try:
+                    ant_cal_str=self.get_line('beamformer','bf_cal_coeffs_input%i_beam%i'%(input_n, beam_n))
+                    self.config['bf_cal_coeffs_input%i_beam%i'%(input_n, beam_n)]=eval(ant_cal_str)
+                    if len(self.config['bf_cal_coeffs_input%i_beam%i'%(input_n, beam_n)]) != n_coeffs:
+                        raise RuntimeError('ERR bf_cal_coeffs_input%i_beam%i... incorrect number of coefficients. Expecting %i, got %i.'%(input_n, beam_n, n_coeffs,len(self.config['eq_cal_coeffs_input%i_beam%i'%(input_n, beam_n)])))
+                except:
+                    raise RuntimeError('ERR bf_cal_coeffs_input%i_beam%i'%(input_n, beam_n))
+            else:
+                raise RuntimeError('ERR bf_cal_default_input%i_beam%i not poly or coeffs'%(input_n, beam_n))
+            
+            self.logger.info('%i beam beamformer found in this design outputting %s data.'%(self.config['bf_n_beams'], self.config['bf_data_type']))
+        except Exception:
+            self.logger.info('No beamformer found in this design', exc_info=True)
+            return
+    
     def write(self,section,variable,value):
         print 'Writing to the config file. Mostly, this is a bad idea. Mostly. Doing nothing.'
         return

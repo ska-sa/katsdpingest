@@ -402,4 +402,8 @@ class DBE7SpeadData(object):
         self._acc_time = acc_time
 
     def send_stop(self):
-        self.tx.send_halt()
+        try:
+            self.tx.send_halt()
+        except AttributeError:
+            # Don't error out if the transmitter has not been initialized yet.
+            pass

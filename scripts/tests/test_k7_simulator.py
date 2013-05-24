@@ -55,9 +55,6 @@ class SimulatorSetup(object):
         #Find the k7_simulator executable
         k7_simulator_file = os.path.join(
             os.path.dirname(__file__), '..', 'k7_simulator.py')
-        # k7_conf_file = os.path.join(
-        #     os.path.dirname(__file__), '..', '..',
-        #     'katcapture', 'conf', 'k7-local.conf')
         k7_conf_dir = os.path.join(
             os.path.dirname(__file__), '..', '..', 'katcapture', 'conf')
 
@@ -87,8 +84,9 @@ class SimulatorSetup(object):
 
     def katcp_req(self, *req, **kwargs):
         timeout = kwargs.get('timeout')
+        mid = kwargs.get('mid')
         return self.k7_simulator_katcp.blocking_request(
-            katcp.Message.request(*req), timeout=timeout)
+            katcp.Message.request(*req, mid=mid), timeout=timeout)
 
     def katcp_test_req(self, *req, **kwargs):
         timeout = kwargs.get('timeout')
@@ -131,13 +129,13 @@ class ModuleSetupTestCase(unittest.TestCase):
         fixtures.sim.katcp_req('mode', mode)
 
 
-class TestCorrelatorDataWBC(ModuleSetupTestCase):
+class TestCorrelatorData_c16n400M1k(ModuleSetupTestCase):
     channels = 1024                    # c16n400M1k number of frequency channels
     mode = 'c16n400M1k'
     spead_udp_port = 7148
 
     def setUp(self):
-        super(TestCorrelatorDataWBC, self).setUp()
+        super(TestCorrelatorData_c16n400M1k, self).setUp()
         self.sim = fixtures.sim
         self.set_mode_quickly(self.mode)
         self.speadrx = spead.TransportUDPrx(
@@ -227,55 +225,118 @@ class TestCorrelatorDataWBC(ModuleSetupTestCase):
                     % max_spead_iters)
         return itemgroup
 
-class TestCorrelatorData_c16n13M4k(TestCorrelatorDataWBC):
+class TestCorrelatorData_bc16n400M1k(TestCorrelatorData_c16n400M1k):
+    # This is the beamformer mode, but currently testing only the correlator
+    # side of the equation.
+    mode = 'bc16n400M1k'
+
+class TestCorrelatorData_c16n13M4k(TestCorrelatorData_c16n400M1k):
     channels = 4096
     mode = 'c16n13M4k'
     spead_udp_port = 7148
 
 class TestCorrelatorLabeling(ModuleSetupTestCase):
-    def setUp(self):
-        super(TestCorrelatorLabeling, self).setUp()
 
     def test_labels(self):
         reply, informs = fixtures.sim.katcp_req('label-input')
         # Check that we have the standard setup
-        expected_map = {'0x':'0x',
-                        '0y':'0y',
-                        '1x':'1x',
-                        '1y':'1y',
-                        '2x':'2x',
-                        '2y':'2y',
-                        '3x':'3x',
-                        '3y':'3y',
-                        '4x':'4x',
-                        '4y':'4y',
-                        '5x':'5x',
-                        '5y':'5y',
-                        '6x':'6x',
-                        '6y':'6y',
-                        '7x':'7x',
-                        '7y':'7y'}
-        def get_map_from_informs(informs):
-            input_map = {}
-            for inform in informs:
-                name, input = inform.arguments
-                input_map[input] = name
-            return input_map
-        actual_map = get_map_from_informs(informs)
+        expected_initial_inform_args = [
+            ['0x','0x', 'roach030268', 'bf0'],
+            ['0y','0y', 'roach030268', 'bf1'],
+            ['1x','1x', 'roach030279', 'bf0'],
+            ['1y','1y', 'roach030279', 'bf1'],
+            ['2x','2x', 'roach030265', 'bf0'],
+            ['2y','2y', 'roach030265', 'bf1'],
+            ['3x','3x', 'roach030203', 'bf0'],
+            ['3y','3y', 'roach030203', 'bf1'],
+            ['4x','4x', 'roach030276', 'bf0'],
+            ['4y','4y', 'roach030276', 'bf1'],
+            ['5x','5x', 'roach030269', 'bf0'],
+            ['5y','5y', 'roach030269', 'bf1'],
+            ['6x','6x', 'roach030267', 'bf0'],
+            ['6y','6y', 'roach030267', 'bf1'],
+            ['7x','7x', 'roach030277', 'bf0'],
+            ['7y','7y', 'roach030277', 'bf1']]
+
+        actual_initial_inform_args = [list(inf.arguments) for inf in informs]
+        self.assertEqual(actual_initial_inform_args, expected_initial_inform_args)
         # generate random channel names for the test
         choice_chars = string.letters+string.digits
-        for k in expected_map.keys():
-            expected_map[k] = ''.join(random.choice(choice_chars)
-                                      for i in xrange(random.randint(1,12)))
+        expected_labeled_inform_args = list(expected_initial_inform_args)
+        for ino in range(len(expected_labeled_inform_args)):
+            expected_labeled_inform_args[ino][0] = ''.join(
+                random.choice(choice_chars) for i in xrange(random.randint(1,12)))
         # Set the mappings on the correlator
-        for input, name in expected_map.items():
+        for name, input, _, _ in expected_labeled_inform_args:
             reply, informs = fixtures.sim.katcp_req('label-input', input, name)
             self.assertTrue(reply.reply_ok())
 
         # Now see what the correlator actually has
         reply, informs = fixtures.sim.katcp_req('label-input')
-        actual_map = get_map_from_informs(informs)
-        self.assertEqual(actual_map, expected_map)
+        actual_labeled_inform_args = [list(inf.arguments) for inf in informs]
+        self.assertEqual(actual_labeled_inform_args, expected_labeled_inform_args)
+
+class TestCaptureInfo(ModuleSetupTestCase):
+    def test_capture_list_corr(self):
+        # Standard wide-band correlator mode
+        self.set_mode_quickly('c16n400M1k')
+        expected_inform_args = [
+            ['k7', '127.0.0.1', '7148', '127.0.0.1', '7148'],]
+        reply, informs = fixtures.sim.katcp_req('capture-list')
+        actual_inform_args = [inf.arguments for inf in informs]
+        self.assertEqual(actual_inform_args, expected_inform_args)
+
+    def test_capture_list_bf(self):
+        # Beamformer with wide-band correlator mode
+        self.set_mode_quickly('bc16n400M1k')
+        # These are the defaults as read from the config
+        expected_inform_args = [
+            ['k7', '127.0.0.1', '7148', '127.0.0.1', '7148'],
+            ['bf0', '127.0.0.1', '7148', '127.0.0.1', '7148'],
+            ['bf1', '127.0.0.1', '7148', '127.0.0.1', '7148'],
+            ]
+        reply, informs = fixtures.sim.katcp_req('capture-list')
+        actual_inform_args = [inf.arguments for inf in informs]
+        self.assertEqual(actual_inform_args, expected_inform_args)
+
+    def test_capture_destination_together(self):
+        # Test capture destination with meta and data streams together
+        self.set_mode_quickly('bc16n400M1k')
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'k7', '123.12.1.12', 1234)
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'bf0', '23.12.11.2', 2345)
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'bf1', '13.112.1.12', 3456)
+        self.assertTrue(reply.reply_ok())
+        expected_inform_args = [
+            ['k7', '123.12.1.12', '1234', '123.12.1.12', '1234'],
+            ['bf0', '23.12.11.2', '2345', '23.12.11.2', '2345'],
+            ['bf1', '13.112.1.12', '3456', '13.112.1.12', '3456'],
+            ]
+        reply, informs = fixtures.sim.katcp_req('capture-list')
+        actual_inform_args = [inf.arguments for inf in informs]
+        self.assertEqual(actual_inform_args, expected_inform_args)
+
+    def test_capture_destination_separate(self):
+        # Test capture destination with meta and data streams going to different hosts
+        self.set_mode_quickly('bc16n400M1k')
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'k7', '123.12.1.12', 1234, '123.12.1.13', 1234)
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'bf0', '23.12.11.2', 2345, '23.12.11.21', 12345)
+        reply, informs = fixtures.sim.katcp_req(
+            'capture-destination', 'bf1', '13.112.1.12', 3456, '13.112.1.121', 13456)
+        self.assertTrue(reply.reply_ok())
+        expected_inform_args = [
+            ['k7', '123.12.1.12', '1234', '123.12.1.13', '1234'],
+            ['bf0', '23.12.11.2', '2345', '23.12.11.21', '12345'],
+            ['bf1', '13.112.1.12', '3456', '13.112.1.121', '13456'],
+            ]
+        reply, informs = fixtures.sim.katcp_req('capture-list')
+        actual_inform_args = [inf.arguments for inf in informs]
+        self.assertEqual(actual_inform_args, expected_inform_args)
+
 
 class TestTestInterface(ModuleSetupTestCase):
     def setUp(self):

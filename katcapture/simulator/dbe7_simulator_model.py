@@ -5,21 +5,30 @@ import time
 import sys
 import logging
 import threading
-from math import floor
+import random
+import blinker
+
 import numpy as np
+
+from math import floor
+from collections import namedtuple
+
+from katcore.dev_base import ThreadedModel
+from katcp import Sensor
+
 from .dbe7_roach_models import XEngines, FEngines
 from .dbe7_spead_model import DBE7SpeadData
 from .model_correlator_conf import ModelCorrConf
-from katcore.dev_base import ThreadedModel
-from katcp import Sensor
-import random
-import blinker
 
 
 
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
 logger = logging.getLogger(log_name)
+
+
+CaptureDestination = namedtuple('CaptureDestination', (
+    'name', 'meta_ip', 'meta_port', 'data_ip', 'data_port'))
 
 class AddLockSettersGetters(object):
     class add(object):
@@ -84,7 +93,8 @@ class K7CorrelatorModel(TestInterfaceModel):
     # standalone variable needs to be set before start() is called
     standalone = False
     valid_modes = ('ready', 'c16n400M1k', 'c16n400M8k', 'c16n13M4k',
-                   'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k')
+                   'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k',
+                   'bc16n400M1k',)
 
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
@@ -135,7 +145,10 @@ class K7CorrelatorModel(TestInterfaceModel):
         old_sensor_names = set(s.name for s in old_sensors)
 
         self._roach_x_engines = XEngines(self.config['servers_x'])
+        self.roach_x_engines = self._roach_x_engines.roach_names
         self._roach_f_engines = FEngines(self.config['servers_f'])
+        self.roach_f_engines = self._roach_f_engines.roach_names
+
         new_sensors = (self._roach_x_engines.get_sensors() +
                        self._roach_f_engines.get_sensors())
         new_sensor_names = set(s.name for s in new_sensors)
@@ -210,6 +223,26 @@ class K7CorrelatorModel(TestInterfaceModel):
                            'Hz', [0, 10000])
         chan_sens.set_value(0, Sensor.UNKNOWN)
         self.add_sensor(chan_sens)
+        # Make per-beam beamformer sensors. We get values from the config file
+        # bc16n400M1k which, as of 2013-03-25, is the only beamformer mode. Also
+        # assume that the values are valid for any other beam former modes.
+        bf_conf = ModelCorrConf(os.path.join(self.config_dir, 'bc16n400M1k'))
+        adc_bw = bf_conf['adc_clk'] / 2
+        self.NO_BEAMS = bf_conf['bf_n_beams']
+        for i in range(self.NO_BEAMS):
+            bw = bf_conf['bf_bandwidth_beam%d' % i]
+            f0 = bf_conf['bf_centre_frequency_beam%d' % i]
+            bf_bw = Sensor.integer(
+                'bf%d.bandwidth' % i, 'selected bandwidth of beam',
+                'Hz', [0, adc_bw], default=bw)
+            bf_f0 = Sensor.integer(
+                'bf%d.centerfrequency' % i, 'selected center frequency of beam',
+                'Hz', [0, adc_bw], default=f0)
+            self.add_sensor(bf_bw)
+            self.add_sensor(bf_f0)
+
+        #no_beams
+
 
     def _init_test_sensors(self):
         self.add_test_sensor(Sensor(
@@ -317,6 +350,33 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.get_sensor('centerfrequency').set_value(
             f0, Sensor.NOMINAL, time.time())
         return f0
+
+    def set_k7_beam_passband(beam, bandwidth, centerfrequency):
+        # TODO
+        pass
+
+    def set_k7_beam_weights(beam, input, channel_weights):
+        """
+        Set the k7 beam former weights.
+
+        Arguments
+        ---------
+
+        beam -- beam name, e.g. bf0
+        input -- correlator input channel, e.g. 1x or (if mapped) ant1H
+        channel_weights -- Array of channel weights, one per frequency channel
+
+        Behaviour
+        ---------
+
+        Currently a dummy implementation that checks if the right number of
+        channel_weights were passed, and hangs around for 5.5s
+        """
+        no_chans = self.get_sensor('channels').value
+        if len(channel_weights) != no_chans:
+            raise ValueError('Channel weights should be an array of length %d, '
+                             'not %d.' % (no_chans, len(channel_weights)))
+        time.sleep(5.5)
 
     def run(self):
         while not self._stopEvent.isSet():
@@ -477,6 +537,15 @@ class K7CorrelatorModel(TestInterfaceModel):
             f0_sens.set_value(f0_sens.value(), Sensor.NOMINAL)
             self.get_sensor('bandwidth').set_value(
                 max_bw/self.config['coarse_chans'], Sensor.NOMINAL)
+
+        if self.has_beamformer:
+            # Seems we have a beamformer mode
+            assert self.NO_BEAMS == self.config['bf_n_beams']
+            for b in range(self.NO_BEAMS):
+                self.get_sensor('bf%d.bandwidth' % b).set_value(
+                    self.config['bf_bandwidth_beam%d' % b])
+                self.get_sensor('bf%d.centerfrequency' % b).set_value(
+                    self.config['bf_centre_frequency_beam%d' % b])
         self._spead_model = DBE7SpeadData(self.config)
         self._spead_model.set_acc_time(self.get_dump_period())
         self._update_roaches()
@@ -488,6 +557,60 @@ class K7CorrelatorModel(TestInterfaceModel):
         if mode != 'ready':
             self._thread_paused = False
 
+    def pause_data(self):
+        self._thread_paused = True
+
+    def unpause_data(self):
+        self._thread_paused = False
+
+    def set_capture_destination(
+            self, stream, meta_ip, meta_port, data_ip=None, data_port=None):
+        """
+        Set data capture destination for correlator
+
+        If data_ip or data_port are not specified, they default to meta_ip/port
+
+        The k7 stream does not (currently?) support different meta and data ports
+        """
+        meta_port = int(meta_port)
+        data_ip = data_ip or meta_ip
+        data_port = data_port or meta_port
+        data_port = int(data_port)
+        streams = set(s[0] for s in self.capture_list)
+        if stream not in streams:
+            raise ValueError('Unknown correlator stream {0}'.format(stream))
+
+        c = self.config
+        paused = self._thread_paused
+
+        try:
+            self._thread_paused = True
+            if stream == 'k7':
+                if data_port != meta_port:
+                    raise ValueError('k7 stream must have meta_port = data_port')
+                c['rx_udp_ip_str'] = data_ip
+                c['rx_udp_port'] = data_port
+                c['rx_meta_ip_str'] = meta_ip
+            else:
+                stream_type = stream[:-1]
+                stream_no = int(stream[-1])
+                (c['%s_rx_udp_ip_str_beam%i' % (stream_type, stream_no)],
+                 c['%s_rx_udp_port_beam%i' % (stream_type, stream_no)],
+                 c['%s_rx_meta_ip_str_beam%i' % (stream_type, stream_no)],
+                 c['%s_rx_meta_port_beam%i' % (stream_type, stream_no)]) = (
+                    data_ip, data_port, meta_ip, meta_port)
+            # Close any other stream that was listening
+            self._spead_model.send_stop()
+            # Re-init spead model with new IPs
+            self._spead_model.init_spead()
+        finally:
+            self._thread_paused = paused
+
+    @property
+    def has_beamformer(self):
+        """Whether or not the current mode has a beamformer"""
+        return bool(self.config.get('bf_n_beams'))
+
     @property
     def labels(self):
         """Build a dict of input channel names -> antenna labels"""
@@ -496,6 +619,26 @@ class K7CorrelatorModel(TestInterfaceModel):
 
         return dict(zip(self.config.get_unmapped_channel_names(),
                         self.config['antenna_mapping']))
+
+    @property
+    def capture_list(self):
+        c = self.config
+        # It seems that the config does not specify a separate port
+        capture_list = [CaptureDestination('k7',
+                                           c['rx_meta_ip_str'], c['rx_udp_port'],
+                                           c['rx_udp_ip_str'], c['rx_udp_port'],)]
+
+        if self.has_beamformer:
+            for i in range(c['bf_n_beams']):
+                bf = 'bf%i' % i
+                capture_list.append(CaptureDestination(
+                    bf,
+                    c['bf_rx_meta_ip_str_beam%i' % i],
+                    c['bf_rx_meta_port_beam%i' % i],
+                    c['bf_rx_udp_ip_str_beam%i' % i],
+                    c['bf_rx_udp_port_beam%i' % i],))
+
+        return capture_list
 
     def set_antenna_mapping(self, channel, ant_name):
         """Set the antenna name of `channel` (e.g. 0x, 3y) to `ant_name`"""

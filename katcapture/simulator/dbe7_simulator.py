@@ -15,7 +15,6 @@ logger = logging.getLogger(log_name)
 
 # Requests to nix:
 #
-# capture_destination -> Removed
 # cycle_nd -> Should go to sim interface, actually listen to rfe3 simulator?
 # fire_nd -> Should go to sim interface, actually listen to rfe3 simulator?
 # poco_accumulation_length -> k7_accumulation_length
@@ -248,7 +247,22 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         """Dummy for compatibility: sets the digital gain (?k7-gain board-input values)."""
         # TODO Check that valid inputs were specified
         # TODO Check format of 'gains'. Talk to DBE team?
+        # TODO Implement a kattypes datatype for these numbers
         return ("ok","Gain set for %d channels" % len(gains))
+
+    @request(Str(), Str(), Str(multiple=True))
+    @return_reply()
+    def request_k7_beam_weights(self, req, beam, input, *channel_weights):
+        """?k7-beam-weights beam input [values . . . ]"""
+        self._model.set_k7_beam_weights(beam, input, channel_weights)
+        return ('ok', )
+
+    @request(Str(), Float(), Float())
+    @return_reply()
+    def request_k7_beam_passband(self, req, beam, bandwidth, centerfrequency):
+        """?k7-beam-passband beam bandwidth centerfrequency"""
+        self._model.set_k7_beam_passband(beam, bandwidth, centerfrequency)
+        return ('ok', )
 
     @request(Float(optional=True, default=5.0))
     @return_reply(Str())
@@ -263,7 +277,6 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         """Fire the noise diode with the requested duty cycle. Set to 0 to disable."""
         self._model.nd_duty_cycle = duty_cycle
         return("ok","Duty cycle firing enabled")
-
 
     @request(Float(),Float(),Float(optional=True,default=20.0))
     @return_reply(Str())
@@ -300,7 +313,10 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
         """Label the specified input with a string."""
         if not msg.arguments:
             for (inp,label) in sorted(self._model.labels.iteritems()):
-                req.inform(label, inp)
+                r_ind = int(inp[0])
+                roach = self._model.roach_f_engines[r_ind]
+                bf = 'bf0' if inp.endswith('x') else 'bf1'
+                req.inform(label, inp, roach, bf)
             return ("ok",str(len(self._model.labels)))
         else:
             inp = msg.arguments[0]
@@ -327,6 +343,7 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
     def request_capture_start(self, req, destination, time_):
         """Start a capture (?capture-start k7 [time]). Mostly a dummy, does a spead_issue."""
         self._model.spead_issue()
+        self._model.unpause_data()
         smsg = "SPEAD meta packets sent to %s" % (self._model.config['rx_meta_ip_str'])
         activitylogger.info("k7simulator: %s" % smsg)
         return ("ok",smsg)
@@ -334,19 +351,31 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
     @request(Str(optional=True))
     @return_reply(Str())
     def request_capture_stop(self, req, destination):
-        """For compatibility with dbe_proxy. Does nothing :)."""
+        """Stop data stream."""
+        self._model.pause_data()
         self._model.send_stop()
-        smsg = "Capture stopped. (dummy)"
+        smsg = "Capture stopped."
         activitylogger.info(smsg)
         return ("ok", smsg)
+
+    @request(Str(), Str(), Int(), Str(optional=True), Int(optional=True))
+    @return_reply()
+    def request_capture_destination(
+            self, req, stream, meta_host, meta_port, data_host, data_port):
+        """set the destination for a stream (?capture-destination stream ip port)"""
+        self._model.set_capture_destination(
+            stream, meta_host, meta_port, data_host, data_port)
+        return ('ok', )
 
     @return_reply(Int())
     def request_capture_list(self, req, req_msg):
         """list available data streams (?capture-list)"""
-        req.inform('k7',
-                    self._model.config['rx_meta_ip_str'],
-                    self._model.config['rx_udp_port'])
-        return ("ok", 1)
+        capture_list = self._model.capture_list
+        for informs, capture_stream in enumerate(capture_list):
+            req.inform(capture_stream.name,
+                       capture_stream.meta_ip, capture_stream.meta_port,
+                       capture_stream.data_ip, capture_stream.data_port)
+        return ("ok", informs)
 
 
     @return_reply(Str())
