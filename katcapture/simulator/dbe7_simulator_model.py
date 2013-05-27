@@ -375,7 +375,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         bw_sens.set_value(bandwidth)
         f0_sens.set_value(centerfrequency)
 
-    def set_k7_beam_weights(beam, input, channel_weights):
+    def set_k7_beam_weights(self, beam, input, channel_weights):
         """
         Set the k7 beam former weights.
 
@@ -392,7 +392,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         Currently a dummy implementation that checks if the right number of
         channel_weights were passed, and hangs around for 5.5s
         """
-        no_chans = self.get_sensor('channels').value
+        no_chans = self.get_sensor('channels').value()
         if len(channel_weights) != no_chans:
             raise ValueError('Channel weights should be an array of length %d, '
                              'not %d.' % (no_chans, len(channel_weights)))
