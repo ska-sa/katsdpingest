@@ -4,11 +4,13 @@ import subprocess
 import string
 import random
 import katcp
+import katcp.testutils
 import spead
 import time
 import socket
 import ConfigParser
 import numpy as np
+
 
 def retry(fn, exception, timeout=1, sleep_interval=0.025):
     trytime = 0
@@ -65,9 +67,10 @@ class SimulatorSetup(object):
             stdout=self.k7_simulator_logfile, stderr=self.k7_simulator_logfile)
 
         # Set up katcp client for device and test interface
-        self.k7_simulator_katcp = katcp.BlockingClient(device_host, device_port)
+        self.k7_simulator_katcp = katcp.testutils.BlockingTestClient('',
+                device_host, device_port)
         self.k7_simulator_katcp.start()
-        self.k7_testinterface_katcp = katcp.BlockingClient(
+        self.k7_testinterface_katcp = katcp.testutils.BlockingTestClient('',
             device_host, test_device_port)
         self.k7_testinterface_katcp.start()
         self.k7_simulator_katcp.wait_connected(1.)
@@ -114,6 +117,10 @@ class ModuleSetupTestCase(unittest.TestCase):
         self.set_mode_quickly('c16n400M1k')
         self.set_standard_mode_delay()
         self.set_standard_mapping()
+        fixtures.sim.k7_simulator_katcp.test = self
+
+    def tearDown(self):
+        fixtures.sim.k7_simulator_katcp.test = ''
 
     def set_standard_mapping(self):
         for i in range(8):
@@ -129,13 +136,13 @@ class ModuleSetupTestCase(unittest.TestCase):
         fixtures.sim.katcp_req('mode', mode)
 
 
-class TestCorrelatorData_c16n400M1k(ModuleSetupTestCase):
+class test_CorrelatorData_c16n400M1k(ModuleSetupTestCase):
     channels = 1024                    # c16n400M1k number of frequency channels
     mode = 'c16n400M1k'
     spead_udp_port = 7148
 
     def setUp(self):
-        super(TestCorrelatorData_c16n400M1k, self).setUp()
+        super(test_CorrelatorData_c16n400M1k, self).setUp()
         self.sim = fixtures.sim
         self.set_mode_quickly(self.mode)
         self.speadrx = spead.TransportUDPrx(
@@ -225,17 +232,17 @@ class TestCorrelatorData_c16n400M1k(ModuleSetupTestCase):
                     % max_spead_iters)
         return itemgroup
 
-class TestCorrelatorData_bc16n400M1k(TestCorrelatorData_c16n400M1k):
+class test_CorrelatorData_bc16n400M1k(test_CorrelatorData_c16n400M1k):
     # This is the beamformer mode, but currently testing only the correlator
     # side of the equation.
     mode = 'bc16n400M1k'
 
-class TestCorrelatorData_c16n13M4k(TestCorrelatorData_c16n400M1k):
+class test_CorrelatorData_c16n13M4k(test_CorrelatorData_c16n400M1k):
     channels = 4096
     mode = 'c16n13M4k'
     spead_udp_port = 7148
 
-class TestCorrelatorLabeling(ModuleSetupTestCase):
+class test_CorrelatorLabeling(ModuleSetupTestCase):
 
     def test_labels(self):
         reply, informs = fixtures.sim.katcp_req('label-input')
@@ -276,7 +283,7 @@ class TestCorrelatorLabeling(ModuleSetupTestCase):
         actual_labeled_inform_args = [list(inf.arguments) for inf in informs]
         self.assertEqual(actual_labeled_inform_args, expected_labeled_inform_args)
 
-class TestCaptureInfo(ModuleSetupTestCase):
+class test_CaptureInfo(ModuleSetupTestCase):
     def test_capture_list_corr(self):
         # Standard wide-band correlator mode
         self.set_mode_quickly('c16n400M1k')
@@ -338,9 +345,9 @@ class TestCaptureInfo(ModuleSetupTestCase):
         self.assertEqual(actual_inform_args, expected_inform_args)
 
 
-class TestTestInterface(ModuleSetupTestCase):
+class test_TestInterface(ModuleSetupTestCase):
     def setUp(self):
-        super(TestTestInterface, self).setUp()
+        super(test_TestInterface, self).setUp()
         self.sim = fixtures.sim
         self.sim.katcp_test_req('hang-requests', 0)
 
@@ -360,7 +367,7 @@ class TestTestInterface(ModuleSetupTestCase):
         reply, informs = self.sim.katcp_req('mode', 'ready')
         delay1 = 0.1
         self.sim.katcp_test_req('set-test-sensor-value', 'mode-change-delay',
-                                str(delay1))
+                                delay1)
         start = time.time()
         reply, informs = self.sim.katcp_req('mode', 'c16n13M4k')
         duration = time.time() - start
@@ -378,10 +385,25 @@ class TestTestInterface(ModuleSetupTestCase):
         self.assertGreaterEqual(duration, delay2)
         self.assertLess(duration, delay2+0.1)   # But really should not take much longer
 
-class TestReadyMode(ModuleSetupTestCase):
+class test_BeamformerCommands(ModuleSetupTestCase):
+    def test_in_beamformer(self):
+        self.set_mode_quickly('bc16n400M1k')
+        bw_0 = int(11e6)
+        f0_0 = int(111e6)
+        bw_1 = int(12e6)
+        f0_1 = int(112e6)
+        reply, informs = fixtures.sim.katcp_req('k7-beam-passband', 'bf0', bw_0, f0_0)
+        reply, informs = fixtures.sim.katcp_req('k7-beam-passband', 'bf1', bw_1, f0_1)
+        getsens = lambda sens: fixtures.sim.k7_simulator_katcp.get_sensor(sens, int)[0]
+        self.assertEqual(getsens('bf0.bandwidth'), bw_0)
+        self.assertEqual(getsens('bf0.centerfrequency'), f0_0)
+        self.assertEqual(getsens('bf1.bandwidth'), bw_1)
+        self.assertEqual(getsens('bf1.centerfrequency'), f0_1)
+
+class test_ReadyMode(ModuleSetupTestCase):
     """Test proper functioning of ready mode, i.e. does ?label-input break"""
     def setUp(self):
-        super(TestReadyMode, self).setUp()
+        super(test_ReadyMode, self).setUp()
 
     def test_label(self):
         # Check that it is broken in ready mode

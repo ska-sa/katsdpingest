@@ -351,9 +351,29 @@ class K7CorrelatorModel(TestInterfaceModel):
             f0, Sensor.NOMINAL, time.time())
         return f0
 
-    def set_k7_beam_passband(beam, bandwidth, centerfrequency):
-        # TODO
-        pass
+    def set_k7_beam_passband(self, beam, bandwidth, centerfrequency):
+        if not self.has_beamformer:
+            raise ValueError('k7 beam passband can only be set in beamformer mode')
+        if not beam.startswith('bf'):
+            raise ValueError('Can only be used with beamformer (bf*) beams, '
+                             'not {0}'.format(beam))
+        try:
+            bw_sens = self.get_sensor(beam+'.bandwidth')
+            f0_sens = self.get_sensor(beam+'.centerfrequency')
+        except AttributeError:
+            raise ValueError('Unknown beam {0}'.format(beam))
+        min_f0 = 0
+        max_f0 = self.config['adc_clk'] / 2   # Nyquist rate from ADC clock
+        max_bandwidth = max_f0 - min_f0
+        if centerfrequency > max_f0 or centerfrequency < min_f0:
+            raise ValueError('{0} <= centerfrequency <={1} must be true'.format(
+                min_f0, max_f0))
+        if bandwidth > max_bandwidth or bandwidth < 0:
+            raise ValueError('{0} <= bandwidth <={1} must be true'.format(
+                0, max_bandwidth))
+
+        bw_sens.set_value(bandwidth)
+        f0_sens.set_value(centerfrequency)
 
     def set_k7_beam_weights(beam, input, channel_weights):
         """
