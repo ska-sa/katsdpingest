@@ -414,7 +414,8 @@ class AntennaGains(ProcBlock):
             # Augment visibilities with complex conjugate values (i.e. add swapped baseline pairs)
             augm_vis, augm_antA, augm_antB = np.hstack([norm_vis, norm_vis.conj()]), np.r_[antA, antB], np.r_[antB, antA]
             # Solve for gains per channel, invert them to get gain corrections and emit sensor values
-            gains_per_channel = np.array([stefcal(augm_vis[chan], len(tracking_ants), augm_antA, augm_antB) for chan in range(num_chans)])
+            self.logger.info("AntennaGains: Solving for %dx%d complex gains" % (num_chans, len(tracking_ants)))
+            gains_per_channel = stefcal(augm_vis, len(tracking_ants), augm_antA, augm_antB)
             corrections = 1. / gains_per_channel
             for n, ant in enumerate(tracking_ants):
                 correct_str = ' '.join([("%5.3f%+5.3fj" % (corrections[chan, n].real, corrections[chan, n].imag)) for chan in range(num_chans)])
