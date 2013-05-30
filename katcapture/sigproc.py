@@ -380,8 +380,8 @@ class AntennaGains(ProcBlock):
             return
         # Ensure we have a valid target suitable for gain cal (point source with known spectrum)
         target = katpoint.Target(current_dbe_target)
-        if 'gaincal' not in target.tags:
-            self.logger.debug("AntennaGains: Quitting because target '%s' is not a gain calibrator" % (target.description,))
+        if ('gaincal' not in target.tags) and ('bpcal' not in target.tags):
+            self.logger.debug("AntennaGains: Quitting because target '%s' is not a gain / bandpass calibrator" % (target.description,))
             return
         num_chans = self.current.shape[0]
         channel_width = bandwidth / num_chans
