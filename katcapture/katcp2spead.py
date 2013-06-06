@@ -76,8 +76,8 @@ class Katcp2SpeadDeviceServer(DeviceServer):
 
     Parameters
     ----------
-    kat : :class:`katcorelib.KATCoreHost` object
-        Host object providing monitoring access to system
+    kat : :class:`katcorelib.KATCoreConn` object
+        KATCoreConn object providing monitoring access to system
     sensors : list of tuples of 3 strings
         List of sensors to listen to, and corresponding sensor strategy to be
         set as (name, strategy, param) tuple (use full name from kat.sensors)
