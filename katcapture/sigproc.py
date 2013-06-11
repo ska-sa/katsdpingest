@@ -365,13 +365,18 @@ class AntennaGains(ProcBlock):
         self.track_start = track_start
         self.vis_buffer = []
 
-    def _proc(self, current_dbe_target, dbe_target_since, current_ant_activities, ant_activities_since, center_freq, bandwidth, output_sensors):
+    def _proc(self, current_dbe_target, dbe_target_since, current_ant_activities,
+              ant_activities_since, script_ants, center_freq, bandwidth, output_sensors):
         """Determine antenna gain corrections based on target and antenna sensors."""
         # Use start of last dump as reference for current data
         last_dump = output_sensors["last-dump-timestamp"].value()
-        # Only continue if all script antennas having been tracking for the entire dump (and make sure we have 4 antennas to keep solver happy)
-        tracking_ants = [ant for ant in current_ant_activities if current_ant_activities[ant] == 'track' and ant_activities_since[ant] < last_dump]
-        required_ants = max(len(current_ant_activities), 4)
+        # Restrict ourselves to script antennas that update their activities
+        available_ants = [ant for ant in current_ant_activities]
+        if script_ants is not None:
+            available_ants = [ant for ant in available_ants if ant in script_ants]
+        # Only continue if all script antennas have been tracking for the entire dump (and make sure we have 4 antennas to keep solver happy)
+        tracking_ants = [ant for ant in available_ants if current_ant_activities[ant] == 'track' and ant_activities_since[ant] < last_dump]
+        required_ants = max(len(available_ants), 4)
         if len(tracking_ants) < required_ants:
             # Reset the state the moment antennas slew off a target
             self.logger.log(logging.INFO if self.track_start > 0 else logging.DEBUG,

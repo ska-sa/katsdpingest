@@ -288,8 +288,7 @@ class k7Capture(threading.Thread):
         dbe_target_since = 0.0
         current_ant_activities = {}
         ant_activities_since = {}
-        script_ants = self._script_ants.replace(" ","").split(",") if self._script_ants is not None else None
-         # track the current DBE target and (script) antenna activities via sensor updates
+         # track the current DBE target and antenna activities via sensor updates
         sd_slots = None
         sd_timestamp = None
         for heap in spead.iterheaps(rx):
@@ -356,9 +355,8 @@ class k7Capture(threading.Thread):
                         dbe_target_since = update_timestamp
                     elif sensor_name.endswith('activity'):
                         ant_name = sensor_name.partition('_')[0]
-                        if (script_ants is None) or (ant_name in script_ants):
-                            current_ant_activities[ant_name] = update_value
-                            ant_activities_since[ant_name] = update_timestamp
+                        current_ant_activities[ant_name] = update_value
+                        ant_activities_since[ant_name] = update_timestamp
                     logger.debug("Updated sensor %s: DBE target '%s' since %r, %s" %
                                  (sensor_name, current_dbe_target, dbe_target_since,
                                   ', '.join([("antenna '%s' did '%s' since %r" % (ant, current_ant_activities[ant], ant_activities_since[ant]))
@@ -443,6 +441,7 @@ class k7Capture(threading.Thread):
                      # write flags to file
                     if self.ant_gains is not None:
                         self.ant_gains.proc(current_dbe_target, dbe_target_since, current_ant_activities, ant_activities_since,
+                                            self._script_ants.replace(" ","").split(",") if self._script_ants is not None else None,
                                             self.center_freq, self.meta['bandwidth'], self._my_sensors)
                     f[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
                      # write data to file (with temporary remap as mentioned above...)
