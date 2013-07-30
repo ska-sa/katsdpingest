@@ -49,7 +49,7 @@ def get_input_info(array_config):
 
     Parameters
     ----------
-    array_config : :class:`katcorelib.targets.ArrayConfig` object
+    array_config : :class:`katconf.ArrayConfig` object
         ArrayConfig object from which to extract correlator info
 
     Returns
@@ -80,7 +80,7 @@ def get_antenna_info(array_config):
 
     Parameters
     ----------
-    array_config : :class:`katcorelib.targets.ArrayConfig` object
+    array_config : :class:`katconf.ArrayConfig` object
         ArrayConfig object from which to extract antenna info
 
     Returns
@@ -475,10 +475,7 @@ while not kat.rfe7.is_connected():
 #kat.disconnect()   # we dont need live connection anymore
 section_reports['configuration'] = str(options.system)
 
-katconfig = katcorelib.conf.KatuilibConfig(str(options.system))
-arrpath = katconfig.conf.get("array","array_kat7")
-arrconf = katconf.ArrayConfig(arrpath)
-array_config = katcorelib.targets.ArrayConfig(arrconf)
+array_config = katconf.ArrayConfig(str(options.system))
  # retrieve array configuration object for correlator
 config_antennas, dbe_delay, real_to_dbe = get_input_info(array_config)
  # return dicts showing the current mapping between dbe inputs and real antennas

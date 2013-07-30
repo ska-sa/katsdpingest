@@ -490,9 +490,9 @@ class CaptureDeviceServer(DeviceServer):
     VERSION_INFO = ("k7-capture", 0, 1)
     BUILD_INFO = ("k7-capture", 0, 1, "rc1")
 
-    def __init__(self, sdisp_ips, sdisp_port, system_config, *args, **kwargs):
+    def __init__(self, sdisp_ips, sdisp_port, system_config_path, *args, **kwargs):
         self.rec_thread = None
-        self.system_config = system_config
+        self.system_config_path = system_config_path
         self.current_file = None
         self.sdisp_ips = {}
         self.sdisp_ips['127.0.0.1'] = sdisp_port
@@ -524,10 +524,9 @@ class CaptureDeviceServer(DeviceServer):
         self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
 
-        arrpath = self.system_config.conf.get("array","array_kat7")
-        arrconf = katconf.ArrayConfig(arrpath)
+        array_config = katconf.ArrayConfig(system_config_path)
         inputs = [''.join(vv.strip() for vv in  v.split(',')[0:2])
-                for v in arrconf.correlator['inputs'].values()]
+                for v in array_config.correlator_conf['inputs'].values()]
         for inp in inputs:
             sens_name = "{0}-gain-correction-per-channel".format(inp)
             self._my_sensors[sens_name] = Sensor.string(
@@ -784,8 +783,6 @@ if __name__ == '__main__':
 
     # Setup configuration source
     katconf.set_config(katconf.environ(opts.sysconfig))
-    # Get the system config object
-    system_config = katconf.sysconf.SystemConfig(opts.system)
     # set up Python logging
     katconf.configure_logging(opts.logging)
 
@@ -802,7 +799,7 @@ if __name__ == '__main__':
     activitylogger.info("Activity logging started")
 
     restart_queue = Queue.Queue()
-    server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, system_config,
+    server = CaptureDeviceServer(opts.sdisp_ips, opts.sdisp_port, opts.system,
                                  opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
