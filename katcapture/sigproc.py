@@ -352,11 +352,16 @@ class AntennaGains(ProcBlock):
     ----------
     solution_interval : float, optional
         The minimum duration of a solution interval, in seconds
+    ref_ant : string, optional
+        Name of desired ref_ant, or comma-separated list of names in order of
+        preference (default is a KAT-7 specific list provided by Tom Mauch)
 
     """
-    def __init__(self, solution_interval=60.0, *args, **kwargs):
+    def __init__(self, solution_interval=60.0,
+                 ref_ant='ant7,ant6,ant4,ant2,ant5,ant1,ant3', *args, **kwargs):
         super(AntennaGains, self).__init__(*args, **kwargs)
         self.solution_interval = solution_interval
+        self.ref_ant = ref_ant.split(',')
         self._reset_state()
 
     def _reset_state(self, target=None, track_start=0):
@@ -406,6 +411,16 @@ class AntennaGains(ProcBlock):
             self.logger.debug("AntennaGains: Quitting because solution interval not reached yet (%d seconds so far, need %d)" %
                               (last_dump - self.track_start, self.solution_interval))
             return
+        # Pick reference antenna (go for preferred ones first)
+        for ant in self.ref_ant:
+            try:
+                ref_ant_index = tracking_ants.index(ant)
+                break
+            except ValueError:
+                pass
+        else:
+            ref_ant_index = 0
+        self.logger.debug("AntennaGains: Picked '%s' as reference antenna" % (tracking_ants[ref_ant_index],))
         for pol in ['h', 'v']:
             # Restrict ourselves to cross-correlations involving tracking antennas and current polarisation
             select_bl = [(bl[0][:-1] in tracking_ants and bl[0][-1] == pol and bl[0][:-1] != bl[1][:-1] and
@@ -420,7 +435,7 @@ class AntennaGains(ProcBlock):
             augm_vis, augm_antA, augm_antB = np.hstack([norm_vis, norm_vis.conj()]), np.r_[antA, antB], np.r_[antB, antA]
             # Solve for gains per channel, invert them to get gain corrections and emit sensor values
             self.logger.info("AntennaGains: Solving for %dx%d complex gains" % (num_chans, len(tracking_ants)))
-            gains_per_channel = stefcal(augm_vis, len(tracking_ants), augm_antA, augm_antB)
+            gains_per_channel = stefcal(augm_vis, len(tracking_ants), augm_antA, augm_antB, ref_ant=ref_ant_index)
             corrections = 1. / gains_per_channel
             for n, ant in enumerate(tracking_ants):
                 correct_str = ' '.join([("%5.3f%+5.3fj" % (corrections[chan, n].real, corrections[chan, n].imag)) for chan in range(num_chans)])
