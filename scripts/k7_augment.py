@@ -204,8 +204,8 @@ def fetch_sensor_data(sensors, start_time, end_time, initial_value):
     katstore_client = kat.dbe7.sensor.sorted_values()[0]._katstore
     regexised_sensors = ['/^'+sn.replace('_', '.')+'$/' for sn in sensors]
     s_per_hour = 3600
-    # 60 s of timeout per hour of observation time.
-    scaled_timeout = max(60, (end_time - start_time) / s_per_hour * 60)
+    # 60 s of timeout per hour of observation time, with a minimum of 120
+    scaled_timeout = max(120, (end_time - start_time) / s_per_hour * 60)
     stime = time.time()
     print ("Pulling data from %i to %i %s initial value fetch for sensors:"
            "\n\n%s \n" % (
