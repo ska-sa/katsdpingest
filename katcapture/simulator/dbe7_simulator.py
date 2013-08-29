@@ -3,11 +3,18 @@ import time
 import logging
 import sys
 
-from katcp import Sensor, Message
-from katcore.dev_base import Device
+from functools import partial
 
+from katcp import Sensor, Message
+from katcp.core import ProtocolFlags
 from katcp.kattypes import request, return_reply
 from katcp.kattypes import Str, Int, Float, Discrete, Timestamp
+from katcore.dev_base import Device
+
+# Preconfigure the handler decorators to use KATCP v4.
+request = partial(request, major=4)
+return_reply = partial(return_reply, major=4)
+
 
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
@@ -153,8 +160,9 @@ class SensorSignalDeviceServer(Device):
 
 class DBE7DeviceServer(SensorSignalDeviceServer):
 
-    VERSION_INFO = ("k7-simulator",0,1)
-    BUILD_INFO = ("k7-simulator",0,1,"rc1")
+    PROTOCOL_INFO = ProtocolFlags(4, 0, set([ProtocolFlags.MULTI_CLIENT]))
+    VERSION_INFO = ("k7-simulator", 0, 1)
+    BUILD_INFO = ("k7-simulator", 0, 1, "rc1")
 
     def handle_request(self, client_conn, msg):
         hang_requests = self._model.get_test_sensor('hang-requests').value()
