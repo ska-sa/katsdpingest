@@ -30,13 +30,11 @@ def parse_opts(argv):
                       type=long,
                       default=2041,
                       metavar='N',
-                      help='attach katcp interface to port N (default=2041)')
-    parser.add_option('--test-addr',
-                      dest='test_addr',
-                      type='string',
-                      default=':2042',
+                      help='attach master controller katcp interface to port N '
+                      '(default=%default)')
+    parser.add_option('--test-addr', default=':2042',
                       help='HOST:PORT for the test interface to listen on '
-                      '(default=:2042)')
+                      '(default=%default)')
     parser.add_option('--startup-sensor-hide-re',
                       dest='startup_sensor_hide_re',
                       type='string',
@@ -53,7 +51,7 @@ def parse_opts(argv):
                       type="string",
                       default="",
                       metavar='HOST',
-                      help='listen to HOST (default="" - all hosts)')
+                      help='listen to HOST (default="%default" - all hosts)')
     parser.add_option('-s', '--system',
                       default='systems/local.conf',
                       help='system configuration file to use. [default=%default]')
@@ -62,7 +60,7 @@ def parse_opts(argv):
                       default='/var/kat/katconfig',
                       help='look for configuration files in folder CONF '
                       '[default is KATCONF environment variable'
-                      'or /var/kat/katconfig]')
+                      'or %default]')
     parser.add_option('-l', '--logging',
                       dest='logging',
                       type='string',

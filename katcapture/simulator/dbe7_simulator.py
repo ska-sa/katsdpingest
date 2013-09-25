@@ -15,7 +15,6 @@ from katcore.dev_base import Device
 request = partial(request, major=4)
 return_reply = partial(return_reply, major=4)
 
-
 activitylogger = logging.getLogger('activity')
 log_name = 'kat.k7simulator'
 logger = logging.getLogger(log_name)
