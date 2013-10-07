@@ -7,7 +7,7 @@ import threading
 import spead
 from katcp import DeviceServer
 from katcp.kattypes import return_reply, Str
-from katcapture import __version__
+from katsdpingest import __version__
 
 logger = logging.getLogger("kat.katcp2spead")
 

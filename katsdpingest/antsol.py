@@ -4,7 +4,7 @@ import logging
 
 import numpy as np
 
-logger = logging.getLogger("kat.katcapture.antsol")
+logger = logging.getLogger("kat.katsdpingest.antsol")
 
 
 def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, init_gain=None):

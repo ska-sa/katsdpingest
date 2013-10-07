@@ -22,7 +22,7 @@ import os
 import logging
 from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int, Float
-import katcapture.sigproc as sp
+import katsdpingest.sigproc as sp
 from katsdisp.data import CorrProdRef
 
 import katconf

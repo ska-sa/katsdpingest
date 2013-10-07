@@ -1,6 +1,6 @@
-"""Unit testing for katcapture.
+"""Unit testing for katsdpingest.
 
-Currently this primarily tests the sigproc library that is part of katcapture. Testing of the capture and
+Currently this primarily tests the sigproc library that is part of katsdpingest. Testing of the capture and
 simulator scripts requires some infrastructure to run and is probably best done by a human."""
 
 import unittest

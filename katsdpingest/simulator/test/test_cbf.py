@@ -3,14 +3,14 @@
 import unittest2 as unittest
 
 import os
-import katcapture
+import katsdpingest
 
 from katcore.sim import dbe_kat7
 from katcore.testutils import SimulatorTestMixin
 from katcp import Message
 
-from katcapture.simulator import dbe7_simulator
-from katcapture.simulator import dbe7_simulator_model
+from katsdpingest.simulator import cbf_simulator
+from katsdpingest.simulator import cbf_simulator_model
 
 EXPECTED_SENSOR_LIST = [
     ('bandwidth', 'The bandwidth currently available', 'Hz', 'integer', '0', '400000000'),
@@ -154,11 +154,11 @@ EXPECTED_REQUEST_LIST = [
 
 class TestDbeKat7(unittest.TestCase, SimulatorTestMixin):
     def setUp(self):
-        corr_confdir = os.path.join(os.path.dirname(katcapture.__file__), 'conf')
+        corr_confdir = os.path.join(os.path.dirname(katsdpingest.__file__), 'conf')
         self.addCleanup(self.tear_down_threads)
         self.proxy = self.add_device(
-            dbe7_simulator.DBE7DeviceServer,
-            model=dbe7_simulator_model.K7CorrelatorModel(corr_confdir))
+            cbf_simulator.DBE7DeviceServer,
+            model=cbf_simulator_model.K7CorrelatorModel(corr_confdir))
         self.client = self.add_client(self.proxy._sock.getsockname())
 
     def test_sensor_list(self):

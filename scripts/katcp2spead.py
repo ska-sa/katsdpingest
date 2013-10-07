@@ -10,7 +10,7 @@ import logging
 import spead
 import katconf
 import katcorelib
-from katcapture.katcp2spead import Katcp2SpeadDeviceServer
+from katsdpingest.katcp2spead import Katcp2SpeadDeviceServer
 
 sensors = [
     ('dbe7_target', 'event', ''),

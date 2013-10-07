@@ -2,7 +2,7 @@
 
 import unittest
 import numpy as np
-from katcapture import sigproc
+from katsdpingest import sigproc
 
 class SigProcTestCases(unittest.TestCase):
     """Exercise the sigproc library under a number of varying conditions."""

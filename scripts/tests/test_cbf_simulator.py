@@ -58,7 +58,7 @@ class SimulatorSetup(object):
         k7_simulator_file = os.path.join(
             os.path.dirname(__file__), '..', 'k7_simulator.py')
         k7_conf_dir = os.path.join(
-            os.path.dirname(__file__), '..', '..', 'katcapture', 'conf')
+            os.path.dirname(__file__), '..', '..', 'katsdpingest', 'conf')
 
         # Set up a process running the k7_simulator
         self.k7_simulator_proc = subprocess.Popen(

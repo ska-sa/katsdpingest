@@ -16,8 +16,8 @@ from collections import namedtuple
 from katcore.dev_base import ThreadedModel
 from katcp import Sensor
 
-from .dbe7_roach_models import XEngines, FEngines
-from .dbe7_spead_model import DBE7SpeadData
+from .cbf_roach_models import XEngines, FEngines
+from .cbf_spead_model import DBE7SpeadData
 from .model_correlator_conf import ModelCorrConf
 
 
@@ -522,7 +522,7 @@ class K7CorrelatorModel(TestInterfaceModel):
             return
 
         self._thread_paused = True
-        logger.info('Sleeping %f s for dbe7 mode change' % mode_delay)
+        logger.info('Sleeping %f s for cbf mode change' % mode_delay)
 
         for i in range(int(floor(mode_delay))):
             time.sleep(1)

@@ -2,7 +2,7 @@
 from setuptools import setup, find_packages
 
 setup (
-    name = "katcapture",
+    name = "katsdpingest",
     version = "trunk",
     description = "Karoo Array Telescope Data Capture",
     author = "Simon Ratcliffe",
@@ -10,14 +10,12 @@ setup (
     package_data={'': ['conf/*']},
     include_package_data = True,
     scripts = [
-        "scripts/k7_augment.py",
-        "scripts/k7_capture.py",
-        "scripts/k7_simulator.py",
+        "scripts/ingest.py",
+        "scripts/cbf_simulator.py",
         "scripts/katcp2spead.py",
         ],
     install_requires = [
         'scikits.fitting',
-        'pysolr',
     ],
     zip_safe = False,
 )

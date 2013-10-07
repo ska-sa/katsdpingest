@@ -11,15 +11,15 @@ import logging
 from pkg_resources import resource_filename
 
 import katconf
-from katcapture.simulator.dbe7_simulator import DBE7DeviceServer
-from katcapture.simulator.dbe7_simtest import SimTestDevice, NotHidden
-from katcapture.simulator.dbe7_simulator_model import K7CorrelatorModel
+from katsdpingest.simulator.dbe7_simulator import DBE7DeviceServer
+from katsdpingest.simulator.dbe7_simtest import SimTestDevice, NotHidden
+from katsdpingest.simulator.dbe7_simulator_model import K7CorrelatorModel
 from katcore.dev_base import SimpleModel
 from katcore.utils import address
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    default_conf = resource_filename("katcapture","") + "/conf"
+    default_conf = resource_filename("katsdpingest","") + "/conf"
     parser.add_option('-c', '--config',
                       dest='config',
                       type="string",

@@ -4,7 +4,7 @@ import unittest
 from katcp import Sensor
 
 # DUT module
-from  katcapture.simulator import dbe7_roach_models
+from  katsdpingest.simulator import dbe7_roach_models
 from katcore.testutils import SensorComparisonMixin
 
 class test_Roach(unittest.TestCase, SensorComparisonMixin):

@@ -14,7 +14,7 @@
 # which updates history and then calls the proc method on each block in turn.
 #
 
-import katcapture.sigproc as sp
+import katsdpingest.sigproc as sp
 import numpy as np
 
 n_channels = 1024
