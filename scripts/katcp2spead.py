@@ -61,8 +61,7 @@ logger = logging.getLogger("kat.katcp2spead")
 # Get host object through which to access system sensors
 kat = katcorelib.tbuild(system=opts.system)
 # Create device server that is main bridge between KATCP and SPEAD
-server = Katcp2SpeadDeviceServer(kat, sensors, INTTIME, spead_host=opts.spead_host, 
-                                 spead_port=opts.spead_port, host=opts.ctl_host, 
+server = Katcp2SpeadDeviceServer(kat, sensors, INTTIME, host=opts.ctl_host, 
                                  port=opts.ctl_port)
 server.set_restart_queue(Queue.Queue())
 # Spawn new thread to handle KATCP requests to device server
