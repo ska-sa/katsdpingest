@@ -78,7 +78,7 @@ class transmitThread(threading.Thread):
 
     def __init__(self, spead_host, spead_port, init_heap):
         threading.Thread.__init__(self)
-        self.name = 'Thread_' + spead_host + '_' + str(spead_port)
+        self.name = 'Thread_' + spead_host + ':' + str(spead_port)
         self.mailbox = Queue.Queue()
         self._transmit = spead.Transmitter(spead.TransportUDPtx(spead_host,
                           spead_port))
@@ -122,14 +122,14 @@ class Katcp2SpeadDeviceServer(DeviceServer):
     VERSION_INFO = ("katcp2spead", 0, 1)
     BUILD_INFO = ("katcp2spead", 0, 1, __version__)
 
-    def __init__(self, kat, sensors, tx_time, *args, **kwargs):
+    def __init__(self, kat, sensors, tx_period, *args, **kwargs):
         super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
         self.kat, self.sensor_strategies = kat, sensors
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
         self.streaming = False
         self.transmitters = {}
-        self.tx_time = float(tx_time)
+        self.tx_period = float(tx_period)
         self.init_heap = None
         self.ig = None
 
@@ -194,10 +194,10 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for bridge in self.sensor_bridges.itervalues():
             bridge.stop_listening()
 
-    def wait_tx(self,start):
-        """Wait specified time interval before sending next heap."""
+    def flush_tx(self,start):
+        """Periodically send heap."""
         while self.streaming:
-            time.sleep(self.tx_time - (time.time()-start))
+            time.sleep(self.tx_period - (time.time()-start))
             start = time.time()
             # transmit current heap to all active transmitters
             with self._spead_lock:
@@ -213,7 +213,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         smsg = "SPEAD stream started"
         logger.info(smsg)
         start = time.time()
-        t = threading.Thread(target=self.wait_tx,args=(time.time(),))
+        t = threading.Thread(target=self.flush_tx,args=(time.time(),))
         t.start()
         return ("ok", smsg)
 
