@@ -11,9 +11,9 @@ import logging
 from pkg_resources import resource_filename
 
 import katconf
-from katsdpingest.simulator.dbe7_simulator import DBE7DeviceServer
-from katsdpingest.simulator.dbe7_simtest import SimTestDevice, NotHidden
-from katsdpingest.simulator.dbe7_simulator_model import K7CorrelatorModel
+from katsdpingest.simulator.cbf_simulator import DBE7DeviceServer
+from katsdpingest.simulator.cbf_simtest import SimTestDevice, NotHidden
+from katsdpingest.simulator.cbf_simulator_model import K7CorrelatorModel
 from katcore.dev_base import SimpleModel
 from katcore.utils import address
 
