@@ -80,7 +80,7 @@ def parse_opts(argv):
     return parser.parse_args(argv)
 
 def setup_standalone(server, model):
-    model.set_mode('c16n400M1k',mode_delay=0)
+    model.set_mode('c8n856M32k',mode_delay=0)
     for i in range(1,8):
         for ch,pol in zip(['x', 'y'], ['h', 'v']):
             model.set_antenna_mapping('%d%s' %(i, ch), 'ant%d%s' %(i, pol))
