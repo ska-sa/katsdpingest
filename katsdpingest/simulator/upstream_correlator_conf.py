@@ -186,7 +186,7 @@ class CorrConf:
         self.read_int('correlator','adc_clk')
 #        self.read_int('correlator','n_stokes')
         self.read_int('correlator','x_per_fpga')
-        self.read_int('correlator','n_ants_per_xaui')
+        self.read_float('correlator','n_ants_per_xaui')
         self.read_int('correlator','xeng_acc_len')
         self.read_float('correlator','ddc_mix_freq')
         self.read_int('correlator','ddc_decimation')
@@ -266,6 +266,16 @@ class CorrConf:
             self.config['adc_v_scale_factor']=1/368.
             self.config['adc_low_level_warning']=-35
             self.config['adc_high_level_warning']=0
+        elif self.config['adc_type'] == 'mkdeng':
+            self.config['adc_demux'] = 4
+            self.config['adc_n_bits'] = 10
+            self.config['adc_v_scale_factor']=1/184.3
+            self.config['adc_low_level_warning']=-32
+            self.config['adc_high_level_warning']=0
+            for input_n in range(self.config['n_inputs']):
+                try:
+                    ant_rf_gain = self.read_int('equalisation','rf_gain_%i'%(input_n))
+                except: raise RuntimeError('ERR rf_gain_%i'%(input_n))
         else:
             raise RuntimeError("adc_type not understood. expecting katadc or iadc.")
 
