@@ -4,11 +4,11 @@ import unittest
 from katcp import Sensor
 
 # DUT module
-from  katsdpingest.simulator import dbe7_roach_models
+from  katsdpingest.simulator import cbf_roach_models
 from katcore.testutils import SensorComparisonMixin
 
 class test_Roach(unittest.TestCase, SensorComparisonMixin):
-    RoachClass = dbe7_roach_models.Roach
+    RoachClass = cbf_roach_models.Roach
 
     expected_sensors = (dict(
             type=Sensor.BOOLEAN,
@@ -25,7 +25,7 @@ class test_Roach(unittest.TestCase, SensorComparisonMixin):
             roach.get_sensors(), self.expected_sensors)
 
 class test_XEngine(test_Roach):
-    RoachClass = dbe7_roach_models.XEngine
+    RoachClass = cbf_roach_models.XEngine
 
 class test_FEngine(unittest.TestCase, SensorComparisonMixin):
     # TODO Update with all the sensors in doc K0000-2006V1-02
@@ -105,7 +105,7 @@ class test_FEngine(unittest.TestCase, SensorComparisonMixin):
         )
 
     def test_sensors(self):
-        roach = dbe7_roach_models.FEngine('roachy1234', 3)
+        roach = cbf_roach_models.FEngine('roachy1234', 3)
         self.assert_sensors_equal_description(
             roach.get_sensors(), self.expected_sensors)
 
@@ -115,7 +115,7 @@ class test_FEngine(unittest.TestCase, SensorComparisonMixin):
         def test_power(val):
             self.assertTrue(val < 0)
 
-        roach = dbe7_roach_models.FEngine('roachy1234', 3)
+        roach = cbf_roach_models.FEngine('roachy1234', 3)
 
         self.assert_sensors_value_conditions(roach.get_sensors(), {
             'roachy1234.3x.adc.power': test_power,
@@ -124,7 +124,7 @@ class test_FEngine(unittest.TestCase, SensorComparisonMixin):
             'roachy1234.3y.adc.amplitude': test_ampl})
 
     def test_channels(self):
-        roach = dbe7_roach_models.FEngine('roachum5', 7)
+        roach = cbf_roach_models.FEngine('roachum5', 7)
         self.assertEqual(roach.channels, ('7x', '7y'))
 
 class test_XEngines(unittest.TestCase, SensorComparisonMixin):
@@ -150,7 +150,7 @@ class test_XEngines(unittest.TestCase, SensorComparisonMixin):
         return expected_sensors
 
     def test_sensors(self):
-        x_engines = dbe7_roach_models.XEngines(self.roach_names)
+        x_engines = cbf_roach_models.XEngines(self.roach_names)
         self.assert_sensors_equal_description(
             x_engines.get_sensors(),
             self.get_expected_sensors())
@@ -244,13 +244,13 @@ class test_FEngines(test_XEngines):
         return expected_sensors
 
     def test_sensors(self):
-        f_engines = dbe7_roach_models.FEngines(self.roach_names)
+        f_engines = cbf_roach_models.FEngines(self.roach_names)
         self.assert_sensors_equal_description(f_engines.get_sensors(),
                                               self.get_expected_sensors())
 
 
     def test_channels(self):
-        f_engines = dbe7_roach_models.FEngines(('r1', 'r2'))
+        f_engines = cbf_roach_models.FEngines(('r1', 'r2'))
         self.assertEqual(f_engines.get_channels(), ['0x', '0y', '1x', '1y'])
         self.assertTrue(f_engines.is_channel('1x'))
         self.assertFalse(f_engines.is_channel('5y'))
