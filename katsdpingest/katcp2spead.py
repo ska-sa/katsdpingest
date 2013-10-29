@@ -196,14 +196,17 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for bridge in self.sensor_bridges.itervalues():
             bridge.stop_listening()
 
-    def periodic_flush(self, start):
+    def periodic_flush(self):
         """Periodically flush sensor updates to SPEAD stream."""
+        transmit_time = 0.0
         while self.streaming:
-            time.sleep(self.flush_period - (time.time() - start))
+            time_till_flush = max(self.flush_period - transmit_time, 0.0)
+            time.sleep(time_till_flush)
             start = time.time()
             # transmit current heap to all active destinations
             with self._spead_lock:
                 self.transmit(self.ig.get_heap())
+            transmit_time = time.time() - start
 
     @return_reply(Str())
     def request_start_stream(self, req, msg):
@@ -214,8 +217,8 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         self.streaming = True
         smsg = "SPEAD stream started"
         logger.info(smsg)
-        start = time.time()
-        t = threading.Thread(target=self.periodic_flush, args=(time.time(),))
+        # Start flusher thread (automatically terminates when stream is stopped)
+        t = threading.Thread(target=self.periodic_flush)
         t.start()
         return ("ok", smsg)
 
