@@ -107,9 +107,10 @@ class Katcp2SpeadDeviceServer(DeviceServer):
 
     Parameters
     ----------
-    kat : :class:`katcorelib.KATCoreConn` object
-        KATCoreConn object providing monitoring access to system
-    sensors : list of tuples of 3 strings
+    all_sensors : group of :class:`katcp.Sensor` objects
+        Object (e.g. a :class:`katcorelib.ObjectGroup`) with all available
+        sensors as attributes
+    sensor_list : list of tuples of 3 strings
         List of sensors to listen to, and corresponding sensor strategy to be
         set as (name, strategy, param) tuple (use full name from kat.sensors)
     spead_host : string
@@ -122,9 +123,9 @@ class Katcp2SpeadDeviceServer(DeviceServer):
     VERSION_INFO = ("katcp2spead", 0, 1)
     BUILD_INFO = ("katcp2spead", 0, 1, __version__)
 
-    def __init__(self, kat, sensors, tx_period, *args, **kwargs):
+    def __init__(self, all_sensors, sensor_list, tx_period, *args, **kwargs):
         super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
-        self.kat, self.sensor_strategies = kat, sensors
+        self.sensors, self.sensor_strategies = all_sensors, sensor_list
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
         self.streaming = False
@@ -142,7 +143,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for name, strategy, param in self.sensor_strategies:
             if name not in self.sensor_bridges:
                 try:
-                    sensor = getattr(self.kat.sensors, name)
+                    sensor = getattr(self.sensors, name)
                 except AttributeError:
                     logger.warning("Could not register unavailable KATCP sensor %r" % (name,))
                     continue

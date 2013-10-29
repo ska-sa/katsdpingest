@@ -14,7 +14,7 @@ from katsdpingest.katcp2spead import Katcp2SpeadDeviceServer
 
 flush_period = 0.5
 
-sensors = [
+sensor_list = [
     ('dbe7_target', 'event', ''),
 #    ('ant1_activity', 'event', ''),
     ('ant2_activity', 'event', ''),
@@ -46,6 +46,12 @@ parser.add_option('--ctl-host', default='',
 parser.add_option('--ctl-port', type=int, default=2045,
                   help='Port on which to receive KATCP commands '
                        '(default=%default)')
+parser.add_option('--fake-cam', action='store_true', default=False,
+                  help="Connect to fake CAM sensors for simulation")
+parser.add_option('--fake-cam-host', default='localhost',
+                  help='Host address of fake CAM sensor server (default=%default)')
+parser.add_option('--fake-cam-port', type=int, default=2047,
+                  help='Port of fake CAM sensor KATCP interface (default=%default)')
 parser.add_option('-l', '--logging',
                   help='Level to use for basic logging or name of logging '
                        'configuration file (default log/log.<SITENAME>.conf)')
@@ -58,11 +64,18 @@ katconf.configure_logging(opts.logging)
 spead.logger.setLevel(logging.WARNING)
 logger = logging.getLogger("kat.katcp2spead")
 
-# Get host object through which to access system sensors
-kat = katcorelib.tbuild(system=opts.system)
+# Get group of sensors, either via KAT connection or a fake CAM device
+if opts.fake_cam:
+    fake_cam = katcorelib.build_client('fake_cam', opts.fake_cam_host,
+                                       opts.fake_cam_port, required=True)
+    all_sensors = fake_cam.sensor
+else:
+    kat = katcorelib.tbuild(system=opts.system)
+    all_sensors = kat.sensors
+
 # Create device server that is main bridge between KATCP and SPEAD
-server = Katcp2SpeadDeviceServer(kat, sensors, flush_period, host=opts.ctl_host, 
-                                 port=opts.ctl_port)
+server = Katcp2SpeadDeviceServer(all_sensors, sensor_list, flush_period,
+                                 host=opts.ctl_host, port=opts.ctl_port)
 server.set_restart_queue(Queue.Queue())
 # Spawn new thread to handle KATCP requests to device server
 server.start()
