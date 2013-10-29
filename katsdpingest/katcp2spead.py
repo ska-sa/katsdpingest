@@ -89,14 +89,14 @@ class TransmitThread(threading.Thread):
         self._init_heap = init_heap
 
     def run(self):
-        # send initial spead packed to initialise
+        # send initial spead packet to initialise
         self._transmit.send_heap(self._init_heap)
 
-        # wait for packets to be addres to the queue, then transmit them
+        # wait for packets to be added to the queue, then transmit them
         while self._thread_active:
             try:
                 # timeout necessary to stop waiting for queue item,
-                # after the transmitter is removed
+                # after the destination is removed
                 heap = self.mailbox.get(block=True, timeout=60)
                 self._transmit.send_heap(heap)
             except Queue.Empty:
@@ -117,7 +117,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
     sensor_list : list of tuples of 3 strings
         List of sensors to listen to, and corresponding sensor strategy to be
         set as (name, strategy, param) tuple (use full name from kat.sensors)
-    tx_period : float
+    flush_period : float
         Period in seconds after which sensor updates will be flushed to SPEAD
 
     """
@@ -125,14 +125,14 @@ class Katcp2SpeadDeviceServer(DeviceServer):
     VERSION_INFO = ("katcp2spead", 0, 1)
     BUILD_INFO = ("katcp2spead", 0, 1, __version__)
 
-    def __init__(self, all_sensors, sensor_list, tx_period, *args, **kwargs):
+    def __init__(self, all_sensors, sensor_list, flush_period, *args, **kwargs):
         super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
         self.sensors, self.sensor_strategies = all_sensors, sensor_list
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
         self.streaming = False
-        self.transmitters = {}
-        self.tx_period = float(tx_period)
+        self.destinations = {}
+        self.flush_period = float(flush_period)
         self.init_heap = None
         self.ig = None
 
@@ -153,27 +153,26 @@ class Katcp2SpeadDeviceServer(DeviceServer):
             # It is possible to change the strategy on an existing sensor bridge
             self.sensor_bridges[name].store_strategy(strategy, param)
 
-    def register_transmitter(self, spead_host, spead_port):
-        """Register transmitter."""
-        transmitter_name = spead_host + '_' + str(spead_port)
-        if transmitter_name not in self.transmitters:
-            # create transmitter thread, add transmitter to dict, send initial heap
-            self.transmitters[transmitter_name] = TransmitThread(spead_host, spead_port,
-                                                  copy.deepcopy(self.init_heap))
-            self.transmitters[transmitter_name].start()
+    def add_destination(self, spead_host, spead_port):
+        """Add destination for SPEAD stream."""
+        name = spead_host + ':' + str(spead_port)
+        if name not in self.destinations:
+            # create transmitter thread, add destination to dict, send initial heap
+            self.destinations[name] = TransmitThread(spead_host, spead_port,
+                                                     copy.deepcopy(self.init_heap))
+            self.destinations[name].start()
 
-    def remove_transmitter(self, spead_host, spead_port):
-        """Remove transmitter."""
-        transmitter_name = spead_host + '_' + str(spead_port)
-        # stop transmitter thread
-        self.transmitters[transmitter_name].stop()
-        # remove transmitter from dictionary
-        del self.transmitters[transmitter_name]
+    def remove_destination(self, spead_host, spead_port):
+        """Remove destination for SPEAD stream."""
+        name = spead_host + ':' + str(spead_port)
+        # stop transmitter thread, remove destination from dict
+        self.destinations[name].stop()
+        del self.destinations[name]
 
     def transmit(self, heap):
-        """Transmit spead packet to all recievers."""
-        for tx in self.transmitters:
-            self.transmitters[tx].mailbox.put(copy.deepcopy(heap))
+        """Transmit SPEAD heap to all receivers."""
+        for dest in self.destinations:
+            self.destinations[dest].mailbox.put(copy.deepcopy(heap))
 
     def set_initial_spead_packet(self):
         """Initialise initial SPEAD packet to establish metadata / item structure."""
@@ -182,9 +181,9 @@ class Katcp2SpeadDeviceServer(DeviceServer):
             logger.debug("Adding info for sensor %r (id 0x%x) to initial packet: %s" %
                          (name, bridge.spead_id, bridge.last_update))
             self.ig.add_item(name='sensor_' + name, id=bridge.spead_id,
-                        description=bridge.katcp_sensor.description,
-                        shape=-1, fmt=spead.mkfmt(('s', 8)),
-                        init_val=bridge.last_update)
+                             description=bridge.katcp_sensor.description,
+                             shape=-1, fmt=spead.mkfmt(('s', 8)),
+                             init_val=bridge.last_update)
         self.init_heap = self.ig.get_heap()
 
     def start_listening(self):
@@ -198,11 +197,11 @@ class Katcp2SpeadDeviceServer(DeviceServer):
             bridge.stop_listening()
 
     def periodic_flush(self, start):
-        """Periodically send heap."""
+        """Periodically flush sensor updates to SPEAD stream."""
         while self.streaming:
-            time.sleep(self.tx_period - (time.time() - start))
+            time.sleep(self.flush_period - (time.time() - start))
             start = time.time()
-            # transmit current heap to all active transmitters
+            # transmit current heap to all active destinations
             with self._spead_lock:
                 self.transmit(self.ig.get_heap())
 
@@ -222,10 +221,10 @@ class Katcp2SpeadDeviceServer(DeviceServer):
 
     @request(Str(), Int())
     @return_reply(Str())
-    def request_add_transmitter(self, req, spead_host, spead_port):
-        """Add a transmitting thread."""
-        self.register_transmitter(spead_host, spead_port)
-        smsg = "Sensor SPEAD transmitter thread registered, to port %s on %s" \
+    def request_add_destination(self, req, spead_host, spead_port):
+        """Add destination for SPEAD stream."""
+        self.add_destination(spead_host, spead_port)
+        smsg = "Added thread transmitting SPEAD to port %s on %s" \
                % (spead_port, spead_host)
         logger.info(smsg)
         logger.info('Sent initial SPEAD packet containing %d items to %s' %
@@ -234,10 +233,10 @@ class Katcp2SpeadDeviceServer(DeviceServer):
 
     @request(Str(), Int())
     @return_reply(Str())
-    def request_remove_transmitter(self, req, spead_host, spead_port):
-        """Add a transmitting thread."""
-        self.remove_transmitter(spead_host, spead_port)
-        smsg = "Sensor SPEAD transmitter thread removed, to port %s on %s" % \
+    def request_remove_destination(self, req, spead_host, spead_port):
+        """Remove destination for SPEAD stream."""
+        self.remove_destination(spead_host, spead_port)
+        smsg = "Removed thread transmitting SPEAD to port %s on %s" % \
                (spead_port, spead_host)
         logger.info(smsg)
         return ("ok", smsg)
