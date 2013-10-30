@@ -94,7 +94,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     standalone = False
     valid_modes = ('ready', 'c16n400M1k', 'c16n400M8k', 'c16n13M4k',
                    'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k',
-                   'bc16n400M1k',)
+                   'bc16n400M1k', 'c8n856M32k',)
 
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
@@ -277,7 +277,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     _test_el = AddLockSettersGetters.add()
 
     def start(self, *names, **kwargs):
-        self.set_mode('c16n400M1k', mode_delay=0)
+        self.set_mode('c8n856M32k', mode_delay=0)
         self.spead_issue()
         super(K7CorrelatorModel, self).start(*names, **kwargs)
 
@@ -535,8 +535,8 @@ class K7CorrelatorModel(TestInterfaceModel):
 
 
         if mode == 'ready':
-            # Fake ready mode using the c16n400M1k config as basis
-            config_file = os.path.join(self.config_dir, 'c16n400M1k')
+            # Fake ready mode using the c8n856M32k config as basis
+            config_file = os.path.join(self.config_dir, 'c8n856M32k')
         else:
             config_file = os.path.join(self.config_dir, mode)
         self.config = ModelCorrConf(config_file)
