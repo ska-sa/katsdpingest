@@ -12,7 +12,7 @@ import katconf
 import katcorelib
 from katsdpingest.katcp2spead import Katcp2SpeadDeviceServer
 
-flush_period = 0.5
+tx_period = 0.5
 
 sensor_list = [
     ('dbe7_target', 'event', ''),
@@ -74,7 +74,7 @@ else:
     all_sensors = kat.sensors
 
 # Create device server that is main bridge between KATCP and SPEAD
-server = Katcp2SpeadDeviceServer(all_sensors, sensor_list, flush_period,
+server = Katcp2SpeadDeviceServer(all_sensors, sensor_list, tx_period,
                                  host=opts.ctl_host, port=opts.ctl_port)
 server.set_restart_queue(Queue.Queue())
 # Spawn new thread to handle KATCP requests to device server

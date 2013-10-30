@@ -53,7 +53,8 @@ class SensorBridge(object):
         if self.server.streaming:
             with self.server._spead_lock:
                 self.server.ig['sensor_' + self.name] = update
-                # if the sensor strategy is event, transmit the update
+                # Transmit event-based updates immediately, while other updates
+                # are periodically resampled in a separate thread
                 if self.strategy == 'event':
                     self.server.transmit(self.server.ig.get_heap())
         self.last_update = update
@@ -78,7 +79,7 @@ class SensorBridge(object):
 
 
 class TransmitThread(threading.Thread):
-    """Thread which transmits a sensor SPEAD heap to a particular IP and port."""
+    """Thread which transmits SPEAD heaps to a particular destination."""
     def __init__(self, spead_host, spead_port, init_heap):
         threading.Thread.__init__(self)
         self.name = 'Thread_' + spead_host + ':' + str(spead_port)
@@ -117,22 +118,23 @@ class Katcp2SpeadDeviceServer(DeviceServer):
     sensor_list : list of tuples of 3 strings
         List of sensors to listen to, and corresponding sensor strategy to be
         set as (name, strategy, param) tuple (use full name from kat.sensors)
-    flush_period : float
-        Period in seconds after which sensor updates will be flushed to SPEAD
+    tx_period : float
+        Non-event based sensor updates will be periodically resampled with
+        this period in seconds before being transmitted as SPEAD packets
 
     """
 
     VERSION_INFO = ("katcp2spead", 0, 1)
     BUILD_INFO = ("katcp2spead", 0, 1, __version__)
 
-    def __init__(self, all_sensors, sensor_list, flush_period, *args, **kwargs):
+    def __init__(self, all_sensors, sensor_list, tx_period, *args, **kwargs):
         super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
         self.sensors, self.sensor_strategies = all_sensors, sensor_list
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
         self.streaming = False
         self.destinations = {}
-        self.flush_period = float(flush_period)
+        self.tx_period = float(tx_period)
         self.init_heap = None
         self.ig = None
 
@@ -196,11 +198,11 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for bridge in self.sensor_bridges.itervalues():
             bridge.stop_listening()
 
-    def periodic_flush(self):
-        """Periodically flush sensor updates to SPEAD stream."""
+    def periodic_transmit(self):
+        """Periodically resample sensor updates and transmit to SPEAD stream."""
         transmit_time = 0.0
         while self.streaming:
-            time_till_flush = max(self.flush_period - transmit_time, 0.0)
+            time_till_flush = max(self.tx_period - transmit_time, 0.0)
             time.sleep(time_till_flush)
             start = time.time()
             # transmit current heap to all active destinations
@@ -217,8 +219,9 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         self.streaming = True
         smsg = "SPEAD stream started"
         logger.info(smsg)
-        # Start flusher thread (automatically terminates when stream is stopped)
-        t = threading.Thread(target=self.periodic_flush)
+        # Start periodic transmission thread (automatically terminates when
+        # stream is stopped)
+        t = threading.Thread(target=self.periodic_transmit)
         t.start()
         return ("ok", smsg)
 
