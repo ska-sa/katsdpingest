@@ -96,3 +96,5 @@ try:
 finally:
     server.stop()
     server.join()
+    if opts.fake_cam:
+        fake_cam.disconnect()
