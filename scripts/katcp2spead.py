@@ -6,26 +6,20 @@
 import optparse
 import Queue
 import logging
+import os.path
+
+import numpy as np
+from pkg_resources import resource_filename
 
 import spead
 import katconf
 import katcorelib
 from katsdpingest.katcp2spead import Katcp2SpeadDeviceServer
 
-tx_period = 0.5
 
-sensor_list = [
-    ('dbe7_target', 'event', ''),
-#    ('ant1_activity', 'event', ''),
-    ('ant2_activity', 'event', ''),
-#    ('ant3_activity', 'event', ''),
-    ('ant4_activity', 'event', ''),
-#    ('ant5_activity', 'event', ''),
-#    ('ant6_activity', 'event', ''),
-#    ('ant7_activity', 'event', ''),
-#    ('ant2_pos_actual_scan_azim', 'period', '0.4'),
-    ('ant2_pos_actual_scan_elev', 'period', '0.4')
-]
+# Obtain default sensor list
+conf_dir = resource_filename('katsdpingest', 'conf')
+default_sensors = os.path.join(conf_dir, 'rts_sensors.csv')
 
 # Parse command-line options
 parser = optparse.OptionParser(usage='%prog [options]',
@@ -35,6 +29,9 @@ parser.add_option('-s', '--system',
 parser.add_option('-c', '--sysconfig', default='/var/kat/katconfig',
                   help='Configuration directory, can be overrided by KATCONF '
                        'environment variable (default=%default)')
+parser.add_option('--sensor-list', default=default_sensors,
+                  help='Name of text file containing list of sensors to serve '
+                       '(default=%default)')
 parser.add_option('--spead-host',
                   help='Address of host where SPEAD sensor data is sent')
 parser.add_option('--spead-port', type=int, default=7148,
@@ -62,9 +59,9 @@ katconf.set_config(katconf.environ(opts.sysconfig))
 katconf.configure_logging(opts.logging)
 # Suppress SPEAD info messages
 spead.logger.setLevel(logging.WARNING)
-logger = logging.getLogger("kat.katcp2spead")
+logger = logging.getLogger("kat.ingest.katcp2spead")
 
-# Get group of sensors, either via KAT connection or a fake CAM device
+# Get group of sensor objects, either via KAT connection or a fake CAM device
 if opts.fake_cam:
     fake_cam = katcorelib.build_client('fake_cam', opts.fake_cam_host,
                                        opts.fake_cam_port, required=True)
@@ -73,8 +70,19 @@ else:
     kat = katcorelib.tbuild(system=opts.system)
     all_sensors = kat.sensors
 
+# Load names of sensors to be streamed
+sensors = np.loadtxt(opts.sensor_list, delimiter=',', skiprows=1, dtype=np.str)
+sensor_names = [line[0].strip() for line in sensors]
+# Antenna position sensors are currently the only high-frequency sensors that
+# update too regularly to be treated as event sensors
+sensor_list = [(name, 'period', '0.4') if name.find('_pos_') > 0 else
+               (name, 'event', '') for name in sensor_names]
+logger.info('Listening to %d sensors selected from %d %s ones' %
+            (len(sensor_list), len([k for k in vars(all_sensors) if k.find('_') > 0]),
+             'fake' if opts.fake_cam else 'real'))
+
 # Create device server that is main bridge between KATCP and SPEAD
-server = Katcp2SpeadDeviceServer(all_sensors, sensor_list, tx_period,
+server = Katcp2SpeadDeviceServer(all_sensors, sensor_list, tx_period=0.5,
                                  host=opts.ctl_host, port=opts.ctl_port)
 server.set_restart_queue(Queue.Queue())
 # Spawn new thread to handle KATCP requests to device server
