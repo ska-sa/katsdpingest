@@ -135,6 +135,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         self.streaming = False
         self.destinations = {}
         self.tx_period = float(tx_period)
+        self.tx_thread = None
         self.init_heap = None
         self.ig = None
 
@@ -169,6 +170,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         name = spead_host + ':' + str(spead_port)
         # stop transmitter thread, remove destination from dict
         self.destinations[name].stop()
+        self.destinations[name].join()
         del self.destinations[name]
 
     def transmit(self, heap):
@@ -217,12 +219,12 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         self.start_listening()
         self.set_initial_spead_packet()
         self.streaming = True
-        smsg = "SPEAD stream started"
-        logger.info(smsg)
         # Start periodic transmission thread (automatically terminates when
         # stream is stopped)
-        t = threading.Thread(target=self.periodic_transmit)
-        t.start()
+        self.tx_thread = threading.Thread(target=self.periodic_transmit)
+        self.tx_thread.start()
+        smsg = "SPEAD stream started"
+        logger.info(smsg)
         return ("ok", smsg)
 
     @request(Str(), Int())
@@ -252,6 +254,8 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         """Stop the SPEAD stream of KATCP sensor data."""
         self.streaming = False
         self.stop_listening()
+        if self.tx_thread:
+            self.tx_thread.join()
         smsg = "SPEAD stream stopped"
         logger.info(smsg)
         return ("ok", smsg)
