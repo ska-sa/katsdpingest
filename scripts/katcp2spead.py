@@ -32,11 +32,6 @@ parser.add_option('-c', '--sysconfig', default='/var/kat/katconfig',
 parser.add_option('--sensor-list', default=default_sensors,
                   help='Name of text file containing list of sensors to serve '
                        '(default=%default)')
-parser.add_option('--spead-host',
-                  help='Address of host where SPEAD sensor data is sent')
-parser.add_option('--spead-port', type=int, default=7148,
-                  help='Port on spead-host where SPEAD sensor data is sent '
-                       '(default=%default)')
 parser.add_option('--ctl-host', default='',
                   help='Address of host that will receive KATCP commands '
                        '(default all hosts)')
