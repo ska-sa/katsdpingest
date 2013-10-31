@@ -52,7 +52,7 @@ class SensorBridge(object):
         # of the server is shared among them (blame ig.get_heap()...)
         if self.server.streaming:
             with self.server._spead_lock:
-                self.server.ig['sensor_' + self.name] = update
+                self.server.ig[self.name] = update
                 # Transmit event-based updates immediately, while other updates
                 # are periodically resampled in a separate thread
                 if self.strategy == 'event':
@@ -184,7 +184,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial packet: %s" %
                          (name, bridge.spead_id, bridge.last_update))
-            self.ig.add_item(name='sensor_' + name, id=bridge.spead_id,
+            self.ig.add_item(name=name, id=bridge.spead_id,
                              description=bridge.katcp_sensor.description,
                              shape=-1, fmt=spead.mkfmt(('s', 8)),
                              init_val=bridge.last_update)
