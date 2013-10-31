@@ -1,6 +1,6 @@
 import numpy as np
 import time
-
+import h5py
 
 ### Model definitions
 
@@ -35,23 +35,31 @@ class Sensor(object):
 class TelescopeComponent(object):
     def __init__(self,name,proxy_path=None):
         self.name = name
-        self.h5_path = ""
-        self.proxy_path = proxy_path if proxy_path is not None else name
+        self._h5_path = ""
+        self._proxy_path = proxy_path if proxy_path is not None else name
         self._critical_sensors = []
         self._std_sensors = []
+        self._critical_attributes = {}
+        self._std_attributes = []
         self.sensors = {}
+        self.attributes = {}
         self._build()
 
     def _build(self):
         for s in self._critical_sensors + self._std_sensors:
-            self.sensors["{0}_{1}".format(self.proxy_path,s)] = Sensor(s,critical=s in self._critical_sensors)
+            self.sensors["{0}_{1}".format(self._proxy_path,s)] = Sensor(s,critical=s in self._critical_sensors)
 
-    def is_valid(self,timespec=None):
+    def is_valid(self, timespec=None, check_sensors=True, check_attributes=True):
         retval = True
-        for s in self.sensors.itervalues():
-            if not s.is_valid(timespec=timespec):
-                print "Sensor {0} is invalid ({1})\n".format("{0}/{1}".format(self.proxy_path,s.name),"no sensor value in timespec" if timespec is not None else "no values")
-                retval = False
+        if check_sensors:
+            [l for (l,k) in u.iteritems() if l in q]
+            for s in [s for (k,v) in self.sensors.iteritems() if k in self._critical_sensors]:
+                if not s.is_valid(timespec=timespec):
+                    print "Sensor {0} is invalid ({1})".format("{0}/{1}".format(self._proxy_path,s.name),"no sensor value in timespec" if timespec is not None else "no values")
+                    retval = False
+        if check_attributes:
+            for a in self._critical_attributes:
+                retval = retval and self.attributes.has_key(a)
         return retval
 
 class TelescopeModel(object):
@@ -76,8 +84,12 @@ class TelescopeModel(object):
         self.index = dict(tmp_index)
 
     def write_h5(self,f,base_path="/MetaData/Sensors"):
+        h5py._errors.silence_errors()
+         # needed to supress h5py error printing in child threads. 
+         # exception handling and logging are used to print
+         # more informative messages.
         for c in self.components.values():
-            comp_base = "{0}/{1}/{2}/".format(base_path,c.h5_path,c.name)
+            comp_base = "{0}/{1}/{2}/".format(base_path,c._h5_path,c.name)
             try:
                 c_group = f.create_group(comp_base)
             except ValueError:
@@ -101,7 +113,23 @@ class TelescopeModel(object):
                 (value_ts, status, value) = value_string.split(" ",2)
                 sensor.add_value(value_ts, status, value)
 
-    def update_from_ig(self, ig, debug=False):
+    def update_attributes_from_ig(self, ig, component_name, debug=False):
+        """Traverses an item group looking for possible attributes.
+        These are inserted into the named component if appropriate."""
+        try:
+            comp = self.components[component_name]
+        except KeyError:
+            print "Invalid component name specified"
+            return False
+        for item_name in ig.keys():
+            item = ig.get_item(item_name)
+            if not item._changed: continue
+            if item_name in (comp._critical_attributes + comp._std_attributes):
+                value = item.get_value()
+                comp.attributes[item_name] = value
+                if debug: print "Update attribute {0} on {1} to {2}".format(item_name, comp.name, value)
+
+    def update_sensors_from_ig(self, ig, debug=False):
         """Expects a SPEAD itemgroup containing sensor information."""
         for item_name in ig.keys():
             # ig has no iteritems or equivalent
@@ -120,7 +148,7 @@ class TelescopeModel(object):
 class AntennaPositioner(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(AntennaPositioner, self).__init__(*args, **kwargs)
-        self.h5_path = "Antennas"
+        self._h5_path = "Antennas"
         self._critical_sensors = ['activity','target','pos_actual_scan_elev','pos_request_scan_elev','pos_actual_scan_azim','pos_request_scan_azim']
         self._build()
 
@@ -129,19 +157,21 @@ class CorrelatorBeamformer(TelescopeComponent):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
         self._critical_sensors = ['mode','target','center_frequency_hz']
         self._std_sensors = ['auto_delay']
+        self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time']
+        self._std_attributes = ['int_time','center_freq']
         self._build()
 
 class Enviro(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Enviro, self).__init__(*args, **kwargs)
-        self.h5_path = "Enviro"
+        self._h5_path = "Enviro"
         self._std_sensors = ['air_pressure','air_relative_humidity','temperature','wind_speed','wind_direction']
         self._build()
 
 class Digitiser(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Digitiser, self).__init__(*args, **kwargs)
-        self.h5_path = "Digitiser"
+        self._h5_path = "Digitiser"
         self._std_sensors = ['overflow']
         self._build()
 

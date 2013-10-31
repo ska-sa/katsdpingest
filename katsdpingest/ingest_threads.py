@@ -12,11 +12,9 @@ import spead
 import time
 import katcapture.sigproc as sp
 
-mapping = {'xeng_raw':'/Data/correlator_data',
-           'timestamp':'/Data/raw_timestamps'}
- # maps SPEAD element names to HDF5 paths
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Markup/flags'
+cbf_data_dataset = '/Data/correlator_data'
 correlator_map = '/MetaData/Configuration/Correlator/'
 observation_map = '/MetaData/Configuration/Observation/'
  # default path for things that are not mentioned above
@@ -45,7 +43,7 @@ class TMIngest(threading.Thread):
 
         for heap in spead.iterheaps(rx_md):
             self.ig.update(heap)
-            self.model.update_from_ig(self.ig, debug=True)
+            self.model.update_sensors_from_ig(self.ig, debug=True)
 
         self.logger.info("Meta-data reception complete at %f" % time.time())
 
@@ -54,14 +52,17 @@ class TMIngest(threading.Thread):
         valid = self.model.is_valid(timespec=5)
          # check to see if we are valid up until the last 5 seconds
         if not valid: self.logger.warning("Model is not valid. Writing to disk anyway.")
-        else: self.model.write_h5(self.h5_file)
+        self.model.write_h5(self.h5_file)
          # write the model
 
 class CBFIngest(threading.Thread):
-    def __init__(self, data_port, h5_file, my_sensors, logger):
+    def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
+        ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.data_port = data_port
         self.h5_file = h5_file
+        self.model = model
+        self.cbf_name = cbf_name
         self.data_scale_factor = 1.0
         self.acc_scale = True
         self._label_idx = 0
@@ -131,20 +132,19 @@ class CBFIngest(threading.Thread):
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.meta['n_chans'])
         return copy.deepcopy(self.ig_sd.get_heap())
 
-    def set_baseline_mask(self):
+    def set_baseline_mask(self, bls_ordering):
         """Uses the _script_ants variable to set a baseline mask.
         This only works if script_ants has been set by an external process between capture_done and capture_start."""
-        if self._script_ants is not None and self.meta.has_key('bls_ordering'):
+        new_bls = bls_ordering
+        if self._script_ants is not None:
             logger.info("Using script-ants (%s) as a custom baseline mask..." % self._script_ants)
             ants = self._script_ants.replace(" ","").split(",")
             if len(ants) > 0:
-                b = self.meta['bls_ordering'].tolist()
+                b = bls_ordering.tolist()
                 self.baseline_mask = [b.index(pair) for pair in b if pair[0][:-1] in ants and pair[1][:-1] in ants]
-                self.meta['bls_ordering'] = np.array([b[idx] for idx in self.baseline_mask])
+                new_bls = np.array([b[idx] for idx in self.baseline_mask])
                  # we need to recalculate the bls ordering as well...
-        if self.baseline_mask is None or len(self.baseline_mask) == 0:
-            self.baseline_mask = range(self.meta['n_bls'])
-             # by default we send all baselines...
+        return new_bls
 
     def send_sd_metadata(self):
         self._sd_metadata = self._update_sd_metadata()
@@ -225,17 +225,14 @@ class CBFIngest(threading.Thread):
         self.logger.info("Data reception on port %i" % self.data_port)
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
         ig = spead.ItemGroup()
-
         idx = 0
-        f = None
+        cbf_component = self.model.components[self.cbf_name]
+        cbf_attr = cbf_component.attributes
+         # reference to CBF attributes held by the model
         self.status_sensor.set_value("idle")
         dump_size = 0
         datasets = {}
         datasets_index = {}
-        meta_required = set(['n_chans','n_accs','n_bls','bls_ordering','bandwidth'])
-         # we need these bits of meta data before being able to assemble and transmit signal display data
-        meta_desired = ['int_time','center_freq']
-         # if we find these, then what hey :)
         current_dbe_target = ''
         dbe_target_since = 0.0
         current_ant_activities = {}
@@ -243,11 +240,129 @@ class CBFIngest(threading.Thread):
          # track the current DBE target and antenna activities via sensor updates
         sd_slots = None
         sd_timestamp = None
+
         for heap in spead.iterheaps(rx):
             if idx == 0:
-                f = self.h5_file
                 self.status_sensor.set_value("capturing")
+
+            #### Update the telescope model
+
             ig.update(heap)
+            self.model.update_attributes_from_ig(ig, self.cbf_name, debug=True)
+             # any interesting attributes will now end up in the model
+             # this means we are only really interested in actual data now
+            if not ig._names.has_key('xeng_raw'): self.logger.info("No xeng_raw"); continue
+            if not ig._names.has_key('timestamp'): self.logger.info("No timestamp"); continue
+            data_ts = ig['timestamp']
+            data_item = ig.get_item('xeng_raw')
+            if not data_item._changed: self.logger.info("Xeng_raw is unchanged"); continue
+             # we have new data...
+
+             # check to see if our CBF model is valid
+             # i.e. make sure any attributes marked as critical are present
+            if not cbf_component.is_valid(check_sensors=False):
+                self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
+                continue
+
+            ##### Configure datasets and other items now that we have complete metedata
+
+            self.baseline_mask = range(cbf_attrs['n_bls'])
+             # default mask is to include all known baseline
+
+            if self._script_ants is not None:
+             # we need to calculate a baseline_mask to match the specified script_ants
+                cbf_attr['bls_ordering'] = self.set_baseline_mask(cbf_attr['bls_ordering'])
+
+            if idx == 0:
+                 # we need to create the raw and timestamp datasets.
+                new_shape = data_item.shape
+                new_shape[-2] = len(self.baseline_mask)
+                self.logger.debug("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
+                self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
+                self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
+
+                 # configure the signal processing blocks
+                self.scale.scale_factor = np.float32(cbf_attr['n_accs'])
+                self.write_process_log(*self.scale.description())
+
+                self.van_vleck = sp.VanVleck(np.float32(cbf_attr['n_accs']), bls_ordering=cbf_attr['bls_ordering'])
+                self.write_process_log(*self.van_vleck.description())
+            else:
+                 # resize datasets
+                self.h5_file[cbf_data_dataset].resize(datasets_index[name]+1, axis=0)
+                self.h5_file[flags_dataset].resize(datasets_index[name]+1, axis=0)
+
+            if self.sd_frame is None:
+                self.sd_frame = np.zeros((cbf_attr['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
+                 # initialise the signal display data frame
+
+            if self.sd_frame is not None:
+                sd_timestamp = ig['sync_time'] + (data_ts / ig['scale_factor_timestamp'])
+                if sd_slots is None:
+                    self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
+                             # make sure we have the right dtype for the sd data
+                    sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
+                    self.send_sd_metadata()
+                    self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
+
+            ##### Perform data processing
+
+            sp.ProcBlock.current = ig[name][...,self.baseline_mask,:]
+             # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
+            self.scale.proc()
+             # scale the data
+            if self.van_vleck is not None:
+                power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
+                try:
+                    self.van_vleck.proc()
+                      # in place van vleck correction of the data
+                except sp.VanVleckOutOfRangeError:
+                    self.logger.warning("Out of range error whilst applying Van Vleck data correction")
+                power_after = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
+                print "Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before)
+            sp.ProcBlock.current = sp.ProcBlock.current.copy()
+             # *** Dont delete this line ***
+             # since array uses advanced selection (baseline_mask not contiguous) we may
+             # have a changed the striding underneath wich can prevent the array being viewed
+             # as complex64. A copy resets the stride to its natural form and fixes this.
+            sp.ProcBlock.current = sp.ProcBlock.current.view(np.complex64)[...,0]
+             # temporary reshape to complex, eventually this will be done by Scale
+             # (Once the final data format uses C64 instead of float32)
+            self.rfi.init_flags()
+             # begin flagging operations
+            self.rfi.proc()
+             # perform rfi thresholding
+            flags = self.rfi.finalise_flags()
+             # finalise flagging operations and return flag data to write
+            self.h5_file[flags_dataset][datasets_index[name]] = flags
+             # write flags to file
+            self.h5_file[cbf_data_dataset][idx] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
+                     # write data to file (with temporary remap as mentioned above...)
+
+            #### Send signal display information
+            self.logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), \
+                        "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
+            self.ig_sd['sd_data'] = f[cbf_data_dataset][idx]
+             # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
+            self.ig_sd['sd_flags'] = flags
+             # send out RFI flags with the data
+            self.send_sd_data(self.ig_sd.get_heap())
+
+            #### Done with writing this frame
+            idx += 1
+            self.h5_file.flush()
+            self.pkt_sensor.set_value(idx)
+
+        #### Stop received.
+
+        self.logger.info("Capture complete at %f" % time.time())
+        self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
+        self.status_sensor.set_value("complete")
+
+### this is redundant
+
+class OldIngest(object):
+    def __init__(self):
             for name in ig.keys():
                 item = ig.get_item(name)
                 if not item._changed and datasets.has_key(name): continue
@@ -427,11 +542,11 @@ class CBFIngest(threading.Thread):
             f.flush()
             self.pkt_sensor.set_value(idx)
 
-        if self.baseline_mask is not None:
-            del self.h5_file[self.remap('bls_ordering')]
-            del datasets_index['bls_ordering']
-            self.h5_file[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
+            if self.baseline_mask is not None:
+                del self.h5_file[self.remap('bls_ordering')]
+                del datasets_index['bls_ordering']
+                self.h5_file[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
              # we have generated a new baseline mask, so fix bls_ordering attribute...
-        self.logger.info("Capture complete at %f" % time.time())
-        self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
-        self.status_sensor.set_value("complete")
+            self.logger.info("Capture complete at %f" % time.time())
+            self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
+            self.status_sensor.set_value("complete")

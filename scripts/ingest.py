@@ -177,7 +177,7 @@ class IngestDeviceServer(DeviceServer):
         model.add_components([m063,m062,cbf,env])
         model.build_index()
 
-        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, logger)
+        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, model, cbf.name, logger)
         self.cbf_thread.setDaemon(True)
         self.cbf_thread.start()
 
