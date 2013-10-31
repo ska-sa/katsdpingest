@@ -77,7 +77,7 @@ parser.add_option('--ingest-host', default='localhost',
 parser.add_option('--ingest-kcp-port', type=int, default=2040,
                   help='Port of ingest KATCP interface (default=%default)')
 parser.add_option('--ingest-spead-port', type=int, default=7147,
-                  help='Port of ingest SPEAD metadata interface (default=%default)')
+                  help='Port of ingest CAM SPEAD interface (default=%default)')
 parser.add_option('--katcp2spead-host', default='localhost',
                   help='Host address of katcp2spead server (default=%default)')
 parser.add_option('--katcp2spead-port', type=int, default=2045,
