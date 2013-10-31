@@ -171,8 +171,8 @@ class IngestDeviceServer(DeviceServer):
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
         m062 = AntennaPositioner(name='m062')
-        cbf = CorrelatorBeamformer(name='DBE')
-        env = Enviro(name='asc')
+        cbf = CorrelatorBeamformer(name='cbf')
+        env = Enviro(name='anc_asc')
         model = TelescopeModel()
         model.add_components([m063,m062,cbf,env])
         model.build_index()

@@ -10,6 +10,7 @@ import numpy as np
 import threading
 import spead
 import time
+import copy
 import katcapture.sigproc as sp
 
 timestamps_dataset = '/Data/timestamps'
@@ -43,7 +44,7 @@ class TMIngest(threading.Thread):
 
         for heap in spead.iterheaps(rx_md):
             self.ig.update(heap)
-            self.model.update_sensors_from_ig(self.ig, debug=True)
+            self.model.update_from_ig(self.ig, debug=True)
 
         self.logger.info("Meta-data reception complete at %f" % time.time())
 
@@ -193,6 +194,7 @@ class CBFIngest(threading.Thread):
                 else:
                     self.logger.warning("H5 file contains no data and hence no timestamps")
                     # exception if there is no data (and hence no timestamps) in the file.
+        else: self.logger.warning("Write timestamps called, but h5 file already closed. No timestamps will be written.")
 
     def write_label(self, label):
         """Write a sensor value directly into the current hdf5 at the specified locations.
@@ -248,7 +250,7 @@ class CBFIngest(threading.Thread):
             #### Update the telescope model
 
             ig.update(heap)
-            self.model.update_attributes_from_ig(ig, self.cbf_name, debug=True)
+            self.model.update_from_ig(ig, proxy_path=self.cbf_name, debug=True)
              # any interesting attributes will now end up in the model
              # this means we are only really interested in actual data now
             if not ig._names.has_key('xeng_raw'): self.logger.info("No xeng_raw"); continue
@@ -266,52 +268,54 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metedata
 
-            self.baseline_mask = range(cbf_attrs['n_bls'])
+            self.baseline_mask = range(cbf_attr['n_bls'].value)
              # default mask is to include all known baseline
 
             if self._script_ants is not None:
              # we need to calculate a baseline_mask to match the specified script_ants
-                cbf_attr['bls_ordering'] = self.set_baseline_mask(cbf_attr['bls_ordering'])
+                cbf_attr['bls_ordering'].value = self.set_baseline_mask(cbf_attr['bls_ordering'].value)
 
             if idx == 0:
                  # we need to create the raw and timestamp datasets.
-                new_shape = data_item.shape
+                new_shape = list(data_item.shape)
                 new_shape[-2] = len(self.baseline_mask)
                 self.logger.debug("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
                 self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
                 self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
                  # configure the signal processing blocks
-                self.scale.scale_factor = np.float32(cbf_attr['n_accs'])
+                self.scale.scale_factor = np.float32(cbf_attr['n_accs'].value)
                 self.write_process_log(*self.scale.description())
 
-                self.van_vleck = sp.VanVleck(np.float32(cbf_attr['n_accs']), bls_ordering=cbf_attr['bls_ordering'])
+                self.van_vleck = sp.VanVleck(np.float32(cbf_attr['n_accs'].value), bls_ordering=cbf_attr['bls_ordering'].value)
                 self.write_process_log(*self.van_vleck.description())
             else:
                  # resize datasets
-                self.h5_file[cbf_data_dataset].resize(datasets_index[name]+1, axis=0)
-                self.h5_file[flags_dataset].resize(datasets_index[name]+1, axis=0)
+                self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
+                self.h5_file[flags_dataset].resize(idx+1, axis=0)
 
             if self.sd_frame is None:
-                self.sd_frame = np.zeros((cbf_attr['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
+                self.sd_frame = np.zeros((cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
                  # initialise the signal display data frame
 
-            if self.sd_frame is not None:
-                sd_timestamp = ig['sync_time'] + (data_ts / ig['scale_factor_timestamp'])
-                if sd_slots is None:
-                    self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
-                             # make sure we have the right dtype for the sd data
-                    sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
-                    self.send_sd_metadata()
-                    self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
+            if sd_slots is None:
+                self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
+                         # make sure we have the right dtype for the sd data
+                sd_slots = np.zeros(cbf_attr['n_chans'].value/data_item.shape[0])
+                self.send_sd_metadata()
+
+            ##### Store timestamp
+            current_ts = cbf_attr['sync_time'].value + (data_ts / cbf_attr['scale_factor_timestamp'].value)
+            self._my_sensors["last-dump-timestamp"].set_value(current_ts)
+            self.timestamps.append(current_ts)
 
             ##### Perform data processing
 
-            sp.ProcBlock.current = ig[name][...,self.baseline_mask,:]
+            sp.ProcBlock.current = data_item.get_value()[...,self.baseline_mask,:]
              # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
             self.scale.proc()
              # scale the data
-            if self.van_vleck is not None:
+            if False: #self.van_vleck is not None:
                 power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
                 try:
                     self.van_vleck.proc()
@@ -334,16 +338,18 @@ class CBFIngest(threading.Thread):
              # perform rfi thresholding
             flags = self.rfi.finalise_flags()
              # finalise flagging operations and return flag data to write
-            self.h5_file[flags_dataset][datasets_index[name]] = flags
+            self.h5_file[flags_dataset][idx] = flags
              # write flags to file
             self.h5_file[cbf_data_dataset][idx] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
                      # write data to file (with temporary remap as mentioned above...)
 
             #### Send signal display information
-            self.logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), \
+            self.logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (current_ts, time.time(), \
                         "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
-            self.ig_sd['sd_data'] = f[cbf_data_dataset][idx]
+            self.ig_sd['sd_timestamp'] = int(current_ts * 100)
+            self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
+             # check that this is from cache, not re-read from disk
             self.ig_sd['sd_flags'] = flags
              # send out RFI flags with the data
             self.send_sd_data(self.ig_sd.get_heap())
