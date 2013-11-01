@@ -7,7 +7,7 @@ import spead
 ### Model definitions
 
 debug = True
-hdf5_version = "3.0"
+hdf5_version = 3.0
  # the version number is intrinsically linked to the telescope model, as this
  # is the arbiter of file structure and format
 
@@ -128,9 +128,9 @@ class TelescopeComponent(object):
         return retval
 
 class TelescopeModel(object):
-    def __init__(self, minor_version=2):
+    def __init__(self):
         self.components = {}
-        self.minor_version = minor_version
+        self.model_version = hdf5_version
         self.index = {}
 
     def add_components(self, components):
@@ -152,6 +152,34 @@ class TelescopeModel(object):
                 self.index["{0}_{1}".format(c.proxy_path,k)] = v
             for k,v in c.attributes.iteritems():
                 self.index["{0}_{1}".format(c.proxy_path,k)] = v
+
+    def init_from_h5(self, filename):
+        """Initialise the telescope model from the contents
+        of an HDF5 format.
+        File needs to have a version that matches the current model.
+
+        Currently has very little error checking....
+        """
+        f = h5py.File(filename, mode="r")
+        version = str(f['/'].attrs['version'])
+        if version != str(hdf5_version):
+            print "Attempt to load version {0} into a version {1} model.".format(version, hdf5_version)
+            return
+        cls_count = sensor_count = attr_count = 0
+        for h5_component in f['/TelescopeModel'].itervalues():
+            cls = globals()[h5_component.attrs['class']]
+            c = cls(name=h5_component.name)
+            self.add_components([c])
+            cls_count += 1
+            for k,v in h5_component.attrs.iteritems():
+                c.set_attribute(k,v)
+                attr_count += 1
+            for h5_dataset in h5_component.itervalues():
+                for row in h5_dataset.value:
+                    c.sensors[h5_dataset.name].set_value("{0} {1} {2}".format(row[0],row[1],row[2]))
+                    sensor_count += 1
+        self.build_index()
+        print "Completed initialisation. Added {0} components with {1} attributes and {2} sensor rows".format(cls_count, attr_count, sensor_count)
 
     def create_h5_file(self, filename):
         """Initialises an HDF5 output file as appropriate
@@ -176,13 +204,12 @@ class TelescopeModel(object):
          # needed to supress h5py error printing in child threads. 
          # exception handling and logging are used to print
          # more informative messages.
-        current_version = f['/'].attrs.get('version', "2.0").split(".",1)
-        f['/'].attrs['version'] = "{0}.{1}".format(current_version[0],self.minor_version)
 
         for c in self.components.values():
             comp_base = "{0}/{1}/{2}/".format(base_path,c._h5_path,c.name)
             try:
                 c_group = f.create_group(comp_base)
+                c_group.attrs['class'] = str(c.__class__.__name__)
             except ValueError:
                 c_group = f[comp_base]
                 print "Failed to create group {0} (likely to already exist)".format(comp_base)
@@ -219,23 +246,6 @@ class TelescopeModel(object):
                 sensor = self.index[sensor_name]
                 (value_ts, status, value) = value_string.split(" ",2)
                 sensor.add_value(value_ts, status, value)
-
-    def update_attributes_from_ig(self, ig, component_name, debug=False):
-        """Traverses an item group looking for possible attributes.
-        These are inserted into the named component if appropriate."""
-        try:
-            comp = self.components[component_name]
-        except KeyError:
-            print "Invalid component name specified"
-            return False
-        for item_name in ig.keys():
-            item = ig.get_item(item_name)
-            if not item._changed: continue
-            if item_name in (comp._critical_attributes + comp._std_attributes):
-                value = item.get_value()
-                comp.attributes[item_name] = value
-                item._changed = False
-                if debug: print "Update attribute {0} on {1} to {2}".format(item_name, comp.name, value)
 
     def _add_spead_item(self, ig, item):
         if item.id is None:
