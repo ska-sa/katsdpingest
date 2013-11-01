@@ -48,14 +48,6 @@ class TMIngest(threading.Thread):
 
         self.logger.info("Meta-data reception complete at %f" % time.time())
 
-    def write_model(self):
-        """Write the current model into the HDF5 file."""
-        valid = self.model.is_valid(timespec=5)
-         # check to see if we are valid up until the last 5 seconds
-        if not valid: self.logger.warning("Model is not valid. Writing to disk anyway.")
-        self.model.write_h5(self.h5_file)
-         # write the model
-
 class CBFIngest(threading.Thread):
     def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
@@ -77,9 +69,7 @@ class CBFIngest(threading.Thread):
         self.sdisp_ips = {}
         self._sd_count = 0
         self.center_freq = 0
-        self.meta = {}
         self.ig_sd = spead.ItemGroup()
-        self.cpref = None
         self.timestamps = []
          # temporary timestamp store
         self.int_time = 1.0
@@ -156,9 +146,6 @@ class CBFIngest(threading.Thread):
 
     def remap(self, name):
         return name in mapping and mapping[name] or correlator_map + name
-
-    def write_obs_param(self, key_string, value_string):
-        self.h5_file['/MetaData/Configuration/Observation'].attrs[key_string.replace("-","_")] = value_string
 
     def write_log(self, log):
         """Write a log value directly into the current hdf5 file."""
@@ -304,7 +291,7 @@ class CBFIngest(threading.Thread):
                 sd_slots = np.zeros(cbf_attr['n_chans'].value/data_item.shape[0])
                 self.send_sd_metadata()
 
-            ##### Store timestamp
+            ##### Generate timestamps
             current_ts = cbf_attr['sync_time'].value + (data_ts / cbf_attr['scale_factor_timestamp'].value)
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
             self.timestamps.append(current_ts)
@@ -365,194 +352,3 @@ class CBFIngest(threading.Thread):
         self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
 
-### this is redundant
-
-class OldIngest(object):
-    def __init__(self):
-            for name in ig.keys():
-                item = ig.get_item(name)
-                if not item._changed and datasets.has_key(name): continue
-                 # the item is not marked as changed, and we have a record for it
-                if name in meta_desired:
-                    self.logger.info("Meta data received (desired) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
-                    self.meta[name] = ig[name]
-                    if name == 'center_freq':
-                        #self.center_freq = self.meta[name]
-                        self._my_sensors["spead-center-freq"].set_value(self.meta[name])
-                    if name == 'int_time' and self.int_time == 1:
-                        self.int_time = self.meta[name]
-                        self._my_sensors["spead-dump-period"].set_value(self.meta[name])
-                if name in meta_required:
-                    self.logger.info("Meta data received (required) %s: %s => %s" % (time.ctime(), name, str(ig[name])))
-                    self.meta[name] = ig[name]
-                    meta_required.remove(name)
-                    if name == 'n_accs':
-                        self.data_scale_factor = np.float32(ig[name])
-                        self.scale.scale_factor = self.data_scale_factor
-                        self.write_process_log(*self.scale.description())
-                        self._my_sensors["spead-accum-per-dump"].set_value(self.meta[name])
-                        self.logger.debug("Scale factor set to: %f\n" % self.data_scale_factor)
-                    if name == 'n_chans':
-                        self._my_sensors["spead-num-chans"].set_value(self.meta[name])
-                    if name == 'n_bls':
-                        self._my_sensors["spead-num-bls"].set_value(self.meta[name])
-                    if not meta_required:
-                        self.set_baseline_mask()
-                         # we first set the baseline mask in order to have the correct number of baselines
-                        if self.data_scale_factor >= 1:
-                            self.van_vleck = sp.VanVleck(self.data_scale_factor, bls_ordering=self.meta['bls_ordering'])
-                            self.write_process_log(*self.van_vleck.description())
-                            self.logger.info("Initialised Van Vleck correction using scale factor %i\n" % self.data_scale_factor)
-                        else:
-                            self.logger.error("Refused to initialize Van Vleck correction with scale factor of 0. Van Vleck will *NOT* be applied for this capture session.")
-                            self.data_scale_factor=1
-                             # at least ensure that valid (but unscaled) data can be written...
-                        self.cpref = CorrProdRef(bls_ordering=self.meta['bls_ordering'])
-                        self.ant_gains = sp.AntennaGains(bls_ordering=self.meta['bls_ordering'])
-                         # since we now know the baseline ordering we can create the Van Vleck correction and antenna gain blocks
-                        self.sd_frame = np.zeros((self.meta['n_chans'],len(self.baseline_mask),2),dtype=np.float32)
-                        self.logger.debug("Initialised sd frame to shape %s" % str(self.sd_frame.shape))
-                        meta_required = set(['n_chans','n_bls','bls_ordering','bandwidth'])
-                        sd_slots = None
-                if name.startswith('sensor_'):
-                    if not item._changed: continue
-                    self.logger.info("Sensor data received %s: %s => %s" % (time.ctime(), name, str(ig[name])))
-                    sensor_name = name.partition('_')[2]
-                    update = item.get_value()[0]
-                    part1, sep, tail = update.partition(' ')
-                    part2, sep, part3 = tail.partition(' ')
-                    update_timestamp, update_status, update_value = float(part1), part2, eval(part3, {})
-                     # unpack sensor name and split update into timestamp + status + value
-                    if sensor_name == 'dbe7_target':
-                        current_dbe_target = update_value
-                        dbe_target_since = update_timestamp
-                    elif sensor_name.endswith('activity'):
-                        ant_name = sensor_name.partition('_')[0]
-                        current_ant_activities[ant_name] = update_value
-                        ant_activities_since[ant_name] = update_timestamp
-                    self.logger.debug("Updated sensor %s: DBE target '%s' since %r, %s" %
-                                 (sensor_name, current_dbe_target, dbe_target_since,
-                                  ', '.join([("antenna '%s' did '%s' since %r" % (ant, current_ant_activities[ant], ant_activities_since[ant]))
-                                             for ant in current_ant_activities])))
-                    item._changed = False
-                    continue
-                if not name in datasets:
-                 # check to see if we have encountered this type before
-                    if name == 'xeng_raw' and self._script_ants is not None and self.baseline_mask is None:
-                      # we are supposed to set a baseline mask, but this has not been done yet as the desired meta_data
-                      # has not yet arrived (bls_ordering). Defer creation of xeng_raw dataset until this is available.
-                        continue
-                    shape = ig[name].shape if item.shape == -1 else item.shape
-                    dtype = np.dtype(type(ig[name])) if shape == [] else item.dtype
-                    if dtype is None:
-                        dtype = ig[name].dtype
-                     # if we can't get a dtype from the descriptor try and get one from the value
-                    new_shape = list(shape)
-                    if name == 'xeng_raw':
-                        if self.baseline_mask is not None:
-                            new_shape[-2] = len(self.baseline_mask)
-                        dtype = np.dtype(np.float32)
-                    self.logger.debug("Creating dataset for name: %s, shape: %s, dtype: %s" % (name, str(new_shape), dtype))
-                    if new_shape == [1]:
-                        new_shape = []
-                    f.create_dataset(self.remap(name),[1] + new_shape, maxshape=[None] + new_shape, dtype=dtype)
-                    dump_size += np.multiply.reduce(shape) * dtype.itemsize
-                    datasets[name] = self.h5_file[self.remap(name)]
-                    datasets_index[name] = 0
-                    if name == 'timestamp':
-                        item._changed = False
-                    if name == 'xeng_raw':
-                        f.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
-                    if not item._changed:
-                        continue
-                     # if we built from an empty descriptor
-                else:
-                    if not item._changed:
-                        continue
-                    self.h5_file[self.remap(name)].resize(datasets_index[name]+1, axis=0)
-                    if name == 'xeng_raw':
-                        self.h5_file[flags_dataset].resize(datasets_index[name]+1, axis=0)
-                if name.startswith("xeng_raw"):
-                     # prepare signal display data handling if required
-                    if self.sd_frame is not None:
-                        sd_timestamp = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
-                        if sd_slots is None:
-                            self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
-                             # make sure we have the right dtype for the sd data
-                            sd_slots = np.zeros(self.meta['n_chans']/ig[name].shape[0])
-                            self.send_sd_metadata()
-                        self.ig_sd['sd_timestamp'] = int(sd_timestamp * 100)
-
-                    sp.ProcBlock.current = ig[name][...,self.baseline_mask,:]
-                     # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
-                    self.scale.proc()
-                     # scale the data
-                    if self.van_vleck is not None:
-                        power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                        try:
-                            self.van_vleck.proc()
-                             # in place van vleck correction of the data
-                        except sp.VanVleckOutOfRangeError:
-                            self.logger.warning("Out of range error whilst applying Van Vleck data correction")
-                        power_after = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                        print "Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before)
-                    sp.ProcBlock.current = sp.ProcBlock.current.copy()
-                     # *** Dont delete this line ***
-                     # since array uses advanced selection (baseline_mask not contiguous) we may
-                     # have a changed the striding underneath wich can prevent the array being viewed
-                     # as complex64. A copy resets the stride to its natural form and fixes this.
-                    sp.ProcBlock.current = sp.ProcBlock.current.view(np.complex64)[...,0]
-                     # temporary reshape to complex, eventually this will be done by Scale
-                     # (Once the final data format uses C64 instead of float32)
-                    self.rfi.init_flags()
-                     # begin flagging operations
-                    self.rfi.proc()
-                     # perform rfi thresholding
-                    flags = self.rfi.finalise_flags()
-                     # finalise flagging operations and return flag data to write
-                    self.h5_file[flags_dataset][datasets_index[name]] = flags
-                     # write flags to file
-                    if self.ant_gains is not None:
-                        self.ant_gains.proc(current_dbe_target, dbe_target_since, current_ant_activities, ant_activities_since,
-                                            self._script_ants.replace(" ","").split(",") if self._script_ants is not None else None,
-                                            self.center_freq, self.meta['bandwidth'], self._my_sensors)
-                    self.h5_file[self.remap(name)][datasets_index[name]] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
-                     # write data to file (with temporary remap as mentioned above...)
-                    if self.sd_frame is not None:
-                        self.logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (sd_timestamp, time.time(), \
-                                    "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
-                        self.ig_sd['sd_data'] = self.h5_file[self.remap(name)][datasets_index[name]]
-                         # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
-                        self.ig_sd['sd_flags'] = flags
-                         # send out RFI flags with the data
-                        self.send_sd_data(self.ig_sd.get_heap())
-                else:
-                    self.h5_file[self.remap(name)][datasets_index[name]] = ig[name]
-                if name == 'timestamp':
-                    try:
-                        current_ts = ig['sync_time'] + (ig['timestamp'] / ig['scale_factor_timestamp'])
-                        self._my_sensors["last-dump-timestamp"].set_value(current_ts)
-                        self.timestamps.append(current_ts)
-                         # temporarily store derived timestamps
-                    except KeyError:
-                        self.h5_file[timestamps_dataset][datasets_index[name]] = -1.0
-                datasets_index[name] += 1
-                item._changed = False
-                  # we have dealt with this item so continue...
-            if idx==0 and self.ctl is not None:
-                # add script metadata after receiving first frame. This should ensure that the values pulled are fresh.
-                for s in script_sensors:
-                    self.h5_file[observation_map].attrs[s] = getattr(kat.sys.sensor, s).get_value()
-                self.logger.info("Added initial observation sensor values...\n")
-            idx+=1
-            f.flush()
-            self.pkt_sensor.set_value(idx)
-
-            if self.baseline_mask is not None:
-                del self.h5_file[self.remap('bls_ordering')]
-                del datasets_index['bls_ordering']
-                self.h5_file[correlator_map].attrs['bls_ordering'] = self.meta['bls_ordering']
-             # we have generated a new baseline mask, so fix bls_ordering attribute...
-            self.logger.info("Capture complete at %f" % time.time())
-            self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
-            self.status_sensor.set_value("complete")

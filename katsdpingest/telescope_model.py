@@ -1,22 +1,44 @@
 import numpy as np
 import time
 import h5py
+import os
+import spead
 
 ### Model definitions
 
 debug = True
+hdf5_version = "3.0"
+ # the version number is intrinsically linked to the telescope model, as this
+ # is the arbiter of file structure and format
+
+class SPEADItemUpdate(object):
+    def __init__(self, key, ts, value):
+        self.key = key
+        self.ts = ts
+        self.value = value
 
 class Attribute(object):
-    def __init__(self, name, critical=False):
+    def __init__(self, name, critical=False, init_val=None):
         self.name = name
-        self.value = None
+        self.value = init_val
         self.critical = critical
+        self.update_ts = None
+        self.spead_item = None
+         # when known, this is set to a spead item that describes this attribute
 
     def set_value(self, value):
         if self.value is None:
             self.value = value
             if debug: print "Set attribute {0} to {1}".format(self.name,value)
+            self.update_ts = time.time()
         else: raise ValueError("Attribute has already been set.")
+
+    def get_spead_item(self):
+        """Return a spead item describing this attribute.
+        A generic item is create if an extant one is not available."""
+        if self.spead_item is None:
+            self.spead_item = spead.Item(name=self.name, description='', shape=-1, fmt=spead.mkfmt(('s', 8)))
+        return self.spead_item
 
     def is_valid(self):
         return self.value is not None
@@ -27,9 +49,13 @@ class Sensor(object):
         self.critical = critical
         self.values = {}
         self.statii = {}
+        self.update_tss = {}
         self.value_time = 0
         self.value = None
         self.status = "unknown"
+        self.update_ts = None
+        self.spead_item = None
+         # when known, this is set to a spead item that describes this sensor
 
     def set_value(self, value):
         (value_ts, status, value) = value[0].split(" ",2)
@@ -39,6 +65,8 @@ class Sensor(object):
         self.value_time = value_time
         self.value = value
         self.status = status
+        self.update_ts = time.time()
+        self.update_tss[value_time] = self.update_ts
 
     def is_valid(self,timespec=None):
         if self.critical:
@@ -47,6 +75,13 @@ class Sensor(object):
                 # check to see if most recent update is within timespec
                 return True if float(max(self.values)) + timespec >= time.time() else False
         return True
+
+    def get_spead_item(self):
+        """Return a spead item describing this attribute.
+        A generic item is create if an extant one is not available."""
+        if self.spead_item is None:
+            self.spead_item = spead.Item(name=self.name, description='', shape=-1, fmt=spead.mkfmt(('s', 8)))
+        return self.spead_item
 
     def get_dataset(self):
         return np.rec.fromarrays([self.values.keys(), self.values.values(), self.statii.values()],names='timestamp, value, status')
@@ -63,6 +98,15 @@ class TelescopeComponent(object):
         self.sensors = {}
         self.attributes = {}
         self._build()
+
+    def set_attribute(self, key, value):
+        """Directly set attribute on component. Used specifically
+        in cases in which the attributes are not know at build time."""
+        if self.attributes.has_key(key) and self.attributes[key].value is not None: raise ValueError("This attribute already exists and is set to {0}. Not overwriting.".format(self.attributes[key].value))
+        else:
+            self.attributes[key] = Attribute(key, critical=False, init_val=value)
+             # by definition it is not critical
+            self.attributes[key].update_ts = time.time()
 
     def _build(self):
         for s in self._critical_sensors + self._std_sensors:
@@ -109,7 +153,25 @@ class TelescopeModel(object):
             for k,v in c.attributes.iteritems():
                 self.index["{0}_{1}".format(c.proxy_path,k)] = v
 
-    def write_h5(self,f,base_path="/TelescopeModel"):
+    def create_h5_file(self, filename):
+        """Initialises an HDF5 output file as appropriate
+        for this version of the telescope model."""
+        f = h5py.File(filename, mode="w")
+        f['/'].create_group('Data')
+        f['/'].create_group('MetaData')
+        f['/'].create_group('MetaData/Configuration')
+        f['/'].create_group('MetaData/Configuration/Observation')
+        f['/'].create_group('MetaData/Configuration/Correlator')
+        f['/'].create_group('Markup')
+        f['/Markup'].create_dataset('labels', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('label', h5py.new_vlen(str))]))
+         # create a label storage of variable length strings
+        f['/'].create_group('History')
+        f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
+        f['/History'].create_dataset('process_log',[1], maxshape=[None], dtype=np.dtype([('process', h5py.new_vlen(str)), ('arguments', h5py.new_vlen(str)), ('revision', np.int32)]))
+        f['/'].attrs['version'] = hdf5_version
+        return f
+
+    def finalise_h5_file(self,f,base_path="/TelescopeModel"):
         h5py._errors.silence_errors()
          # needed to supress h5py error printing in child threads. 
          # exception handling and logging are used to print
@@ -134,6 +196,20 @@ class TelescopeModel(object):
                     print "Failed to create dataset {0}/{1} as the model has no values".format(comp_base, s.name)
                 except RuntimeError:
                     print "Failed to insert dataset {0}/{1} as it already exists".format(comp_base, s.name)
+
+    def close_h5_file(self, f):
+        filename = f.filename
+         # grab filename before we close
+        f.flush()
+        f.close()
+         # make sure to close and flush gracefully
+        output_file = filename[:filename.find(".writing.h5")] + ".unaugmented.h5"
+        try:
+            os.rename(filename, output_file)
+        except Exception, e:
+            print "Failed to rename output file {0} to {1} ({2})".format(filename, output_file, e)
+            return ("fail","Failed to rename output file from {0} to {1}.".format(filename, output_file))
+        return "File renamed to {0}".format(output_file)
 
     def update(self, update_dict):
         """Expects a dict of sensor names with each value a space
@@ -161,6 +237,56 @@ class TelescopeModel(object):
                 item._changed = False
                 if debug: print "Update attribute {0} on {1} to {2}".format(item_name, comp.name, value)
 
+    def _add_spead_item(self, ig, item):
+        if item.id is None:
+            item.id = 2**12 + len(ig._items)
+            while ig._items.has_key(item.id): item.id += 1
+        ig._items[item.id] = item
+        ig._new_names.append(item.name)
+        ig._update_keys()
+
+    def generate_heaps(self, time_spacing=1.0):
+        """Used to create a generator that will yield SPEAD heaps ready to transmit
+        that describe the telescope model. A basic timeline is constructed to order the events
+        and the heap transmitter can use the timestamping to attempt a realtime simulation 
+        if this is desired."""
+
+         # first step is to build metadata
+         # we traverse the entire model and pick up all the SPEAD items
+         # as we go (for missing items these are synthesised as best we can)
+        ig = spead.ItemGroup()
+        all_item_updates = []
+         # the array of Attributes and Sensors to actually send
+
+        for c in self.components.values():
+            for a in c.attributes.itervalues():
+                self._add_spead_item(ig, a.get_spead_item())
+                print "Attribute {0} has update ts {1}".format(a.name,a.update_ts)
+                if a.update_ts is not None:
+                    print "Adding attribute {0} to spead update".format(a.name)
+                    all_item_updates.append(SPEADItemUpdate(a.name,a.update_ts,a.value))
+            for s in c.sensors.itervalues():
+                self._add_spead_item(ig, s.get_spead_item())
+                for (sensor_time, sensor_value) in s.values.iteritems():
+                    sensor_state = s.statii[sensor_time]
+                    update_time = s.update_tss[sensor_time]
+                    print "Adding sensor value for sensor {0} to spead update".format(s.name)
+                    all_item_updates.append(SPEADItemUpdate(s.name, update_time, "{0} {1} {2}".format(sensor_time, sensor_state, sensor_value)))
+        all_item_updates.sort(key=lambda x: x.ts)
+         # sort items by their update time
+
+        yield ig.get_heap()
+         # send metadata
+
+        while len(all_item_updates) > 0:
+            update = [all_item_updates.pop()]
+            while len(all_item_updates) > 0 and all_item_updates[0].ts < (update[0].ts + time_spacing):
+                update.append(all_item_updates.pop())
+             # ok, we now have a group of updates to send
+            for u in update:
+                ig[u.key] = u.value
+            yield ig.get_heap()
+
     def update_from_ig(self, ig, proxy_path=None, debug=False):
         """Traverses a SPEAD itemgroup looking for any changed items that match items expected in the model
         index and then updating these as appropriate. Attributes are non-volatile and will not 
@@ -176,6 +302,7 @@ class TelescopeModel(object):
                     item_value = item.get_value()
                     try:
                         dest.set_value(item_value)
+                        if dest.spead_item is None: dest.spead_item = item
                         item._changed = False
                     except ValueError as e:
                         print "Failed to set value: {0}".format(e.message)
@@ -211,5 +338,10 @@ class Digitiser(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Digitiser, self).__init__(*args, **kwargs)
         self._std_sensors = ['overflow']
+        self._build()
+
+class Observation(TelescopeComponent):
+    def __init__(self, *args, **kwargs):
+        super(Observation, self).__init__(*args, **kwargs)
         self._build()
 

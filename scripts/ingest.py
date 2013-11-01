@@ -30,23 +30,17 @@ from katsdpingest.ingest_threads import TMIngest, CBFIngest
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
-from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, TelescopeModel
+from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, TelescopeModel, Observation
 
 import katconf
 
-hdf5_version = "2.0"
- # initial version describing indicating compatibility with our HDF5v2 spec.
- # minor revision may be bumped when telescope model is written to file
-
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    parser.add_option('--include_ctl', action='store_true', default=False, help='pull configuration information via katcp from the kat controller')
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and meta-data from CBF on')
     parser.add_option('--meta-data-port', default=7147, type=int, help='port to receive SPEAD meta-data from CAM on')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
-    parser.add_option('-s', '--system', default='systems/local.conf', help='system configuration file to use. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
     parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
@@ -61,7 +55,7 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
 
-    def __init__(self, logger, sdisp_ips, sdisp_port, system_config_path, *args, **kwargs):
+    def __init__(self, logger, sdisp_ips, sdisp_port, *args, **kwargs):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
@@ -69,7 +63,10 @@ class IngestDeviceServer(DeviceServer):
          # reference to the Telescope Manager thread
         self.h5_file = None
          # the current hdf5 file in use by the ingest threads
-        self.system_config_path = system_config_path
+        self.model = None
+         # the current telescope model for use in this ingest session
+        self.obs = None
+         # the observation component for holding observation attributes
         self.sdisp_ips = {}
         self.sdisp_ips['127.0.0.1'] = sdisp_port
          # add default signal display destination
@@ -101,25 +98,6 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
-
-    def create_h5_file(self):
-        if self.h5_file is not None: return None
-
-        fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
-        f = h5py.File(fname, mode="w")
-        f['/'].attrs['version'] = hdf5_version
-        f['/'].create_group('Data')
-        f['/'].create_group('MetaData')
-        f['/'].create_group('MetaData/Configuration')
-        f['/'].create_group('MetaData/Configuration/Observation')
-        f['/'].create_group('MetaData/Configuration/Correlator')
-        f['/'].create_group('Markup')
-        f['/Markup'].create_dataset('labels', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('label', h5py.new_vlen(str))]))
-         # create a label storage of variable length strings
-        f['/'].create_group('History')
-        f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
-        f['/History'].create_dataset('process_log',[1], maxshape=[None], dtype=np.dtype([('process', h5py.new_vlen(str)), ('arguments', h5py.new_vlen(str)), ('revision', np.int32)]))
-        return f
 
     def setup_sensors(self):
         for sensor in self._my_sensors:
@@ -163,25 +141,28 @@ class IngestDeviceServer(DeviceServer):
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
              # this should be enough of an indicator as to session activity, but it 
              # may be worth expanding the scope to checking the file and the TM thread as well
-        self.h5_file = self.create_h5_file()
-         # open a new HDF5 file
-        if self.h5_file is None:
-            return ("fail","Failed to create HDF5 file. Init failed.")
 
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
         m062 = AntennaPositioner(name='m062')
         cbf = CorrelatorBeamformer(name='cbf')
         env = Enviro(name='anc_asc')
-        model = TelescopeModel()
-        model.add_components([m063,m062,cbf,env])
-        model.build_index()
+        self.obs = Observation(name='obs')
+        self.model = TelescopeModel()
+        self.model.add_components([m063,m062,cbf,env,self.obs])
+        self.model.build_index()
 
-        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, model, cbf.name, logger)
+        fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
+        self.h5_file = self.model.create_h5_file(fname)
+         # open a new HDF5 file
+        if self.h5_file is None:
+            return ("fail","Failed to create HDF5 file. Init failed.")
+
+        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, logger)
         self.cbf_thread.setDaemon(True)
         self.cbf_thread.start()
 
-        self.tm_thread = TMIngest(opts.meta_data_port, self.h5_file, model, logger)
+        self.tm_thread = TMIngest(opts.meta_data_port, self.h5_file, self.model, logger)
         self.tm_thread.setDaemon(True)
         self.tm_thread.start()
 
@@ -240,13 +221,11 @@ class IngestDeviceServer(DeviceServer):
         """
         if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
         try:
-            if key_string in obs_sensors:
-                self._my_sensors[key_string].set_value(value_string)
-            self.cbf_thread.write_obs_param(key_string, value_string)
+            self.obs.set_attribute(key_string, value_string)
         except ValueError, e:
-            return ("fail", "Could not parse sensor name or value string '%s=%s': %s" % (key_string, value_string, e))
+            return ("fail", "Could not set attribute '%s=%s': %s" % (key_string, value_string, e))
         smsg = "%s=%s" % (key_string, value_string)
-        activitylogger.info("Set script param %s" % smsg)
+        activitylogger.info("Set obs param %s" % smsg)
         return ("ok", smsg)
 
     @request(Str())
@@ -318,9 +297,6 @@ class IngestDeviceServer(DeviceServer):
         self.cbf_thread.finalise()
          # no further correspondence will be entered into
 
-        self.tm_thread.write_model()
-         # at this point data writing is complete.
-         # now we write the model to the file as well
         self.cbf_thread.join()
         self.tm_thread.join()
          # we really dont want these lurking around
@@ -328,23 +304,15 @@ class IngestDeviceServer(DeviceServer):
          # we are done with the capture thread
         self.tm_thread = None
 
-        if self.h5_file is None:
-            logger.warning("File was already closed. Not renaming...")
-            return ("ok","File was already closed.")
-        filename = self.h5_file.filename
-         # grab filename before we close
-        self.h5_file.flush()
-        self.h5_file.close()
-         # make sure to close and flush gracefully
-        output_file = filename[:filename.find(".writing.h5")] + ".unaugmented.h5"
-        try:
-            os.rename(filename, output_file)
-        except Exception, e:
-            logger.error("Failed to rename output file %s" % e)
-            return ("fail","Failed to rename output file from %s to %s." % (filename, output_file))
-        finally:
-            self.h5_file = None
-        smsg = "File renamed to %s" % (output_file)
+         # now we make sure to sync the model to the output file
+        valid = self.model.is_valid(timespec=5)
+         # check to see if we are valid up until the last 5 seconds
+        if not valid: self.logger.warning("Model is not valid. Writing to disk anyway.")
+        self.model.finalise_h5_file(self.h5_file)
+        smsg = self.model.close_h5_file(self.h5_file)
+         # close file and rename if appropriate
+
+        self.h5_file = None
         self._my_sensors["capture-active"].set_value(0)
         for sensor in self._my_sensors:
             if sensor.startswith("spead"):
@@ -374,8 +342,7 @@ if __name__ == '__main__':
     activitylogger.info("Activity logging started")
 
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.system,
-                                 opts.host, opts.port)
+    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     activitylogger.info("Started k7_capture server.")
