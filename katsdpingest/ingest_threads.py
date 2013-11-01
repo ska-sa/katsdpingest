@@ -56,6 +56,9 @@ class CBFIngest(threading.Thread):
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
+        self.cbf_component = self.model.components[self.cbf_name]
+        self.cbf_attr = self.cbf_component.attributes
+
         self.data_scale_factor = 1.0
         self.acc_scale = True
         self._label_idx = 0
@@ -80,7 +83,7 @@ class CBFIngest(threading.Thread):
         self._script_ants = None
          # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
-        self.scale = sp.Scale(self.data_scale_factor)
+        self.scale = sp.Scale(1.0)
          # at this stage the scale factor is unknown
         self.rfi = sp.RFIThreshold2()
          # basic rfi thresholding flagger
@@ -115,12 +118,11 @@ class CBFIngest(threading.Thread):
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
-        if self.meta.has_key('bls_ordering') and self.meta.has_key('bandwidth') and self.meta.has_key('n_chans'):
-            self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.meta['bls_ordering'])
-            self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
-                            shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.meta['bandwidth'])
-            self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
-                            shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.meta['n_chans'])
+        self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.cbf_attr['bls_ordering'].value)
+        self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
+                            shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.cbf_attr['bandwidth'].value)
+        self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
+                            shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.cbf_attr['n_chans'].value)
         return copy.deepcopy(self.ig_sd.get_heap())
 
     def set_baseline_mask(self, bls_ordering):
@@ -215,9 +217,6 @@ class CBFIngest(threading.Thread):
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
         ig = spead.ItemGroup()
         idx = 0
-        cbf_component = self.model.components[self.cbf_name]
-        cbf_attr = cbf_component.attributes
-         # reference to CBF attributes held by the model
         self.status_sensor.set_value("idle")
         dump_size = 0
         datasets = {}
@@ -249,18 +248,18 @@ class CBFIngest(threading.Thread):
 
              # check to see if our CBF model is valid
              # i.e. make sure any attributes marked as critical are present
-            if not cbf_component.is_valid(check_sensors=False):
+            if not self.cbf_component.is_valid(check_sensors=False):
                 self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
                 continue
 
             ##### Configure datasets and other items now that we have complete metedata
 
-            self.baseline_mask = range(cbf_attr['n_bls'].value)
+            self.baseline_mask = range(self.cbf_attr['n_bls'].value)
              # default mask is to include all known baseline
 
             if self._script_ants is not None:
              # we need to calculate a baseline_mask to match the specified script_ants
-                cbf_attr['bls_ordering'].value = self.set_baseline_mask(cbf_attr['bls_ordering'].value)
+                self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
 
             if idx == 0:
                  # we need to create the raw and timestamp datasets.
@@ -271,10 +270,10 @@ class CBFIngest(threading.Thread):
                 self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
                  # configure the signal processing blocks
-                self.scale.scale_factor = np.float32(cbf_attr['n_accs'].value)
+                self.scale.scale_factor = np.float32(self.cbf_attr['n_accs'].value)
                 self.write_process_log(*self.scale.description())
 
-                self.van_vleck = sp.VanVleck(np.float32(cbf_attr['n_accs'].value), bls_ordering=cbf_attr['bls_ordering'].value)
+                self.van_vleck = sp.VanVleck(np.float32(self.cbf_attr['n_accs'].value), bls_ordering=self.cbf_attr['bls_ordering'].value)
                 self.write_process_log(*self.van_vleck.description())
             else:
                  # resize datasets
@@ -282,17 +281,17 @@ class CBFIngest(threading.Thread):
                 self.h5_file[flags_dataset].resize(idx+1, axis=0)
 
             if self.sd_frame is None:
-                self.sd_frame = np.zeros((cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
+                self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
                  # initialise the signal display data frame
 
             if sd_slots is None:
                 self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
                          # make sure we have the right dtype for the sd data
-                sd_slots = np.zeros(cbf_attr['n_chans'].value/data_item.shape[0])
+                sd_slots = np.zeros(self.cbf_attr['n_chans'].value/data_item.shape[0])
                 self.send_sd_metadata()
 
             ##### Generate timestamps
-            current_ts = cbf_attr['sync_time'].value + (data_ts / cbf_attr['scale_factor_timestamp'].value)
+            current_ts = self.cbf_attr['sync_time'].value + (data_ts / self.cbf_attr['scale_factor_timestamp'].value)
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
             self.timestamps.append(current_ts)
 

@@ -280,6 +280,12 @@ class IngestDeviceServer(DeviceServer):
             return ("fail", "No currently active file.")
         return ("ok", self.h5_file.filename)
 
+    def handle_interrupt(self):
+        """Used to attempt a graceful resolution to external
+        interrupts. Basically calls capture done."""
+        logger.warning("External interrupt called - attempting graceful shutdown.")
+        self.request_capture_done("","")
+
     @return_reply(Str())
     def request_capture_done(self, req, msg):
         """Closes the current capture file and renames it for use by augment."""
@@ -362,5 +368,6 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         activitylogger.info("Shutting down k7_capture server...")
         activitylogger.info("Activity logging stopped")
+        server.handle_interrupt()
         server.stop()
         server.join()
