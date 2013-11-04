@@ -223,6 +223,8 @@ class TelescopeModel(object):
                     print "Failed to create dataset {0}/{1} as the model has no values".format(comp_base, s.name)
                 except RuntimeError:
                     print "Failed to insert dataset {0}/{1} as it already exists".format(comp_base, s.name)
+                if s.spead_item is not None:
+                    c_group[s.name].attrs['description'] = s.spead_item.description
 
     def close_h5_file(self, f):
         filename = f.filename
