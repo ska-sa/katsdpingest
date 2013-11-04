@@ -1,4 +1,4 @@
-"""Device server that listens to KATCP sensors and passes updates to SPEAD stream."""
+"""Device server that listens to CAM events and passes updates to SPEAD stream."""
 
 import logging
 import threading
@@ -13,7 +13,7 @@ from katcp.kattypes import request, return_reply, Str, Int
 from katsdpingest import __version__
 
 
-logger = logging.getLogger("kat.katcp2spead")
+logger = logging.getLogger(__name__)
 
 
 class SensorBridge(object):
@@ -107,28 +107,35 @@ class TransmitThread(threading.Thread):
         self._thread_active = False
 
 
-class Katcp2SpeadDeviceServer(DeviceServer):
-    """Device server that listens to KATCP sensors and updates SPEAD stream.
+class Cam2SpeadDeviceServer(DeviceServer):
+    """Device server that receives CAM events and pushes them to SPEAD stream.
+
+    This receives a set of CAM attributes (static items) and listens to a set
+    of KATCP sensors (dynamic items), assembles these as SPEAD items in a heap
+    and pushes the heap onto a SPEAD stream via a separate transmitter thread.
 
     Parameters
     ----------
+    attributes : dict mapping string to string
+        Attributes as key-value string pairs which are streamed once upfront
     all_sensors : group of :class:`katcp.Sensor` objects
         Object (e.g. a :class:`katcorelib.ObjectGroup`) with all available
         sensors as attributes
     sensor_list : list of tuples of 3 strings
         List of sensors to listen to, and corresponding sensor strategy to be
-        set as (name, strategy, param) tuple (use full name from kat.sensors)
+        set as (name, strategy, param) tuple
     tx_period : float
         Non-event based sensor updates will be periodically resampled with
         this period in seconds before being transmitted as SPEAD packets
 
     """
 
-    VERSION_INFO = ("katcp2spead", 0, 1)
-    BUILD_INFO = ("katcp2spead", 0, 1, __version__)
+    VERSION_INFO = ("cam2spead", 0, 1)
+    BUILD_INFO = ("cam2spead", 0, 1, __version__)
 
-    def __init__(self, all_sensors, sensor_list, tx_period, *args, **kwargs):
-        super(Katcp2SpeadDeviceServer, self).__init__(*args, **kwargs)
+    def __init__(self, attributes, all_sensors, sensor_list, tx_period, *args, **kwargs):
+        super(Cam2SpeadDeviceServer, self).__init__(*args, **kwargs)
+        self.attributes = attributes
         self.sensors, self.sensor_strategies = all_sensors, sensor_list
         self._spead_lock = threading.Lock()
         self.sensor_bridges = {}
@@ -140,7 +147,7 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         self.ig = None
 
     def setup_sensors(self):
-        """Populate the dictionary of sensors (none so far)."""
+        """Populate sensor objects on server (none so far)."""
         pass
 
     def register_sensors(self):
@@ -178,17 +185,25 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         for dest in self.destinations:
             self.destinations[dest].mailbox.put(copy.deepcopy(heap))
 
-    def set_initial_spead_packet(self):
-        """Initialise initial SPEAD packet to establish metadata / item structure."""
+    def initial_spead_heap(self):
+        """This creates the SPEAD item structure and fills in attributes."""
         self.ig = spead.ItemGroup()
+        spead_id = SensorBridge.next_available_spead_id
+        for name, value in self.attributes.items():
+            logger.debug("Registering attribute %r with SPEAD id 0x%x and value %s" %
+                         (name, spead_id, value))
+            self.ig.add_item(name=name, id=spead_id, description='todo',
+                             shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
+            spead_id += 1
+        SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
-            logger.debug("Adding info for sensor %r (id 0x%x) to initial packet: %s" %
+            logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
             self.ig.add_item(name=name, id=bridge.spead_id,
                              description=bridge.katcp_sensor.description,
                              shape=-1, fmt=spead.mkfmt(('s', 8)),
                              init_val=bridge.last_update)
-        self.init_heap = self.ig.get_heap()
+        return self.ig.get_heap()
 
     def start_listening(self):
         """Start listening to all registered sensors."""
@@ -217,10 +232,10 @@ class Katcp2SpeadDeviceServer(DeviceServer):
         """Start the SPEAD stream of KATCP sensor data."""
         self.register_sensors()
         self.start_listening()
-        self.set_initial_spead_packet()
+        self.init_heap = self.initial_spead_heap()
         self.streaming = True
-        # Start periodic transmission thread (automatically terminates when
-        # stream is stopped)
+        # Start periodic transmission thread
+        # (automatically terminates when stream is stopped)
         self.tx_thread = threading.Thread(target=self.periodic_transmit)
         self.tx_thread.start()
         smsg = "SPEAD stream started"
