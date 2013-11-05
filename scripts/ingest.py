@@ -159,11 +159,9 @@ class IngestDeviceServer(DeviceServer):
             return ("fail","Failed to create HDF5 file. Init failed.")
 
         self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, logger)
-        self.cbf_thread.setDaemon(True)
         self.cbf_thread.start()
 
         self.tm_thread = TMIngest(opts.meta_data_port, self.h5_file, self.model, logger)
-        self.tm_thread.setDaemon(True)
         self.tm_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
