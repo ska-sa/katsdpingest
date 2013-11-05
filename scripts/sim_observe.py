@@ -102,8 +102,10 @@ parser.add_option('--ingest-host', default='localhost',
                   help='Host address of ingest system (default=%default)')
 parser.add_option('--ingest-kcp-port', type=int, default=2040,
                   help='Port of ingest KATCP interface (default=%default)')
-parser.add_option('--ingest-spead-port', type=int, default=7147,
+parser.add_option('--ingest-cam-spead-port', type=int, default=7147,
                   help='Port of ingest CAM SPEAD interface (default=%default)')
+parser.add_option('--ingest-cbf-spead-port', type=int, default=7148,
+                  help='Port of ingest CBF SPEAD interface (default=%default)')
 parser.add_option('--cam2spead-host', default='localhost',
                   help='Host address of cam2spead server (default=%default)')
 parser.add_option('--cam2spead-port', type=int, default=2045,
@@ -147,9 +149,11 @@ logger.info('Connected to ingest system components')
 # Use the rest of this thread to play through observation sequence
 try:
     # Initialise mini capture session
+    cbf.req.capture_destination(cbf_instrument, opts.ingest_host,
+                                opts.ingest_cbf_spead_port)
     ingest.req.capture_init()
     cam2spead.req.start_stream()
-    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_spead_port)
+    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_cam_spead_port)
     cbf.req.capture_start(cbf_instrument)
 
     start_time = time.time()
@@ -181,7 +185,8 @@ try:
     logger.info('Progress: 100%% complete, last event happened %.1f seconds from start' %
                 (event_time - start_time,))
 
-    cam2spead.req.remove_destination(opts.ingest_host, opts.ingest_spead_port)
+    cbf.req.capture_stop(cbf_instrument)
+    cam2spead.req.remove_destination(opts.ingest_host, opts.ingest_cam_spead_port)
     cam2spead.req.stop_stream()
     ingest.req.capture_done()
 finally:
