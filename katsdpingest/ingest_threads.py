@@ -3,7 +3,7 @@
 # Threads for ingesting data and meta-data in order to produce a complete HDF5 file for further
 # processing.
 #
-# Currently has a CBFIngest and TMIngest class
+# Currently has a CBFIngest and CAMIngest class
 #
 # Details on these are provided in the class documentation
 import numpy as np
@@ -12,6 +12,7 @@ import spead
 import time
 import copy
 import katcapture.sigproc as sp
+import logging
 
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Markup/flags'
@@ -24,9 +25,9 @@ obs_sensors = ['obs_ants','obs_script_arguments','obs_description','obs_experime
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
 
-class TMIngest(threading.Thread):
-    """The TM Ingest class receives meta-data updates in the form
-    of sensor information from the TM via SPEAD. It uses these to
+class CAMIngest(threading.Thread):
+    """The CAM Ingest class receives meta-data updates in the form
+    of sensor information from the CAM via SPEAD. It uses these to
     update a model of the telescope that is specific to the current
     ingest configuration (subarray)."""
     def __init__(self, meta_data_port, h5_file, model, logger):
@@ -37,6 +38,10 @@ class TMIngest(threading.Thread):
         self.ig = None
         threading.Thread.__init__(self)
 
+    def enable_debug(self, debug):
+        if debug: self.logger.setLevel(logging.DEBUG)
+        else: self.logger.setLevel(logging.INFO)
+
     def run(self):
         self.logger.info("Meta-data reception on port %i" % self.meta_data_port)
         self.ig = spead.ItemGroup()
@@ -44,9 +49,9 @@ class TMIngest(threading.Thread):
 
         for heap in spead.iterheaps(rx_md):
             self.ig.update(heap)
-            self.model.update_from_ig(self.ig, debug=True)
+            self.model.update_from_ig(self.ig)
 
-        self.logger.info("TM ingest thread complete at %f" % time.time())
+        self.logger.info("CAM ingest thread complete at %f" % time.time())
 
 class CBFIngest(threading.Thread):
     def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
@@ -96,6 +101,10 @@ class CBFIngest(threading.Thread):
         #### Done with blocks
         self.write_process_log(*self.rfi.description())
         threading.Thread.__init__(self)
+
+    def enable_debug(self, debug):
+        if debug: self.logger.setLevel(logging.DEBUG)
+        else: self.logger.setLevel(logging.INFO)
 
     def send_sd_data(self, data):
         #if self._sd_count % 10 == 0:
@@ -236,14 +245,14 @@ class CBFIngest(threading.Thread):
             #### Update the telescope model
 
             ig.update(heap)
-            self.model.update_from_ig(ig, proxy_path=self.cbf_name, debug=True)
+            self.model.update_from_ig(ig, proxy_path=self.cbf_name)
              # any interesting attributes will now end up in the model
              # this means we are only really interested in actual data now
-            if not ig._names.has_key('xeng_raw'): self.logger.info("No xeng_raw"); continue
-            if not ig._names.has_key('timestamp'): self.logger.info("No timestamp"); continue
+            if not ig._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
+            if not ig._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
             data_ts = ig['timestamp']
             data_item = ig.get_item('xeng_raw')
-            if not data_item._changed: self.logger.info("Xeng_raw is unchanged"); continue
+            if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue
              # we have new data...
 
              # check to see if our CBF model is valid

@@ -26,7 +26,7 @@ from katcp import DeviceServer, Sensor, Message
 from katcp.kattypes import request, return_reply, Str, Int, Float
 
 import katsdpingest.sigproc as sp
-from katsdpingest.ingest_threads import TMIngest, CBFIngest
+from katsdpingest.ingest_threads import CAMIngest, CBFIngest
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
@@ -59,7 +59,7 @@ class IngestDeviceServer(DeviceServer):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
-        self.tm_thread = None
+        self.cam_thread = None
          # reference to the Telescope Manager thread
         self.h5_file = None
          # the current hdf5 file in use by the ingest threads
@@ -120,15 +120,32 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
         self.cbf_thread.send_sd_metadata()
         smsg = "SD Metadata resent"
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok", smsg)
+
+    @return_reply(Str())
+    def request_enable_debug(self, req, msg):
+        """Enable debugging of the ingest process."""
+        self._enable_debug(True)
+        return("ok", "Debug logging enabled.")
+
+    @return_reply(Str())
+    def request_disable_debug(self, req, msg):
+        """Disable debugging of the ingest process."""
+        self._enable_debug(False)
+        return ("ok", "Debug logging disabled.")
+
+    def _enable_debug(self, debug):
+        if self.model is not None: self.model.enable_debug(debug)
+        if self.cbf_thread is not None: self.cbf_thread.enable_debug(debug)
+        if self.cam_thread is not None: self.cam_thread.enable_debug(debug)
 
     @return_reply(Str())
     def request_capture_start(self, req, msg):
         """Dummy capture start command - calls capture init."""
         self.request_capture_init(req, msg)
         smsg = "Capture initialised at %s" % time.ctime()
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok", smsg)
 
     @return_reply(Str())
@@ -140,7 +157,7 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
              # this should be enough of an indicator as to session activity, but it 
-             # may be worth expanding the scope to checking the file and the TM thread as well
+             # may be worth expanding the scope to checking the file and the CAM thread as well
 
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
@@ -158,18 +175,18 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, logger)
+        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
-        self.tm_thread = TMIngest(opts.meta_data_port, self.h5_file, self.model, logger)
-        self.tm_thread.start()
+        self.cam_thread = CAMIngest(opts.meta_data_port, self.h5_file, self.model, cam_logger)
+        self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
          # add in existing signal display recipients...
         for (ip,port) in self.sdisp_ips.iteritems():
             self.cbf_thread.add_sdisp_ip(ip,port)
         smsg =  "Capture initialised at %s" % time.ctime()
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok", smsg)
 
     @request()
@@ -191,7 +208,7 @@ class IngestDeviceServer(DeviceServer):
         self.cbf_thread.center_freq = center_freq_hz
         self.cbf_thread.send_sd_metadata()
         smsg = "SD Metadata resent"
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok","set")
 
     @request(Str(), Str())
@@ -223,7 +240,7 @@ class IngestDeviceServer(DeviceServer):
         except ValueError, e:
             return ("fail", "Could not set attribute '%s=%s': %s" % (key_string, value_string, e))
         smsg = "%s=%s" % (key_string, value_string)
-        activitylogger.info("Set obs param %s" % smsg)
+        logger.info("Set obs param %s" % smsg)
         return ("ok", smsg)
 
     @request(Str())
@@ -234,7 +251,7 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["script-log"].set_value(log)
         self.cbf_thread.write_log(log)
         smsg = "Script log entry added (%s)" % log
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok", smsg)
 
     @request(Str())
@@ -290,39 +307,45 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is None:
             return ("fail","No existing capture session.")
 
+         # if the observation framework is behaving correctly
+         # then these threads will be dead before capture_done
+         # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
-            # first try to shutdown the threads gracefully
             tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.data_port))
             tx.end()
+            time.sleep(1)
+
+        if self.cam_thread.is_alive():
             tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.meta_data_port))
             tx.end()
-            time.sleep(2)
+            time.sleep(1)
 
         self.cbf_thread.finalise()
          # no further correspondence will be entered into
 
         self.cbf_thread.join()
-        self.tm_thread.join()
+        self.cam_thread.join()
          # we really dont want these lurking around
         self.cbf_thread = None
          # we are done with the capture thread
-        self.tm_thread = None
+        self.cam_thread = None
 
          # now we make sure to sync the model to the output file
         valid = self.model.is_valid(timespec=5)
          # check to see if we are valid up until the last 5 seconds
-        if not valid: self.logger.warning("Model is not valid. Writing to disk anyway.")
+        if not valid: logger.warning("Model is not valid. Writing to disk anyway.")
         self.model.finalise_h5_file(self.h5_file)
         smsg = self.model.close_h5_file(self.h5_file)
          # close file and rename if appropriate
 
         self.h5_file = None
+        self.model = None
         self._my_sensors["capture-active"].set_value(0)
         for sensor in self._my_sensors:
             if sensor.startswith("spead"):
                 self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
                  # set all SPEAD sensors to unknown when thread has stopped
-        activitylogger.info(smsg)
+        logger.info(smsg)
         return ("ok", smsg)
 
 if __name__ == '__main__':
@@ -333,7 +356,7 @@ if __name__ == '__main__':
     # set up Python logging
     #katconf.configure_logging(opts.logging)
 
-    logger = logging.getLogger("kat.k7capture")
+    logger = logging.getLogger("katsdpingest.ingest")
     logger.setLevel(logging.INFO)
 
     spead.logger.setLevel(logging.WARNING)
@@ -341,15 +364,20 @@ if __name__ == '__main__':
 
     sp.ProcBlock.logger = logger
      # logger ref for use in the signal processing routines
-    activitylogger = logging.getLogger("activity")
-    activitylogger.setLevel(logging.INFO)
-    activitylogger.info("Activity logging started")
+
+    cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
+    cbf_logger.setLevel(logging.INFO)
+    cbf_logger.info("CBF ingest logging started")
+
+    cam_logger = logging.getLogger("katsdpingest.cam_ingest")
+    cam_logger.setLevel(logging.INFO)
+    cam_logger.info("CAM ingest logging started")
 
     restart_queue = Queue.Queue()
     server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
-    activitylogger.info("Started k7_capture server.")
+    logger.info("Started k7_capture server.")
     try:
         while True:
             try:
@@ -364,8 +392,8 @@ if __name__ == '__main__':
                 device.start()
                 logger.info("Started")
     except KeyboardInterrupt:
-        activitylogger.info("Shutting down k7_capture server...")
-        activitylogger.info("Activity logging stopped")
+        logger.info("Shutting down k7_capture server...")
+        logger.info("Activity logging stopped")
         server.handle_interrupt()
         server.stop()
         server.join()

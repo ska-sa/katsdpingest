@@ -3,10 +3,13 @@ import time
 import h5py
 import os
 import spead
+import logging
 
 ### Model definitions
 
-debug = True
+logger = logging.getLogger("katsdpingest.telescope_model")
+logger.setLevel(logging.INFO)
+
 hdf5_version = 3.0
  # the version number is intrinsically linked to the telescope model, as this
  # is the arbiter of file structure and format
@@ -29,7 +32,7 @@ class Attribute(object):
     def set_value(self, value):
         if self.value is None:
             self.value = value
-            if debug: print "Set attribute {0} to {1}".format(self.name,value)
+            logger.debug("Set attribute {0} to {1}".format(self.name,value))
             self.update_ts = time.time()
         else: raise ValueError("Attribute has already been set.")
 
@@ -66,7 +69,7 @@ class Sensor(object):
         value_time = float(value_time)
         value = eval(sensor_value,{})
          # schwardts doing
-        if debug: print "Updated sensors {0} with ({1},{2},{3} type:{4})".format(self.name,value_time,status,repr(value),type(value))
+        logger.debug("Updated sensors {0} with ({1},{2},{3} type:{4})".format(self.name,value_time,status,repr(value),type(value)))
         self.values[value_time] = value
         self.statii[value_time] = status
         self.value_time = value_time
@@ -126,11 +129,11 @@ class TelescopeComponent(object):
         if check_sensors:
             for s in [v for (k,v) in self.sensors.iteritems() if k in self._critical_sensors]:
                 if not s.is_valid(timespec=timespec):
-                    print "Sensor {0} is invalid ({1})".format("{0}/{1}".format(self.proxy_path,s.name),"no sensor value in timespec" if timespec is not None else "no values")
+                    logger.info("Sensor {0} is invalid ({1})".format("{0}/{1}".format(self.proxy_path,s.name),"no sensor value in timespec" if timespec is not None else "no values"))
                     retval = False
         if check_attributes:
             for a in [v for (k,v) in self.attributes.iteritems() if k in self._critical_attributes]:
-                if not a.is_valid(): print "Attribute {0} has not been set".format(a.name)
+                if not a.is_valid(): logger.info("Attribute {0} has not been set".format(a.name))
                 retval = retval and a.is_valid()
         return retval
 
@@ -140,12 +143,17 @@ class TelescopeModel(object):
         self.model_version = hdf5_version
         self.index = {}
 
+    def enable_debug(self, debug=True):
+        if debug: logger.setLevel(logging.DEBUG)
+        else: logger.setLevel(logging.INFO)
+
     def add_components(self, components):
         for component in components:
             if self.components.has_key(component):
-                print "Component name {0} is not unique".format(component_name)
+                logger.warning("Component name {0} is not unique".format(component_name))
                 continue
             self.components[component.name] = component
+        logger.debug("Added {0} components to model.".format(len(self.components)))
 
     def is_valid(self, timespec=None):
         retval = True
@@ -170,7 +178,7 @@ class TelescopeModel(object):
         f = h5py.File(filename, mode="r")
         version = str(f['/'].attrs['version'])
         if version != str(hdf5_version):
-            print "Attempt to load version {0} into a version {1} model.".format(version, hdf5_version)
+            logger.error("Attempt to load version {0} into a version {1} model.".format(version, hdf5_version))
             return
         cls_count = sensor_count = attr_count = 0
         for h5_component in f['/TelescopeModel'].itervalues():
@@ -186,7 +194,7 @@ class TelescopeModel(object):
                     c.sensors[h5_dataset.name].set_value("{0} {1} {2}".format(row[0],row[1],row[2]))
                     sensor_count += 1
         self.build_index()
-        print "Completed initialisation. Added {0} components with {1} attributes and {2} sensor rows".format(cls_count, attr_count, sensor_count)
+        logger.info("Completed initialisation. Added {0} components with {1} attributes and {2} sensor rows".format(cls_count, attr_count, sensor_count))
 
     def create_h5_file(self, filename):
         """Initialises an HDF5 output file as appropriate
@@ -219,7 +227,7 @@ class TelescopeModel(object):
                 c_group.attrs['class'] = str(c.__class__.__name__)
             except ValueError:
                 c_group = f[comp_base]
-                print "Failed to create group {0} (likely to already exist)".format(comp_base)
+                logger.warning("Failed to create group {0} (likely to already exist)".format(comp_base))
             for (k,v) in c.attributes.iteritems():
                 if v.value is not None: c_group.attrs[k] = v.value
             for sensor in sorted(c.sensors.keys()):
@@ -227,9 +235,9 @@ class TelescopeModel(object):
                 try:
                     c_group.create_dataset(s.name,data=s.get_dataset())
                 except ValueError:
-                    print "Failed to create dataset {0}/{1} as the model has no values".format(comp_base, s.name)
+                    logger.warning("Failed to create dataset {0}/{1} as the model has no values".format(comp_base, s.name))
                 except RuntimeError:
-                    print "Failed to insert dataset {0}/{1} as it already exists".format(comp_base, s.name)
+                    logger.warning("Failed to insert dataset {0}/{1} as it already exists".format(comp_base, s.name))
                 if s.spead_item is not None:
                     c_group[s.name].attrs['description'] = s.spead_item.description
 
@@ -239,11 +247,11 @@ class TelescopeModel(object):
         f.flush()
         f.close()
          # make sure to close and flush gracefully
-        output_file = filename[:filename.find(".writing.h5")] + ".unaugmented.h5"
+        output_file = filename[:filename.find(".writing.h5")] + ".h5"
         try:
             os.rename(filename, output_file)
         except Exception, e:
-            print "Failed to rename output file {0} to {1} ({2})".format(filename, output_file, e)
+            logger.error("Failed to rename output file {0} to {1} ({2})".format(filename, output_file, e))
             return ("fail","Failed to rename output file from {0} to {1}.".format(filename, output_file))
         return "File renamed to {0}".format(output_file)
 
@@ -271,16 +279,16 @@ class TelescopeModel(object):
         for c in self.components.values():
             for a in c.attributes.itervalues():
                 self._add_spead_item(ig, a.get_spead_item())
-                print "Attribute {0} has update ts {1}".format(a.name,a.update_ts)
+                logger.debug("Attribute {0} has update ts {1}".format(a.name,a.update_ts))
                 if a.update_ts is not None:
-                    print "Adding attribute {0} to spead update".format(a.name)
+                    logger.debug("Adding attribute {0} to spead update".format(a.name))
                     all_item_updates.append(SPEADItemUpdate(a.name,a.update_ts,a.value))
             for s in c.sensors.itervalues():
                 self._add_spead_item(ig, s.get_spead_item())
                 for (sensor_time, sensor_value) in s.values.iteritems():
                     sensor_state = s.statii[sensor_time]
                     update_time = s.update_tss[sensor_time]
-                    print "Adding sensor value for sensor {0} to spead update".format(s.name)
+                    logger.debug("Adding sensor value for sensor {0} to spead update".format(s.name))
                     all_item_updates.append(SPEADItemUpdate(s.name, update_time, "{0} {1} {2}".format(sensor_time, sensor_state, sensor_value)))
         all_item_updates.sort(key=lambda x: x.ts)
          # sort items by their update time
@@ -297,7 +305,7 @@ class TelescopeModel(object):
                 ig[u.key] = u.value
             yield ig.get_heap()
 
-    def update_from_ig(self, ig, proxy_path=None, debug=False):
+    def update_from_ig(self, ig, proxy_path=None):
         """Traverses a SPEAD itemgroup looking for any changed items that match items expected in the model
         index and then updating these as appropriate. Attributes are non-volatile and will not 
         be overwritten, whilst conforming sensor are inserted into Sensor objects."""
@@ -315,10 +323,10 @@ class TelescopeModel(object):
                         if dest.spead_item is None: dest.spead_item = item
                         item._changed = False
                     except ValueError as e:
-                        print "Failed to set value: {0}".format(e.message)
+                        logger.warning("Failed to set value: {0}".format(e.message))
                         continue
                 except KeyError:
-                    pass #print "Item {0} not in index.".format(item_name)
+                    logger.debug("Item {0} not in index.".format(item_name))
 
 #### Component Definitions
 
