@@ -7,7 +7,7 @@ import Queue
 import copy
 
 import spead
-from katcp import DeviceServer
+from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Int
 
 from katsdpingest import __version__
@@ -17,7 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class SensorBridge(object):
-    """Bridge between single KATCP sensor and corresponding SPEAD item in stream."""
+    """Bridge between single KATCP sensor and corresponding SPEAD item in stream.
+
+    Parameters
+    ----------
+    name : string
+        Sensor name (used to name the corresponding SPEAD item)
+    katcp_sensor : :class:`katcorelib.KATSensor` object
+        Sensor object representing KATCP sensor
+    server : :class:`Cam2SpeadDeviceServer` object
+        Device server that serves SPEAD stream
+
+    """
 
     # Pick a SPEAD id range that is not in use here
     next_available_spead_id = 0x7000
@@ -30,6 +41,12 @@ class SensorBridge(object):
         self.param = ''
         self.listening = False
         self.last_update = ''
+        # Store katcp.Sensor which will be used to parse KATCP string in listener
+        sensor_type = Sensor.parse_type(self.katcp_sensor.type)
+        params = ['unknown'] if sensor_type == Sensor.DISCRETE else None
+        self._sensor = Sensor(sensor_type, self.katcp_sensor.name,
+                              self.katcp_sensor.description, self.katcp_sensor.units,
+                              params)
 
     def store_strategy(self, strategy, param):
         """Store sensor strategy if it has changed."""
@@ -40,8 +57,27 @@ class SensorBridge(object):
         logger.info("Registered KATCP sensor %r with strategy (%r, %r) and SPEAD id 0x%x" %
                     (self.name, self.strategy, self.param, self.spead_id))
 
-    def listen(self, update_seconds, value_seconds, status, value):
-        """Callback that pushes KATCP sensor update to SPEAD stream."""
+    def listen(self, update_seconds, value_seconds, status, value_string):
+        """Callback that pushes KATCP sensor update to SPEAD stream.
+
+        Parameters
+        ----------
+        update_seconds : float
+            Unix timestamp indicating when update was received by local client
+        value_seconds : float
+            Unix timestamp indicating when sensor value was measured
+        status : string
+            Status of this update ('nominal' if all is well)
+        value_string : string
+            Sensor value encoded as a KATCP string
+
+        """
+        # Force value to be accepted by discrete sensor
+        if self._sensor.stype == 'discrete':
+            self._sensor._kattype._values.append(value_string)
+            self._sensor._kattype._valid_values.add(value_string)
+        # First convert value string to intended type to get appropriate repr()
+        value = self._sensor.parse_value(value_string)
         # All KATCP events are sent as strings containing space-separated
         # value_timestamp + status + value, regardless of KATCP type
         # (consistent with the fact that KATCP data is string-based on the wire)
