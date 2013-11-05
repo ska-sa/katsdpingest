@@ -46,7 +46,7 @@ class TMIngest(threading.Thread):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig, debug=True)
 
-        self.logger.info("Meta-data reception complete at %f" % time.time())
+        self.logger.info("TM ingest thread complete at %f" % time.time())
 
 class CBFIngest(threading.Thread):
     def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
@@ -347,7 +347,7 @@ class CBFIngest(threading.Thread):
 
         #### Stop received.
 
-        self.logger.info("Capture complete at %f" % time.time())
+        self.logger.info("CBF ingest complete at %f" % time.time())
         self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
 

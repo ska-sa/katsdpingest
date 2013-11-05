@@ -60,15 +60,14 @@ class TelescopeModelTestCases(unittest.TestCase):
         sensor_val = 31.5
         attribute_val = "test value"
         ig.add_item(name=sensor_name, id=0x7001, description=sensor_descr, shape=-1, fmt=spead.mkfmt(('s', 8)))
-        ig.add_item(name=attribute_name, id=0x7002, description=attribute_descr)
-        ig[sensor_name] = ["{0} nominal {1}".format(time.time(), sensor_val)]
-        ig[attribute_name] = attribute_val
+        ig.add_item(name=attribute_name, id=0x7002, description=attribute_descr, shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=attribute_val)
+        ig[sensor_name] = "{0} nominal {1}".format(time.time(), sensor_val)
 
          # update from ig
         self.model.update_from_ig(ig)
 
          # check values have been set
-        self.assertEqual(self.model.index[sensor_name].value, str(sensor_val))
+        self.assertEqual(self.model.index[sensor_name].value, sensor_val)
         self.assertEqual(self.model.index[attribute_name].value, attribute_val)
 
          # check spead items have been stored
@@ -108,13 +107,13 @@ class TelescopeModelTestCases(unittest.TestCase):
         s = [s for s in self.model.index.itervalues() if type(s) == tm.Sensor][0]
         base_time = time.time()
         for i,az in enumerate(az_values):
-            s.set_value(["{0} nominal {1}".format(base_time + i*0.1, az)])
+            s.set_value("{0} nominal {1}".format(base_time + i*0.1, az))
          # check sensor length
         self.assertEqual(len(s.values), len(az_values))
          # check last item
-        self.assertEqual(s.value, str(az_values[-1]))
+        self.assertEqual(s.value, az_values[-1])
          # check ordered item
-        self.assertEqual(s.values[sorted(s.values.iterkeys())[0]], str(az_values[0]))
+        self.assertEqual(s.values[sorted(s.values.iterkeys())[0]], az_values[0])
          # check is valud
         self.assertTrue(s.is_valid())
          # check valid with timespec

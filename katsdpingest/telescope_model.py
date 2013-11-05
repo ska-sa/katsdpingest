@@ -61,9 +61,12 @@ class Sensor(object):
         self.__init__(self.name, self.critical)
          # resets to initial state
 
-    def set_value(self, value):
-        (value_time, status, value) = value[0].split(" ",2)
-        if debug: print "Updated sensors {0} with ({1},{2},{3})".format(self.name,value_time,status,value)
+    def set_value(self, sensor_string):
+        (value_time, status, sensor_value) = sensor_string.split(" ",2)
+        value_time = float(value_time)
+        value = eval(sensor_value,{})
+         # schwardts doing
+        if debug: print "Updated sensors {0} with ({1},{2},{3} type:{4})".format(self.name,value_time,status,repr(value),type(value))
         self.values[value_time] = value
         self.statii[value_time] = status
         self.value_time = value_time
@@ -338,7 +341,7 @@ class CorrelatorBeamformer(TelescopeComponent):
 class Enviro(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Enviro, self).__init__(*args, **kwargs)
-        self._std_sensors = ['air_pressure','air_relative_humidity','temperature','wind_speed','wind_direction']
+        self._std_sensors = ['air_pressure','air_relative_humidity','air_temperature','wind_speed','wind_direction']
         self._build()
 
 class Digitiser(TelescopeComponent):
