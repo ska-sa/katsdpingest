@@ -94,7 +94,9 @@ class Sensor(object):
         return self.spead_item
 
     def get_dataset(self):
-        return np.rec.fromarrays([self.values.keys(), self.values.values(), self.statii.values()],names='timestamp, value, status')
+        dset = np.rec.fromarrays([self.values.keys(), self.values.values(), self.statii.values()],names='timestamp, value, status')
+        dset.sort(axis=0)
+        return dset
 
 class TelescopeComponent(object):
     def __init__(self,name,proxy_path=None):
