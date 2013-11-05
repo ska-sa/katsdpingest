@@ -92,7 +92,6 @@ class TransmitThread(threading.Thread):
     def run(self):
         # send initial spead packet to initialise
         self._transmit.send_heap(self._init_heap)
-
         # wait for packets to be added to the queue, then transmit them
         while self._thread_active:
             try:
@@ -102,6 +101,8 @@ class TransmitThread(threading.Thread):
                 self._transmit.send_heap(heap)
             except Queue.Empty:
                 pass
+        # send final spead "stop" packet
+        self._transmit.end()
 
     def stop(self):
         self._thread_active = False
