@@ -1,11 +1,3 @@
-blinker
+katcp==0.5.2
 h5py
-iniparse
-katconf
-katcore
-katcorelib
-katcp
-katsdisp
-numpy
-scipy
 spead

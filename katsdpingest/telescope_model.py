@@ -57,9 +57,13 @@ class Sensor(object):
         self.spead_item = None
          # when known, this is set to a spead item that describes this sensor
 
+    def clean(self):
+        self.__init__(self.name, self.critical)
+         # resets to initial state
+
     def set_value(self, value):
-        (value_ts, status, value) = value[0].split(" ",2)
-        if debug: print "Updated sensors {0} with ({1},{2},{3})".format(self.name,value_ts,status,value)
+        (value_time, status, value) = value[0].split(" ",2)
+        if debug: print "Updated sensors {0} with ({1},{2},{3})".format(self.name,value_time,status,value)
         self.values[value_time] = value
         self.statii[value_time] = status
         self.value_time = value_time
@@ -77,7 +81,7 @@ class Sensor(object):
         return True
 
     def get_spead_item(self):
-        """Return a spead item describing this attribute.
+        """Return a spead item describing this sensor.
         A generic item is create if an extant one is not available."""
         if self.spead_item is None:
             self.spead_item = spead.Item(name=self.name, description='', shape=-1, fmt=spead.mkfmt(('s', 8)))
@@ -240,15 +244,6 @@ class TelescopeModel(object):
             return ("fail","Failed to rename output file from {0} to {1}.".format(filename, output_file))
         return "File renamed to {0}".format(output_file)
 
-    def update(self, update_dict):
-        """Expects a dict of sensor names with each value a space
-        seperated string containing value_timestamp status and value"""
-        for sensor_name,value_string in update_dict.iteritems():
-            if sensor_name in self.index:
-                sensor = self.index[sensor_name]
-                (value_ts, status, value) = value_string.split(" ",2)
-                sensor.add_value(value_ts, status, value)
-
     def _add_spead_item(self, ig, item):
         if item.id is None:
             item.id = 2**12 + len(ig._items)
@@ -337,7 +332,7 @@ class CorrelatorBeamformer(TelescopeComponent):
         self._critical_sensors = ['dbe_mode','target','center_frequency_hz']
         self._std_sensors = ['auto_delay']
         self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
-        self._std_attributes = ['int_time','center_freq']
+        self._std_attributes = ['center_freq']
         self._build()
 
 class Enviro(TelescopeComponent):

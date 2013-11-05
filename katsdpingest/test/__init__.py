@@ -10,6 +10,7 @@ def suite():
     loader = unittest.TestLoader()
     testsuite = unittest.TestSuite()
     testsuite.addTests(loader.loadTestsFromModule(test_sigproc))
+    testsuite.addTests(loader.loadTestsFromModule(test_telescope_model))
     return testsuite
 
 if __name__ == '__main__':
