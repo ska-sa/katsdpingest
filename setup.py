@@ -12,7 +12,7 @@ setup (
     scripts = [
         "scripts/ingest.py",
         "scripts/cbf_simulator.py",
-        "scripts/katcp2spead.py",
+        "scripts/cam2spead.py",
         "scripts/sim_observe.py",
         ],
     install_requires = [
