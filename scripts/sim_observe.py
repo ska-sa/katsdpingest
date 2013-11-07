@@ -151,9 +151,9 @@ try:
     # Initialise mini capture session
     cbf.req.capture_destination(cbf_instrument, opts.ingest_host,
                                 opts.ingest_cbf_spead_port)
+    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_cam_spead_port)
     ingest.req.capture_init()
     cam2spead.req.start_stream()
-    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_cam_spead_port)
     cbf.req.capture_start(cbf_instrument)
 
     start_time = time.time()
@@ -186,7 +186,6 @@ try:
                 (event_time - start_time,))
 
     cbf.req.capture_stop(cbf_instrument)
-    cam2spead.req.remove_destination(opts.ingest_host, opts.ingest_cam_spead_port)
     cam2spead.req.stop_stream()
     ingest.req.capture_done()
 finally:
