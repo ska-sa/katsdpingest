@@ -331,7 +331,7 @@ class IngestDeviceServer(DeviceServer):
         self.cam_thread = None
 
          # now we make sure to sync the model to the output file
-        valid = self.model.is_valid(timespec=5)
+        valid = self.model.is_valid()
          # check to see if we are valid up until the last 5 seconds
         if not valid: logger.warning("Model is not valid. Writing to disk anyway.")
         self.model.finalise_h5_file(self.h5_file)
