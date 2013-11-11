@@ -11,7 +11,7 @@ import threading
 import spead
 import time
 import copy
-import katcapture.sigproc as sp
+import katsdpingest.sigproc as sp
 import logging
 
 timestamps_dataset = '/Data/timestamps'
