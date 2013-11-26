@@ -157,6 +157,8 @@ try:
     ingest.req.capture_init()
     cam2spead.req.stream_start(data_product)
     cbf.req.capture_start(cbf_instrument)
+    cam2spead.req.set_label(data_product, '')
+    cam2spead.req.set_obs_params(data_product, 'observer', 'Simmer')
 
     start_time = time.time()
     shift_time = lambda t: t - file_start_time + start_time

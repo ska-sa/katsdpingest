@@ -207,7 +207,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
         for bridge in self.sensor_bridges.itervalues():
             bridge.stop_listening()
 
-    def initial_spead_heap(self):
+    def initial_spead_heap(self, stream_name):
         """This creates the SPEAD item structure and fills in attributes."""
         self.ig = spead.ItemGroup()
         spead_id = SensorBridge.next_available_spead_id
@@ -217,6 +217,16 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
+        name = stream_name + '_label'
+        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        self.ig.add_item(name=name, id=spead_id, description='Observation label',
+                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        spead_id += 1
+        name = stream_name + '_obs_params'
+        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
+                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        spead_id += 1
         SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
@@ -285,6 +295,24 @@ class Cam2SpeadDeviceServer(DeviceServer):
                 self.transmit(self.ig.get_heap())
             transmit_time = time.time() - start
 
+    def set_label(self, name, label):
+        """Update label sensor on SPEAD stream."""
+        if self.streaming:
+            with self._spead_lock:
+                # Treat label as event-based string sensor on product "device"
+                update = "%r nominal %r" % (time.time(), label)
+                self.ig[name + '_label'] = update
+                self.transmit(self.ig.get_heap())
+
+    def set_obs_params(self, name, key, value):
+        """Update obs_params sensor on SPEAD stream."""
+        if self.streaming:
+            with self._spead_lock:
+                # Treat obs_params as event-based string sensor on "device"
+                update = "%r nominal %r %r" % (time.time(), key, value)
+                self.ig[name + '_obs_params'] = update
+                self.transmit(self.ig.get_heap())
+
     @request(Str(), Str(), Int())
     @return_reply(Str())
     def request_stream_configure(self, req, name=None, spead_host=None, spead_port=None):
@@ -320,7 +348,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
         """Start the SPEAD stream of KATCP sensor data."""
         self.register_sensors()
         self.start_listening()
-        self.init_heap = self.initial_spead_heap()
+        self.init_heap = self.initial_spead_heap(name)
         self.streaming = True
         # Start SPEAD transmitter thread and send initial heap
         self.start_destination(name)
@@ -347,3 +375,17 @@ class Cam2SpeadDeviceServer(DeviceServer):
         smsg = "SPEAD stream stopped"
         logger.info(smsg)
         return ("ok", smsg)
+
+    @request(Str(), Str())
+    @return_reply()
+    def request_set_label(self, req, name, label):
+        """Set a label on the desired SPEAD stream."""
+        self.set_label(name, label)
+        return ("ok",)
+
+    @request(Str(), Str(), Str())
+    @return_reply()
+    def request_set_obs_params(self, req, name, key, value):
+        """Set a label on the desired SPEAD stream."""
+        self.set_obs_params(name, key, value)
+        return ("ok",)
