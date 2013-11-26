@@ -125,7 +125,9 @@ logger = logging.getLogger("kat.ingest.simobserve")
 
 attributes, events = load_events(opts.cam_events)
 dataset = attributes.pop('sim_dataset')
+subarray = attributes.pop('sim_subarray')
 cbf_instrument = attributes.pop('sim_cbf_instrument')
+data_product = '_'.join((subarray, cbf_instrument))
 file_start_time = float(attributes.pop('sim_start_time'))
 file_end_time = float(attributes.pop('sim_end_time'))
 logger.info('Loaded %d attributes and %d sensor events associated with %g seconds of dataset %s' %
@@ -151,9 +153,9 @@ try:
     # Initialise mini capture session
     cbf.req.capture_destination(cbf_instrument, opts.ingest_host,
                                 opts.ingest_cbf_spead_port)
-    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_cam_spead_port)
+    cam2spead.req.stream_configure(data_product, opts.ingest_host, opts.ingest_cam_spead_port)
     ingest.req.capture_init()
-    cam2spead.req.start_stream()
+    cam2spead.req.stream_start(data_product)
     cbf.req.capture_start(cbf_instrument)
 
     start_time = time.time()
@@ -186,7 +188,7 @@ try:
                 (event_time - start_time,))
 
     cbf.req.capture_stop(cbf_instrument)
-    cam2spead.req.stop_stream()
+    cam2spead.req.stream_stop(data_product)
     ingest.req.capture_done()
 finally:
     server.stop()

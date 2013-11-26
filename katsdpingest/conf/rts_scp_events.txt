@@ -1,5 +1,6 @@
 # Attributes
 sim_dataset: 1350285196.h5
+sim_subarray: rts
 sim_cbf_instrument: k7
 sim_start_time: 1350285203.195
 sim_end_time: 1350285243.195
