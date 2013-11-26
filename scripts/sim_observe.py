@@ -77,7 +77,7 @@ def load_events(filename):
 # Obtain default sensor list and observation event files
 conf_dir = resource_filename('katsdpingest', 'conf')
 default_sensors = os.path.join(conf_dir, 'rts_sensors.csv')
-default_events = os.path.join(conf_dir, 'rts_scp_events.txt.gz')
+default_events = os.path.join(conf_dir, 'rts_scp_events.txt')
 
 # Parse command-line options
 parser = optparse.OptionParser(usage='%prog [options]',
