@@ -254,7 +254,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
         self.destinations[name] = (host, port, thread)
 
     def stop_destination(self, name):
-        """Remove destination for SPEAD stream and optionally stop the thread."""
+        """Stop the thread transmitting to named SPEAD stream."""
         if name not in self.destinations:
             return None, None
         host, port, thread = self.destinations[name]
@@ -263,7 +263,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
             thread.stop()
             thread.join()
             logger.debug("Stopped %s" % (thread.name,))
-        del self.destinations[name]
+        self.destinations[name] = (host, port, None)
         return host, port
 
     def report_destination(self, name):
@@ -330,6 +330,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
             if spead_host is None:
                 smsg = "Unknown SPEAD stream %r" % (name,)
             else:
+                del self.destinations[name]
                 smsg = "Removed thread transmitting SPEAD stream %r to port %s on %s" % \
                        (name, spead_port, spead_host)
             logger.info(smsg)
