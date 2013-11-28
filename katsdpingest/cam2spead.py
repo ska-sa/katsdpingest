@@ -8,7 +8,7 @@ import copy
 
 import spead
 from katcp import DeviceServer, Sensor
-from katcp.kattypes import request, return_reply, Str, Int
+from katcp.kattypes import request, return_reply, Str, Int, Address
 
 from katsdpingest import __version__
 
@@ -313,16 +313,17 @@ class Cam2SpeadDeviceServer(DeviceServer):
                 self.ig[name + '_obs_params'] = update
                 self.transmit(self.ig.get_heap())
 
-    @request(Str(), Str(), Int())
+    @request(Str(optional=True), Address(optional=True))
     @return_reply(Str())
-    def request_stream_configure(self, req, name=None, spead_host=None, spead_port=None):
+    def request_stream_configure(self, req, name=None, spead_dest=None):
         """Add destination for SPEAD stream."""
         # If no host is provided, report stream info via informs instead
-        if spead_host is None or spead_port is None:
+        if spead_dest is None:
             names = [name] if name is not None else self.destinations.keys()
             for name in names:
                 req.inform(self.report_destination(name))
             return ("ok", str(len(names)))
+        spead_host, spead_port = spead_dest
         # If the host is an empty string, deconfigure the stream
         if not spead_host:
             spead_host, spead_port = self.stop_destination(name)

@@ -16,7 +16,7 @@ import numpy as np
 from pkg_resources import resource_filename
 
 from katcp import DeviceServer, Sensor
-from katcp.kattypes import return_reply, Str
+from katcp.kattypes import return_reply, Str, Address
 import katconf
 from katcorelib import build_client
 from katsdpingest import __version__
@@ -153,7 +153,8 @@ try:
     # Initialise mini capture session
     cbf.req.capture_destination(cbf_instrument, opts.ingest_host,
                                 opts.ingest_cbf_spead_port)
-    cam2spead.req.stream_configure(data_product, opts.ingest_host, opts.ingest_cam_spead_port)
+    ingest_dest = Address().pack((opts.ingest_host, opts.ingest_cam_spead_port))
+    cam2spead.req.stream_configure(data_product, ingest_dest)
     ingest.req.capture_init()
     cam2spead.req.stream_start(data_product)
     cbf.req.capture_start(cbf_instrument)
