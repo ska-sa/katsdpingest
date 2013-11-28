@@ -323,22 +323,20 @@ class Cam2SpeadDeviceServer(DeviceServer):
             for name in names:
                 req.inform(self.report_destination(name))
             return ("ok", str(len(names)))
+        # If the host is an empty string, deconfigure the stream
+        if not spead_host:
+            spead_host, spead_port = self.stop_destination(name)
+            if spead_host is None:
+                smsg = "Unknown SPEAD stream %r" % (name,)
+            else:
+                smsg = "Removed thread transmitting SPEAD stream %r to port %s on %s" % \
+                       (name, spead_port, spead_host)
+            logger.info(smsg)
+            return ("ok", smsg)
+        # If a proper host is provided, configure the stream
         self.start_destination(name, spead_host, spead_port)
         smsg = "Added thread transmitting SPEAD stream %r to port %s on %s" \
                % (name, spead_port, spead_host)
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @request(Str())
-    @return_reply(Str())
-    def request_stream_remove(self, req, name):
-        """Remove destination for SPEAD stream."""
-        spead_host, spead_port = self.stop_destination(name)
-        if spead_host is None:
-            smsg = "Unknown SPEAD stream %r" % (name,)
-        else:
-            smsg = "Removed thread transmitting SPEAD stream %r to port %s on %s" % \
-                   (name, spead_port, spead_host)
         logger.info(smsg)
         return ("ok", smsg)
 
