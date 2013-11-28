@@ -241,9 +241,9 @@ class Cam2SpeadDeviceServer(DeviceServer):
         """Add destination for SPEAD stream and optionally start the thread."""
         host, port, thread = self.destinations.get(name, (spead_host, spead_port, None))
         # If thread already exists, replace it if destination differs
-        if thread and ((host != spead_host) or (port != spead_port)):
+        if spead_host and spead_port and ((host != spead_host) or (port != spead_port)):
             self.stop_destination(name)
-            thread = None
+            host, port, thread = spead_host, spead_port, None
         # If the stream has already started, create thread and join the fun
         if not thread and self.streaming:
             thread = TransmitThread(name, host, port)
@@ -279,7 +279,8 @@ class Cam2SpeadDeviceServer(DeviceServer):
         """Transmit SPEAD heap to all active destinations."""
         for name in self.destinations:
             host, port, thread = self.destinations[name]
-            thread.mailbox.put(copy.deepcopy(heap))
+            if thread:
+                thread.mailbox.put(copy.deepcopy(heap))
 
     def collate_and_transmit(self):
         """Periodically collate sensor updates and pass to transmitter threads."""
@@ -346,6 +347,8 @@ class Cam2SpeadDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_stream_start(self, req, name):
         """Start the SPEAD stream of KATCP sensor data."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.register_sensors()
         self.start_listening()
         self.init_heap = self.initial_spead_heap(name)
@@ -365,6 +368,8 @@ class Cam2SpeadDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_stream_stop(self, req, name):
         """Stop the SPEAD stream of KATCP sensor data."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.streaming = False
         self.stop_listening()
         # Ensure periodic collation thread is done
@@ -380,6 +385,8 @@ class Cam2SpeadDeviceServer(DeviceServer):
     @return_reply()
     def request_set_label(self, req, name, label):
         """Set a label on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.set_label(name, label)
         return ("ok",)
 
@@ -387,5 +394,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
     @return_reply()
     def request_set_obs_params(self, req, name, key, value):
         """Set a label on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.set_obs_params(name, key, value)
         return ("ok",)
