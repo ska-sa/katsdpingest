@@ -401,6 +401,7 @@ class K7CorrelatorModel(TestInterfaceModel):
 
     def run(self):
         while not self._stopEvent.isSet():
+            st = time.time()
             if not self._thread_paused:
                 st = time.time()
                 with self._data_lock:
@@ -413,7 +414,12 @@ class K7CorrelatorModel(TestInterfaceModel):
                            (self.nd > 0 and 'On' or 'Off')))
                 sys.stdout.write(status)
                 sys.stdout.flush()
+<<<<<<< HEAD
                 time.sleep(max(self._dump_period - (time.time() - st), 0.))
+=======
+            print ' sleep: ', max(self._dump_period - (time.time() - st), 0.) 
+            time.sleep(max(self._dump_period - (time.time() - st), 0.))
+>>>>>>> master
         self.send_stop()
         print "Correlator tx halted."
 
