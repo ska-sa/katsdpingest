@@ -353,10 +353,12 @@ class DBE7SpeadData(object):
 
     def spead_issue_all(self):
         """Issues all SPEAD metadata."""
+        st = time.time()
         self.spead_data_descriptor_issue()
         self.spead_static_meta_issue()
         self.spead_time_meta_issue()
         self.spead_eq_meta_issue()
+        self.syslogger.info("Took %.2f seconds to issue metadata" % (time.time() - st))
 
     spead_issue = spead_issue_all         # For compatibility with other simulator code
 

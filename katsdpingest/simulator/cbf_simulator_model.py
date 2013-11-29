@@ -278,13 +278,14 @@ class K7CorrelatorModel(TestInterfaceModel):
 
     def start(self, *names, **kwargs):
         self.set_mode('c8n856M32k', mode_delay=0)
-        self.spead_issue()
+        #self.spead_issue()
         super(K7CorrelatorModel, self).start(*names, **kwargs)
 
     def start_data_stream(self):
         if self.get_sensor('mode').value() == 'ready':
             raise RuntimeError("Cannot dump data in 'ready' mode")
         else:
+            print "Unpaused in sds"
             self._thread_paused = False
 
     def get_adc_snap_shot(self, when, level, inputs):
@@ -401,17 +402,18 @@ class K7CorrelatorModel(TestInterfaceModel):
     def run(self):
         while not self._stopEvent.isSet():
             if not self._thread_paused:
+                st = time.time()
                 with self._data_lock:
                     self.data = self.generate_data()
                 self.send_dump()
-                status = ("\rSending correlator dump at %s "
-                          "(dump period: %f s, multiplier: %i, noise_diode: %s)" %
-                          (time.ctime(), self._dump_period, self.multiplier,
+                tt = time.time() - st
+                status = ("Sending correlator dump at %.3f (%.2f) "
+                          "(dump period: %f s, multiplier: %i, noise_diode: %s)\n" %
+                          (time.time(), tt, self._dump_period, self.multiplier,
                            (self.nd > 0 and 'On' or 'Off')))
                 sys.stdout.write(status)
                 sys.stdout.flush()
-            st = time.time()
-            time.sleep(max(self._dump_period - (time.time() - st), 0.))
+                time.sleep(max(self._dump_period - (time.time() - st), 0.))
         self.send_stop()
         print "Correlator tx halted."
 
@@ -574,13 +576,15 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.get_sensor('destination_ip').set_value(self.config['rx_meta_ip_str'])
         self.get_sensor('mode').set_value(mode, Sensor.NOMINAL, time.time())
         self.get_sensor('channels').set_value(self.config['n_chans'])
-        if mode != 'ready':
-            self._thread_paused = False
+        #if mode != 'ready':
+        #    print "unpaused in mode ready"
+        #    self._thread_paused = False
 
     def pause_data(self):
         self._thread_paused = True
 
     def unpause_data(self):
+        print "unpaused"
         self._thread_paused = False
 
     def set_capture_destination(

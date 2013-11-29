@@ -342,7 +342,7 @@ class AntennaPositioner(TelescopeComponent):
 class CorrelatorBeamformer(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
-        self._critical_sensors = ['dbe_mode','target','center_frequency_hz']
+        self._critical_sensors = ['dbe_mode','target']
         self._std_sensors = ['auto_delay']
         self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
         self._std_attributes = ['center_freq']

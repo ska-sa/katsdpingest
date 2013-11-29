@@ -239,6 +239,7 @@ class CBFIngest(threading.Thread):
         sd_timestamp = None
 
         for heap in spead.iterheaps(rx):
+            st = time.time()
             if idx == 0:
                 self.status_sensor.set_value("capturing")
 
@@ -274,7 +275,7 @@ class CBFIngest(threading.Thread):
                  # we need to create the raw and timestamp datasets.
                 new_shape = list(data_item.shape)
                 new_shape[-2] = len(self.baseline_mask)
-                self.logger.debug("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
+                self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
                 self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
                 self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
@@ -329,7 +330,7 @@ class CBFIngest(threading.Thread):
              # (Once the final data format uses C64 instead of float32)
             self.rfi.init_flags()
              # begin flagging operations
-            self.rfi.proc()
+            #self.rfi.proc()
              # perform rfi thresholding
             flags = self.rfi.finalise_flags()
              # finalise flagging operations and return flag data to write
@@ -339,8 +340,6 @@ class CBFIngest(threading.Thread):
                      # write data to file (with temporary remap as mentioned above...)
 
             #### Send signal display information
-            self.logger.info("Sending signal display frame with timestamp %i (local: %f). %s." % (current_ts, time.time(), \
-                        "Unscaled" if not self.acc_scale else "Scaled by %i" % self.data_scale_factor))
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
@@ -351,8 +350,10 @@ class CBFIngest(threading.Thread):
 
             #### Done with writing this frame
             idx += 1
-            self.h5_file.flush()
+            if self.h5_file is not None: self.h5_file.flush()
             self.pkt_sensor.set_value(idx)
+            tt = time.time() - st
+            self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
 
         #### Stop received.
 
