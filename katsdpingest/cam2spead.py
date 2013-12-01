@@ -302,7 +302,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
             with self._spead_lock:
                 # Treat label as event-based string sensor on product "device"
                 update = "%r nominal %r" % (time.time(), label)
-                self.ig[name + '_label'] = update
+                self.ig['label'] = update
                 self.transmit(self.ig.get_heap())
 
     def set_obs_params(self, name, key, value):
@@ -311,7 +311,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
             with self._spead_lock:
                 # Treat obs_params as event-based string sensor on "device"
                 update = "%r nominal %r %r" % (time.time(), key, value)
-                self.ig[name + '_obs_params'] = update
+                self.ig['obs_params'] = update
                 self.transmit(self.ig.get_heap())
 
     @request(Str(optional=True), Address(optional=True))
