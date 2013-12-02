@@ -527,6 +527,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285232.43 m062_pos_actual_scan_azim nominal 180.039459675
 1350285232.45 m063_pos_request_scan_azim nominal 180.039524483
 1350285232.5 anc_asc_wind_speed nominal 4.505
+1350285232.56 obs_params nominal script_arguments --observer=katpull
 1350285232.61 m063_pos_actual_scan_azim nominal 180.039620602
 1350285232.61 m063_pos_request_scan_elev nominal 30.6595512218
 1350285232.76 m062_pos_request_scan_elev nominal 30.6598722407
@@ -565,6 +566,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285234.71 m062_pos_request_scan_elev nominal 30.6598688256
 1350285234.72 anc_asc_wind_speed nominal 4.2025
 1350285234.72 anc_asc_wind_speed nominal 4.2025
+1350285234.77 obs_params nominal script_name simobserve.py
 1350285234.81 m062_pos_request_scan_azim nominal 180.039510823
 1350285234.81 m063_pos_actual_scan_elev nominal 30.6592724551
 1350285234.85 m062_pos_actual_scan_azim nominal 180.039559569
@@ -603,6 +605,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285236.9 m063_pos_actual_scan_elev nominal 30.6596797549
 1350285236.93 anc_asc_wind_speed nominal 4.1
 1350285236.93 anc_asc_air_pressure nominal 894.4
+1350285236.95 obs_params nominal ants m062,m063
 1350285236.93 m062_pos_request_scan_azim nominal 180.039497163
 1350285237.0 m063_pos_request_scan_azim nominal 180.039497163
 1350285237.1 m063_pos_request_scan_elev nominal 30.6595409766
@@ -815,4 +818,3 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285248.70 m063_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
 1350285248.71 m063_activity nominal track
 1350285248.72 m062_activity nominal track
-1350285248.77 obs_params nominal ants m062,m063
