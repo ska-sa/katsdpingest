@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger("katsdpingest.telescope_model")
 logger.setLevel(logging.INFO)
 
-hdf5_version = 3.0
+hdf5_version = "3.0"
  # the version number is intrinsically linked to the telescope model, as this
  # is the arbiter of file structure and format
 
@@ -66,6 +66,9 @@ class Sensor(object):
 
     def set_value(self, sensor_string):
         (value_time, status, sensor_value) = sensor_string.split(" ",2)
+        if status == 'unknown':
+            logger.debug("Sensor {0} has type unknown. Not updating value.".format(self.name))
+            return
         value_time = float(value_time)
         value = eval(sensor_value,{})
          # schwardts doing
@@ -179,7 +182,7 @@ class TelescopeModel(object):
         """
         f = h5py.File(filename, mode="r")
         version = str(f['/'].attrs['version'])
-        if version != str(hdf5_version):
+        if version != hdf5_version:
             logger.error("Attempt to load version {0} into a version {1} model.".format(version, hdf5_version))
             return
         cls_count = sensor_count = attr_count = 0
@@ -236,12 +239,12 @@ class TelescopeModel(object):
                 s = c.sensors[sensor]
                 try:
                     c_group.create_dataset(s.name,data=s.get_dataset())
+                    if s.spead_item is not None:
+                        c_group[s.name].attrs['description'] = s.spead_item.description
                 except ValueError:
                     logger.warning("Failed to create dataset {0}/{1} as the model has no values".format(comp_base, s.name))
                 except RuntimeError:
                     logger.warning("Failed to insert dataset {0}/{1} as it already exists".format(comp_base, s.name))
-                if s.spead_item is not None:
-                    c_group[s.name].attrs['description'] = s.spead_item.description
 
     def close_h5_file(self, f):
         filename = f.filename
@@ -325,7 +328,7 @@ class TelescopeModel(object):
                         if dest.spead_item is None: dest.spead_item = item
                         item._changed = False
                     except ValueError as e:
-                        logger.warning("Failed to set value: {0}".format(e.message))
+                        logger.warning("Failed to set {} to {}".format(item_name, item_value))
                         continue
                 except KeyError:
                     logger.debug("Item {0} not in index.".format(item_name))

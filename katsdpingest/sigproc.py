@@ -6,7 +6,7 @@ import numpy as np
 import scipy.signal as signal
 
 import katpoint
-from katsdisp.data import CorrProdRef
+from katsdpdisp import CorrProdRef
 from .vanvleck import create_correction
 from .antsol import stefcal
 from .__init__ import __version__ as revision
