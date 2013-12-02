@@ -9,7 +9,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 # Sensors
 1350285202.91 anc_asc_wind_speed nominal 3.9075
 1350285203.00 obs_label nominal scan
-1350285203.06 auto_delay nominal 1
+1350285203.06 cbf_auto_delay nominal 1
 1350285203.09 m063_pos_request_scan_elev nominal 30.6596263539
 1350285203.26 m062_pos_request_scan_elev nominal 30.6599439577
 1350285203.35 m063_pos_actual_scan_elev nominal 30.6595882435
