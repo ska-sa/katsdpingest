@@ -2,32 +2,13 @@
 sim_dataset: 1350285196.h5
 sim_subarray: rts
 sim_cbf_instrument: k7
-sim_start_time: 1350285203.195
-sim_end_time: 1350285243.195
+sim_start_time: 1350285200.00
+sim_end_time: 1350285250.00
 m062_description: m062, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 25.095 -9.095 0.045, -0:05:30.6 0 -0:00:03.3 0:02:14.2 0:00:01.6 -0:01:30.6 0:08:42.1, 1.22
 m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -0.236, -0:05:15.9 0 -0:01:24.1 0:02:48.2 -0:03:25.2 0:02:08.6 0:08:37.2, 1.22
 # Sensors
-1350284001.01 cbf_target nominal PKS J1130-1449, radec gaincal, 11:30:07.05, -14:49:27.2
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_mode nominal c8n856M32k
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284499.53 cbf_dbe_centerfrequency nominal 150000000
-1350284510.21 m062_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
-1350284510.22 m063_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
-1350284907.23 m063_activity nominal track
-1350284907.38 m062_activity nominal track
-1350285196.6 cbf_auto_delay nominal 0
 1350285202.91 anc_asc_wind_speed nominal 3.9075
+1350285203.00 obs_label nominal scan
 1350285203.09 m063_pos_request_scan_elev nominal 30.6596263539
 1350285203.26 m062_pos_request_scan_elev nominal 30.6599439577
 1350285203.35 m063_pos_actual_scan_elev nominal 30.6595882435
@@ -824,3 +805,13 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285248.55 m063_pos_request_scan_azim nominal 180.039442521
 1350285248.65 m063_pos_request_scan_elev nominal 30.6595136558
 1350285248.67 m063_pos_actual_scan_azim nominal 180.039420774
+1350285248.68 cbf_dbe_mode nominal c8n856M32k
+1350285248.69 m062_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
+1350285248.70 m063_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
+1350285248.71 m063_activity nominal track
+1350285248.72 m062_activity nominal track
+1350285248.73 obs_params nominal reduction_name QT_2_10_Receptor_Spectral_Baseline
+1350285248.74 obs_params nominal observer katpull
+1350285248.75 obs_params nominal description Just a test - basically track.py
+1350285248.76 obs_params nominal experiment_id 1
+1350285248.77 obs_params nominal ants m062,m063

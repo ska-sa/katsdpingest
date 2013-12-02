@@ -217,16 +217,16 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
-        name = 'obs_label'
-        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
-        self.ig.add_item(name=name, id=spead_id, description='Observation label',
-                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-        spead_id += 1
-        name = 'obs_params'
-        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
-        self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
-                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-        spead_id += 1
+        #name = 'obs_label'
+        #logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        #self.ig.add_item(name=name, id=spead_id, description='Observation label',
+        #                 shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        #spead_id += 1
+        #name = 'obs_params'
+        #logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        #self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
+        #                 shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        #spead_id += 1
         SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %

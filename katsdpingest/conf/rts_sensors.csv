@@ -20,3 +20,5 @@ anc_asc_air_relative_humidity, Relative humidity, percent, float
 anc_asc_air_temperature, Air temperature, degC, float
 anc_asc_wind_direction, Wind direction angle, deg, float
 anc_asc_wind_speed, Wind speed, m/s, float
+obs_params, Observation parameters in key space value form, , string
+obs_label, Observation labelling, , string

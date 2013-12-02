@@ -234,13 +234,13 @@ class CorrConf:
         if self.config['ddc_mix_freq'] > 0:
             if self.config['mode'] == MODE_WB:
                 self.config['bandwidth'] = float(self.config['adc_clk']) / self.config['ddc_decimation']
-                self.config['center_freq'] = float(self.config['adc_clk']) * self.config['ddc_mix_freq']
+                self.config['center_freq'] = self.config['rf_bandwidth'] + (float(self.config['adc_clk']) * self.config['ddc_mix_freq'])
             else:
                 raise RuntimeError("Undefined for other modes.")
         else:
             if self.config['mode'] == MODE_WB:
                 self.config['bandwidth'] = self.config['adc_clk'] / 2.
-                self.config['center_freq'] = self.config['bandwidth'] / 2.
+                self.config['center_freq'] = self.config['bandwidth'] * (3/2.)
             elif self.config['mode'] == MODE_NB:
                 self.config['bandwidth'] = (self.config['adc_clk'] / 2.) / self.config['coarse_chans']
                 self.config['center_freq'] = self.config['bandwidth'] / 2.
@@ -395,9 +395,9 @@ class CorrConf:
                 raise RuntimeError('ERR bf_cal_default_input%i_beam%i not poly or coeffs'%(input_n, beam_n))
             
             self.logger.info('%i beam beamformer found in this design outputting %s data.'%(self.config['bf_n_beams'], self.config['bf_data_type']))
-        except Exception:
-            self.logger.info('No beamformer found in this design', exc_info=True)
-            return
+        except TypeError:
+            self.logger.info('No beamformer found in this design')
+        return
     
     def write(self,section,variable,value):
         print 'Writing to the config file. Mostly, this is a bad idea. Mostly. Doing nothing.'
