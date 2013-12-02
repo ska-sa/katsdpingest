@@ -16,7 +16,7 @@ import numpy as np
 from pkg_resources import resource_filename
 
 from katcp import DeviceServer, Sensor
-from katcp.kattypes import return_reply, Str
+from katcp.kattypes import return_reply, Str, Address
 import katconf
 from katcorelib import build_client
 from katsdpingest import __version__
@@ -77,7 +77,7 @@ def load_events(filename):
 # Obtain default sensor list and observation event files
 conf_dir = resource_filename('katsdpingest', 'conf')
 default_sensors = os.path.join(conf_dir, 'rts_sensors.csv')
-default_events = os.path.join(conf_dir, 'rts_scp_events.txt.gz')
+default_events = os.path.join(conf_dir, 'rts_scp_events.txt')
 
 # Parse command-line options
 parser = optparse.OptionParser(usage='%prog [options]',
@@ -125,7 +125,9 @@ logger = logging.getLogger("kat.ingest.simobserve")
 
 attributes, events = load_events(opts.cam_events)
 dataset = attributes.pop('sim_dataset')
+subarray = attributes.pop('sim_subarray')
 cbf_instrument = attributes.pop('sim_cbf_instrument')
+data_product = '_'.join((subarray, cbf_instrument))
 file_start_time = float(attributes.pop('sim_start_time'))
 file_end_time = float(attributes.pop('sim_end_time'))
 logger.info('Loaded %d attributes and %d sensor events associated with %g seconds of dataset %s' %
@@ -151,10 +153,13 @@ try:
     # Initialise mini capture session
     cbf.req.capture_destination(cbf_instrument, opts.ingest_host,
                                 opts.ingest_cbf_spead_port)
-    cam2spead.req.add_destination(opts.ingest_host, opts.ingest_cam_spead_port)
+    ingest_dest = Address().pack((opts.ingest_host, opts.ingest_cam_spead_port))
+    cam2spead.req.stream_configure(data_product, ingest_dest)
     ingest.req.capture_init()
-    cam2spead.req.start_stream()
+    cam2spead.req.stream_start(data_product)
     cbf.req.capture_start(cbf_instrument)
+    cam2spead.req.set_obs_label(data_product, 'sim')
+    cam2spead.req.set_obs_param(data_product, 'observer', 'Simmer')
 
     start_time = time.time()
     shift_time = lambda t: t - file_start_time + start_time
@@ -186,7 +191,7 @@ try:
                 (event_time - start_time,))
 
     cbf.req.capture_stop(cbf_instrument)
-    cam2spead.req.stop_stream()
+    cam2spead.req.stream_stop(data_product)
     ingest.req.capture_done()
 finally:
     server.stop()

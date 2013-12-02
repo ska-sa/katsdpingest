@@ -8,7 +8,7 @@ import copy
 
 import spead
 from katcp import DeviceServer, Sensor
-from katcp.kattypes import request, return_reply, Str, Int
+from katcp.kattypes import request, return_reply, Str, Int, Address
 
 from katsdpingest import __version__
 
@@ -116,9 +116,9 @@ class SensorBridge(object):
 
 class TransmitThread(threading.Thread):
     """Thread which transmits SPEAD heaps to a particular destination."""
-    def __init__(self, spead_host, spead_port):
+    def __init__(self, name, spead_host, spead_port):
         threading.Thread.__init__(self)
-        self.name = 'SpeadTxThread(%s:%d)' % (spead_host, spead_port)
+        self.name = 'SpeadTxThread(%s->%s:%d)' % (name, spead_host, spead_port)
         self.mailbox = Queue.Queue()
         self._transmit = spead.Transmitter(spead.TransportUDPtx(spead_host,
                                                                 spead_port))
@@ -207,7 +207,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
         for bridge in self.sensor_bridges.itervalues():
             bridge.stop_listening()
 
-    def initial_spead_heap(self):
+    def initial_spead_heap(self, stream_name):
         """This creates the SPEAD item structure and fills in attributes."""
         self.ig = spead.ItemGroup()
         spead_id = SensorBridge.next_available_spead_id
@@ -217,6 +217,16 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
+        name = 'obs_label'
+        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        self.ig.add_item(name=name, id=spead_id, description='Observation label',
+                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        spead_id += 1
+        name = 'obs_params'
+        logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
+        self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
+                         shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+        spead_id += 1
         SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
@@ -227,34 +237,50 @@ class Cam2SpeadDeviceServer(DeviceServer):
                              init_val=bridge.last_update)
         return self.ig.get_heap()
 
-    def start_destination(self, spead_host, spead_port):
+    def start_destination(self, name, spead_host=None, spead_port=None):
         """Add destination for SPEAD stream and optionally start the thread."""
-        dest = (spead_host, spead_port)
-        thread = self.destinations.get(dest, None)
+        host, port, thread = self.destinations.get(name, (spead_host, spead_port, None))
+        # If thread already exists, replace it if destination differs
+        if spead_host and spead_port and ((host != spead_host) or (port != spead_port)):
+            self.stop_destination(name)
+            host, port, thread = spead_host, spead_port, None
         # If the stream has already started, create thread and join the fun
         if not thread and self.streaming:
-            thread = TransmitThread(spead_host, spead_port)
+            thread = TransmitThread(name, host, port)
             thread.start()
             thread.mailbox.put(copy.deepcopy(self.init_heap))
             logger.debug("Started %s and sent initial SPEAD packet with %d items" %
                          (thread.name, len(self.ig.ids())))
-        self.destinations[dest] = thread
+        self.destinations[name] = (host, port, thread)
 
-    def stop_destination(self, spead_host, spead_port):
-        """Remove destination for SPEAD stream and optionally stop the thread."""
-        dest = (spead_host, spead_port)
-        thread = self.destinations.get(dest, None)
+    def stop_destination(self, name):
+        """Stop the thread transmitting to named SPEAD stream."""
+        if name not in self.destinations:
+            return None, None
+        host, port, thread = self.destinations[name]
         # Stop transmitter thread if running
         if thread and thread.is_alive():
             thread.stop()
             thread.join()
             logger.debug("Stopped %s" % (thread.name,))
-        del self.destinations[dest]
+        self.destinations[name] = (host, port, None)
+        return host, port
+
+    def report_destination(self, name):
+        """Report destination IP and port associated with SPEAD stream name."""
+        if name not in self.destinations:
+            return 'SPEAD stream %r unknown' % (name,)
+        else:
+            host, port, thread = self.destinations[name]
+            return 'SPEAD stream %r -> %s:%d [%s]' % \
+                   (name, host, port, 'ACTIVE' if thread else 'INACTIVE')
 
     def transmit(self, heap):
         """Transmit SPEAD heap to all active destinations."""
-        for thread in self.destinations.itervalues():
-            thread.mailbox.put(copy.deepcopy(heap))
+        for name in self.destinations:
+            host, port, thread = self.destinations[name]
+            if thread:
+                thread.mailbox.put(copy.deepcopy(heap))
 
     def collate_and_transmit(self):
         """Periodically collate sensor updates and pass to transmitter threads."""
@@ -270,16 +296,65 @@ class Cam2SpeadDeviceServer(DeviceServer):
                 self.transmit(self.ig.get_heap())
             transmit_time = time.time() - start
 
+    def set_obs_label(self, name, label):
+        """Update observation label sensor on SPEAD stream."""
+        if self.streaming:
+            with self._spead_lock:
+                # Treat label as event-based string sensor on product "device"
+                update = "%r nominal %r" % (time.time(), label)
+                self.ig['obs_label'] = update
+                self.transmit(self.ig.get_heap())
+
+    def set_obs_param(self, name, key, value):
+        """Update observation parameter sensor on SPEAD stream."""
+        if self.streaming:
+            with self._spead_lock:
+                # Treat obs_params as event-based string sensor on "device"
+                update = "%r nominal %r" % (time.time(), ' '.join((key, value)))
+                self.ig['obs_params'] = update
+                self.transmit(self.ig.get_heap())
+
+    @request(Str(optional=True), Address(optional=True))
     @return_reply(Str())
-    def request_start_stream(self, req, msg):
+    def request_stream_configure(self, req, name=None, spead_dest=None):
+        """Add destination for SPEAD stream."""
+        # If no host is provided, report stream info via informs instead
+        if spead_dest is None:
+            names = [name] if name is not None else self.destinations.keys()
+            for name in names:
+                req.inform(self.report_destination(name))
+            return ("ok", str(len(names)))
+        spead_host, spead_port = spead_dest
+        # If the host is an empty string, deconfigure the stream
+        if not spead_host:
+            spead_host, spead_port = self.stop_destination(name)
+            if spead_host is None:
+                smsg = "Unknown SPEAD stream %r" % (name,)
+            else:
+                del self.destinations[name]
+                smsg = "Removed thread transmitting SPEAD stream %r to port %s on %s" % \
+                       (name, spead_port, spead_host)
+            logger.info(smsg)
+            return ("ok", smsg)
+        # If a proper host is provided, configure the stream
+        self.start_destination(name, spead_host, spead_port)
+        smsg = "Added thread transmitting SPEAD stream %r to port %s on %s" \
+               % (name, spead_port, spead_host)
+        logger.info(smsg)
+        return ("ok", smsg)
+
+    @request(Str())
+    @return_reply(Str())
+    def request_stream_start(self, req, name):
         """Start the SPEAD stream of KATCP sensor data."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.register_sensors()
         self.start_listening()
-        self.init_heap = self.initial_spead_heap()
+        self.init_heap = self.initial_spead_heap(name)
         self.streaming = True
-        # Start all existing SPEAD transmitter threads and send initial heap
-        for dest in self.destinations:
-            self.start_destination(*dest)
+        # Start SPEAD transmitter thread and send initial heap
+        self.start_destination(name)
         # Start periodic collation thread
         # (automatically terminates when stream is stopped)
         self.tx_thread = threading.Thread(target=self.collate_and_transmit,
@@ -289,37 +364,37 @@ class Cam2SpeadDeviceServer(DeviceServer):
         logger.info(smsg)
         return ("ok", smsg)
 
-    @request(Str(), Int())
+    @request(Str())
     @return_reply(Str())
-    def request_add_destination(self, req, spead_host, spead_port):
-        """Add destination for SPEAD stream."""
-        self.start_destination(spead_host, spead_port)
-        smsg = "Added thread transmitting SPEAD to port %s on %s" \
-               % (spead_port, spead_host)
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @request(Str(), Int())
-    @return_reply(Str())
-    def request_remove_destination(self, req, spead_host, spead_port):
-        """Remove destination for SPEAD stream."""
-        self.stop_destination(spead_host, spead_port)
-        smsg = "Removed thread transmitting SPEAD to port %s on %s" % \
-               (spead_port, spead_host)
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @return_reply(Str())
-    def request_stop_stream(self, req, msg):
+    def request_stream_stop(self, req, name):
         """Stop the SPEAD stream of KATCP sensor data."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.streaming = False
         self.stop_listening()
         # Ensure periodic collation thread is done
         if self.tx_thread:
             self.tx_thread.join()
-        # Stop all SPEAD transmitter threads
-        for dest in self.destinations.keys():
-            self.stop_destination(*dest)
+        # Stop SPEAD transmitter thread
+        self.stop_destination(name)
         smsg = "SPEAD stream stopped"
         logger.info(smsg)
         return ("ok", smsg)
+
+    @request(Str(), Str())
+    @return_reply()
+    def request_set_obs_label(self, req, name, label):
+        """Set an observation label on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
+        self.set_obs_label(name, label)
+        return ("ok",)
+
+    @request(Str(), Str(), Str())
+    @return_reply()
+    def request_set_obs_param(self, req, name, key, value):
+        """Set an observation parameter on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
+        self.set_obs_param(name, key, value)
+        return ("ok",)
