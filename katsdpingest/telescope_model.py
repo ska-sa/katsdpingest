@@ -363,5 +363,6 @@ class Digitiser(TelescopeComponent):
 class Observation(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Observation, self).__init__(*args, **kwargs)
+        self._critical_sensors = ['label','params']
         self._build()
 

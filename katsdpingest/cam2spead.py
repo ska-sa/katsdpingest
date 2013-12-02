@@ -217,12 +217,12 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
-        name = stream_name + '_label'
+        name = 'obs_label'
         logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
         self.ig.add_item(name=name, id=spead_id, description='Observation label',
                          shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
         spead_id += 1
-        name = stream_name + '_obs_params'
+        name = 'obs_params'
         logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
         self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
                          shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
@@ -296,21 +296,21 @@ class Cam2SpeadDeviceServer(DeviceServer):
                 self.transmit(self.ig.get_heap())
             transmit_time = time.time() - start
 
-    def set_label(self, name, label):
-        """Update label sensor on SPEAD stream."""
+    def set_obs_label(self, name, label):
+        """Update observation label sensor on SPEAD stream."""
         if self.streaming:
             with self._spead_lock:
                 # Treat label as event-based string sensor on product "device"
                 update = "%r nominal %r" % (time.time(), label)
-                self.ig['label'] = update
+                self.ig['obs_label'] = update
                 self.transmit(self.ig.get_heap())
 
-    def set_obs_params(self, name, key, value):
-        """Update obs_params sensor on SPEAD stream."""
+    def set_obs_param(self, name, key, value):
+        """Update observation parameter sensor on SPEAD stream."""
         if self.streaming:
             with self._spead_lock:
                 # Treat obs_params as event-based string sensor on "device"
-                update = "%r nominal %r %r" % (time.time(), key, value)
+                update = "%r nominal %r" % (time.time(), ' '.join((key, value)))
                 self.ig['obs_params'] = update
                 self.transmit(self.ig.get_heap())
 
@@ -383,18 +383,18 @@ class Cam2SpeadDeviceServer(DeviceServer):
 
     @request(Str(), Str())
     @return_reply()
-    def request_set_label(self, req, name, label):
-        """Set a label on the desired SPEAD stream."""
+    def request_set_obs_label(self, req, name, label):
+        """Set an observation label on the desired SPEAD stream."""
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
-        self.set_label(name, label)
+        self.set_obs_label(name, label)
         return ("ok",)
 
     @request(Str(), Str(), Str())
     @return_reply()
-    def request_set_obs_params(self, req, name, key, value):
-        """Set a label on the desired SPEAD stream."""
+    def request_set_obs_param(self, req, name, key, value):
+        """Set an observation parameter on the desired SPEAD stream."""
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
-        self.set_obs_params(name, key, value)
+        self.set_obs_param(name, key, value)
         return ("ok",)
