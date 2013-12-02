@@ -9,6 +9,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 # Sensors
 1350285202.91 anc_asc_wind_speed nominal 3.9075
 1350285203.00 obs_label nominal scan
+1350285203.06 auto_delay nominal 1
 1350285203.09 m063_pos_request_scan_elev nominal 30.6596263539
 1350285203.26 m062_pos_request_scan_elev nominal 30.6599439577
 1350285203.35 m063_pos_actual_scan_elev nominal 30.6595882435
@@ -660,6 +661,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285240.11 anc_asc_wind_speed nominal 3.7975
 1350285240.11 anc_asc_air_temperature nominal 21.555
 1350285240.11 anc_asc_wind_direction nominal 77.76
+1350285240.21 obs_params nominal reduction_name QT_2_10_Receptor_Spectral_Baseline
 1350285240.22 m062_pos_request_scan_elev nominal 30.6598551653
 1350285240.35 m062_pos_actual_scan_elev nominal 30.6599854355
 1350285240.35 m062_pos_actual_scan_azim nominal 180.039359781
@@ -695,6 +697,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285242.07 m063_pos_actual_scan_azim nominal 180.039520634
 1350285242.18 m062_pos_request_scan_elev nominal 30.6598483351
 1350285242.23 anc_asc_wind_speed nominal 3.5425
+1350285242.25 obs_params nominal observer katpull
 1350285242.33 m062_pos_actual_scan_elev nominal 30.6597722405
 1350285242.33 m062_pos_actual_scan_azim nominal 180.039359568
 1350285242.4 m063_pos_actual_scan_elev nominal 30.6593303667
@@ -733,6 +736,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285244.4 m062_pos_request_scan_azim nominal 180.039456182
 1350285244.42 m062_pos_actual_scan_azim nominal 180.03965957
 1350285244.46 anc_asc_wind_speed nominal 3.8225
+1350285244.47 obs_params nominal description Just a test - basically track.py
 1350285244.47 m063_pos_request_scan_azim nominal 180.039456182
 1350285244.57 m063_pos_request_scan_elev nominal 30.6595239011
 1350285244.6 m063_pos_actual_scan_azim nominal 180.039520742
@@ -770,6 +774,7 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285246.58 m063_pos_actual_scan_azim nominal 180.039520796
 1350285246.59 anc_asc_wind_speed nominal 3.2475
 1350285246.59 anc_asc_air_pressure nominal 894.2
+1350285246.63 obs_params nominal experiment_id 1
 1350285246.69 m063_pos_request_scan_elev nominal 30.6595170709
 1350285246.73 m062_pos_request_scan_elev nominal 30.6598380898
 1350285246.84 m062_pos_actual_scan_elev nominal 30.6596752662
@@ -810,8 +815,4 @@ m063_description: m063, -30:43:17.3, 21:24:38.5, 1038.0, 12.0, 90.2892 26.3773 -
 1350285248.70 m063_target nominal SCP, radec, 0:00:00.00, -90:00:00.0
 1350285248.71 m063_activity nominal track
 1350285248.72 m062_activity nominal track
-1350285248.73 obs_params nominal reduction_name QT_2_10_Receptor_Spectral_Baseline
-1350285248.74 obs_params nominal observer katpull
-1350285248.75 obs_params nominal description Just a test - basically track.py
-1350285248.76 obs_params nominal experiment_id 1
 1350285248.77 obs_params nominal ants m062,m063
