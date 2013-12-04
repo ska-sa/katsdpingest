@@ -77,7 +77,6 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
-        self._my_sensors["label"] = Sensor.string("label", "The label applied to the data as currently captured.","")
 
         self._my_sensors["obs-ants"] = Sensor.string("script-ants","The antennas specified by the user for use by the executed script.","")
         self._my_sensors["obs-script-name"] = Sensor.string("script-name", "Current script name", "")
@@ -111,7 +110,6 @@ class IngestDeviceServer(DeviceServer):
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
                 self._my_sensors[sensor].set_value(0)
              # take care of basic defaults to ensure sensor status is 'nominal'
-        self._my_sensors["label"].set_value("no_thread")
         self._my_sensors["status"].set_value("init")
 
     @return_reply(Str())
@@ -278,15 +276,6 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is not None:
             self.cbf_thread.add_sdisp_ip(ip, port)
         return ("ok","Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
-
-    @request(Str())
-    @return_reply(Str())
-    def request_set_label(self, req, label):
-        """Set the current scan label to the supplied value."""
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
-        self._my_sensors["label"].set_value(label)
-        self.cbf_thread.write_label(label)
-        return ("ok","Label set to %s" % label)
 
     @return_reply(Str())
     def request_get_current_file(self, req, msg):

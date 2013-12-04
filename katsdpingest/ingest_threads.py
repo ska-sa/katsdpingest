@@ -15,11 +15,8 @@ import katsdpingest.sigproc as sp
 import logging
 
 timestamps_dataset = '/Data/timestamps'
-flags_dataset = '/Markup/flags'
+flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
-correlator_map = '/MetaData/Configuration/Correlator/'
-observation_map = '/MetaData/Configuration/Observation/'
- # default path for things that are not mentioned above
 obs_sensors = ['obs_ants','obs_script_arguments','obs_description','obs_experiment_id','obs_script_name','obs_observer','obs_starttime','obs_endtime','obs_status']
  # sensors to update based on observation parameters set by the executing script
 sdisp_ips = {}
@@ -66,7 +63,6 @@ class CBFIngest(threading.Thread):
 
         self.data_scale_factor = 1.0
         self.acc_scale = True
-        self._label_idx = 0
         self._log_idx = 0
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -94,7 +90,7 @@ class CBFIngest(threading.Thread):
          # basic rfi thresholding flagger
         self.flags_description = [[nm,self.rfi.flag_descriptions[i]] for (i,nm) in enumerate(self.rfi.flag_names)]
          # an array describing the flags produced by the rfi flagger
-        self.h5_file['/Markup'].create_dataset('flags_description',data=self.flags_description)
+        self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
          # insert flags descriptions into output file
         self.van_vleck = self.ant_gains = None
          # defer creation until we know baseline ordering
@@ -155,9 +151,6 @@ class CBFIngest(threading.Thread):
                 mdata = copy.deepcopy(self._sd_metadata)
                 tx.send_heap(mdata)
 
-    def remap(self, name):
-        return name in mapping and mapping[name] or correlator_map + name
-
     def write_log(self, log):
         """Write a log value directly into the current hdf5 file."""
         if self._log_idx > 0:
@@ -193,14 +186,6 @@ class CBFIngest(threading.Thread):
                     self.logger.warning("H5 file contains no data and hence no timestamps")
                     # exception if there is no data (and hence no timestamps) in the file.
         else: self.logger.warning("Write timestamps called, but h5 file already closed. No timestamps will be written.")
-
-    def write_label(self, label):
-        """Write a sensor value directly into the current hdf5 at the specified locations.
-           Note that this will create a new HDF5 file if one does not already exist..."""
-        if self._label_idx > 0:
-            self.h5_file['/Markup/labels'].resize(self._label_idx+1,axis=0)
-        self.h5_file['/Markup/labels'][self._label_idx] = (time.time(), label)
-        self._label_idx += 1
 
     def finalise(self):
         """Write any final information to file and mark file as not current."""
@@ -337,7 +322,7 @@ class CBFIngest(threading.Thread):
             self.h5_file[flags_dataset][idx] = flags
              # write flags to file
             self.h5_file[cbf_data_dataset][idx] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
-                     # write data to file (with temporary remap as mentioned above...)
+             # write data to file (with temporary remap as mentioned above...)
 
             #### Send signal display information
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
