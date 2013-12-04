@@ -6,6 +6,7 @@
 # Currently has a CBFIngest and CAMIngest class
 #
 # Details on these are provided in the class documentation
+
 import numpy as np
 import threading
 import spead
@@ -14,13 +15,13 @@ import copy
 import katsdpingest.sigproc as sp
 import logging
 
+
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
-obs_sensors = ['obs_ants','obs_script_arguments','obs_description','obs_experiment_id','obs_script_name','obs_observer','obs_starttime','obs_endtime','obs_status']
- # sensors to update based on observation parameters set by the executing script
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
+
 
 class CAMIngest(threading.Thread):
     """The CAM Ingest class receives meta-data updates in the form
@@ -36,8 +37,7 @@ class CAMIngest(threading.Thread):
         threading.Thread.__init__(self)
 
     def enable_debug(self, debug):
-        if debug: self.logger.setLevel(logging.DEBUG)
-        else: self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
         self.logger.info("Meta-data reception on port %i" % self.meta_data_port)
@@ -50,6 +50,7 @@ class CAMIngest(threading.Thread):
 
         self.logger.info("CAM ingest thread complete at %f" % time.time())
 
+
 class CBFIngest(threading.Thread):
     def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
@@ -61,8 +62,6 @@ class CBFIngest(threading.Thread):
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
 
-        self.data_scale_factor = 1.0
-        self.acc_scale = True
         self._log_idx = 0
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -76,8 +75,6 @@ class CBFIngest(threading.Thread):
         self.ig_sd = spead.ItemGroup()
         self.timestamps = []
          # temporary timestamp store
-        self.int_time = 1.0
-         # default integration time in seconds. Updated by SPEAD metadata on stream initiation.
         self.sd_frame = None
         self.baseline_mask = None
          # by default record all baselines
@@ -212,7 +209,6 @@ class CBFIngest(threading.Thread):
         ig = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
-        dump_size = 0
         datasets = {}
         datasets_index = {}
         current_dbe_target = ''
@@ -280,8 +276,8 @@ class CBFIngest(threading.Thread):
                  # initialise the signal display data frame
 
             if sd_slots is None:
-                self.sd_frame.dtype = np.dtype(np.float32) # if self.acc_scale else ig[name].dtype
-                         # make sure we have the right dtype for the sd data
+                self.sd_frame.dtype = np.dtype(np.float32)
+                 # make sure we have the right dtype for the sd data
                 sd_slots = np.zeros(self.cbf_attr['n_chans'].value/data_item.shape[0])
                 self.send_sd_metadata()
 
@@ -345,4 +341,3 @@ class CBFIngest(threading.Thread):
         self.logger.info("CBF ingest complete at %f" % time.time())
         self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
-
