@@ -10,20 +10,15 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
-import numpy as np
 import spead
-import h5py
 import sys
 import time
 import optparse
-import threading
 import Queue
-import copy
-import os
 import logging
 
-from katcp import DeviceServer, Sensor, Message
-from katcp.kattypes import request, return_reply, Str, Int, Float
+from katcp import DeviceServer, Sensor
+from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
@@ -32,7 +27,8 @@ from katsdpingest.ingest_threads import CAMIngest, CBFIngest
  # complete model passed in.
 from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, TelescopeModel, Observation
 
-import katconf
+# import katconf
+
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
@@ -44,12 +40,13 @@ def parse_opts(argv):
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
     parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
-            help='level to use for basic logging or name of logging configuration file; ' \
-            'default is /log/log.<SITENAME>.conf')
+                      help='level to use for basic logging or name of logging configuration file; '
+                           'default is /log/log.<SITENAME>.conf')
     return parser.parse_args(argv)
 
+
 class IngestDeviceServer(DeviceServer):
-    """Serves the ingest katcp interface. 
+    """Serves the ingest katcp interface.
     Top level holder of the ingest threads and the owner of any output files."""
 
     VERSION_INFO = ("sdp-ingest", 0, 1)
@@ -74,10 +71,9 @@ class IngestDeviceServer(DeviceServer):
             self.sdisp_ips[ip] = sdisp_port
          # add additional user specified ip
         self._my_sensors = {}
-        self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params = [0,1])
+        self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
-        self._my_sensors["label"] = Sensor.string("label", "The label applied to the data as currently captured.","")
 
         self._my_sensors["obs-ants"] = Sensor.string("script-ants","The antennas specified by the user for use by the executed script.","")
         self._my_sensors["obs-script-name"] = Sensor.string("script-name", "Current script name", "")
@@ -111,7 +107,6 @@ class IngestDeviceServer(DeviceServer):
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
                 self._my_sensors[sensor].set_value(0)
              # take care of basic defaults to ensure sensor status is 'nominal'
-        self._my_sensors["label"].set_value("no_thread")
         self._my_sensors["status"].set_value("init")
 
     @return_reply(Str())
@@ -279,15 +274,6 @@ class IngestDeviceServer(DeviceServer):
             self.cbf_thread.add_sdisp_ip(ip, port)
         return ("ok","Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
 
-    @request(Str())
-    @return_reply(Str())
-    def request_set_label(self, req, label):
-        """Set the current scan label to the supplied value."""
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
-        self._my_sensors["label"].set_value(label)
-        self.cbf_thread.write_label(label)
-        return ("ok","Label set to %s" % label)
-
     @return_reply(Str())
     def request_get_current_file(self, req, msg):
         """Return the name of the current (or most recent) capture file."""
@@ -347,6 +333,7 @@ class IngestDeviceServer(DeviceServer):
                  # set all SPEAD sensors to unknown when thread has stopped
         logger.info(smsg)
         return ("ok", smsg)
+
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)

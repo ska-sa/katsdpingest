@@ -206,13 +206,6 @@ class TelescopeModel(object):
         for this version of the telescope model."""
         f = h5py.File(filename, mode="w")
         f['/'].create_group('Data')
-        f['/'].create_group('MetaData')
-        f['/'].create_group('MetaData/Configuration')
-        f['/'].create_group('MetaData/Configuration/Observation')
-        f['/'].create_group('MetaData/Configuration/Correlator')
-        f['/'].create_group('Markup')
-        f['/Markup'].create_dataset('labels', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('label', h5py.new_vlen(str))]))
-         # create a label storage of variable length strings
         f['/'].create_group('History')
         f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
         f['/History'].create_dataset('process_log',[1], maxshape=[None], dtype=np.dtype([('process', h5py.new_vlen(str)), ('arguments', h5py.new_vlen(str)), ('revision', np.int32)]))
