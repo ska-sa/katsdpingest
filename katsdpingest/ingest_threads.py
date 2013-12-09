@@ -216,7 +216,7 @@ class CBFIngest(threading.Thread):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             if self.data_host.rfind("+") > 0:
                 host_base, host_number = self.data_host.split("+")
-                hosts = ["{}.{}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number))]
+                hosts = ["{}.{}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
             else:
                 hosts = [self.data_host]
             for h in hosts:
