@@ -14,6 +14,8 @@ import time
 import copy
 import katsdpingest.sigproc as sp
 import logging
+import socket
+import struct
 
 
 timestamps_dataset = '/Data/timestamps'
@@ -21,6 +23,8 @@ flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
+MULTICAST_PREFIXES = ['224']
+ # list of prefixes used to determine a multicast address
 
 
 class CAMIngest(threading.Thread):
@@ -52,10 +56,11 @@ class CAMIngest(threading.Thread):
 
 
 class CBFIngest(threading.Thread):
-    def __init__(self, data_port, h5_file, my_sensors, model, cbf_name, logger):
+    def __init__(self, data_host, data_port, h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.data_port = data_port
+        self.data_host = data_host
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -204,7 +209,21 @@ class CBFIngest(threading.Thread):
 
     def run(self):
         self.logger.info("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("Data reception on port %i" % self.data_port)
+        self.logger.info("Data reception on {}:{}".format(self.data_host, self.data_port))
+        if self.data_host[:self.data_host.find('.')] in MULTICAST_PREFIXES:
+         # if we have a multicast address we need to subscribe to the appropriate groups...
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if self.data_host.rfind("+") > 0:
+                host_base, host_number = self.data_host.split("+")
+                hosts = ["{}.{}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
+            else:
+                hosts = [self.data_host]
+            for h in hosts:
+                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                 # subscribe to each of these hosts
+            self.logger.info("Subscribing to the following multicast addresses: {}".format(hosts))
         rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
         ig = spead.ItemGroup()
         idx = 0
