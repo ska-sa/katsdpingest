@@ -35,6 +35,7 @@ def parse_opts(argv):
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and meta-data from CBF on')
+    parser.add_option('--data-host', default='127.0.0.1', help='default host to receive SPEAD data from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--meta-data-port', default=7147, type=int, help='port to receive SPEAD meta-data from CAM on')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
@@ -170,7 +171,7 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+        self.cbf_thread = CBFIngest(opts.data_host, opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
         self.cam_thread = CAMIngest(opts.meta_data_port, self.h5_file, self.model, cam_logger)
