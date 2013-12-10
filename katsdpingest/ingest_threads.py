@@ -23,7 +23,7 @@ flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
-MULTICAST_PREFIXES = ['224']
+MULTICAST_PREFIXES = ['224', '239']
  # list of prefixes used to determine a multicast address
 
 
