@@ -32,9 +32,10 @@ class CAMIngest(threading.Thread):
     of sensor information from the CAM via SPEAD. It uses these to
     update a model of the telescope that is specific to the current
     ingest configuration (subarray)."""
-    def __init__(self, meta_data_port, h5_file, model, logger):
+    def __init__(self, spead_host, spead_port, h5_file, model, logger):
         self.logger = logger
-        self.meta_data_port = meta_data_port
+        self.spead_host = spead_host
+        self.spead_port = spead_port
         self.h5_file = h5_file
         self.model = model
         self.ig = None
@@ -44,9 +45,24 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
-        self.logger.info("Meta-data reception on port %i" % self.meta_data_port)
         self.ig = spead.ItemGroup()
-        rx_md = spead.TransportUDPrx(self.meta_data_port)
+        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
+        self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
+        if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
+         # if we have a multicast address we need to subscribe to the appropriate groups...
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if self.spead_host.rfind("+") > 0:
+                host_base, host_number = self.spead_host.split("+")
+                hosts = ["{0}.{1}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
+            else:
+                hosts = [self.spead_host]
+            for h in hosts:
+                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                 # subscribe to each of these hosts
+            self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
+        rx_md = spead.TransportUDPrx(self.spead_port)
 
         for heap in spead.iterheaps(rx_md):
             self.ig.update(heap)
@@ -56,11 +72,11 @@ class CAMIngest(threading.Thread):
 
 
 class CBFIngest(threading.Thread):
-    def __init__(self, data_host, data_port, h5_file, my_sensors, model, cbf_name, logger):
+    def __init__(self, spead_host, spead_port, h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.data_port = data_port
-        self.data_host = data_host
+        self.spead_port = spead_port
+        self.spead_host = spead_host
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -208,23 +224,23 @@ class CBFIngest(threading.Thread):
              # new connection requires headers...
 
     def run(self):
-        self.logger.info("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("Data reception on {0}:{1}".format(self.data_host, self.data_port))
-        if self.data_host[:self.data_host.find('.')] in MULTICAST_PREFIXES:
+        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
+        self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
+        if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
          # if we have a multicast address we need to subscribe to the appropriate groups...
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if self.data_host.rfind("+") > 0:
-                host_base, host_number = self.data_host.split("+")
+            if self.spead_host.rfind("+") > 0:
+                host_base, host_number = self.spead_host.split("+")
                 hosts = ["{0}.{1}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
             else:
-                hosts = [self.data_host]
+                hosts = [self.spead_host]
             for h in hosts:
                 mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx = spead.TransportUDPrx(self.data_port, pkt_count=1024, buffer_size=51200000)
+        rx = spead.TransportUDPrx(self.spead_port, pkt_count=1024, buffer_size=51200000)
         ig = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
