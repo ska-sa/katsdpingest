@@ -90,8 +90,7 @@ class TelescopeModelTestCases(unittest.TestCase):
          # we should now be valid
         self.assertTrue(a.is_valid())
          # make sure we cannot overwrite value
-        with self.assertRaises(ValueError):
-            a.set_value(a_val)
+        self.assertRaises(ValueError, lambda: a.set_value(a_val))
 
     def testModelSensors(self):
          # test manipulating sensors in the model
