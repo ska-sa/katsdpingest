@@ -321,7 +321,7 @@ class TelescopeModel(object):
                         if dest.spead_item is None: dest.spead_item = item
                         item._changed = False
                     except ValueError as e:
-                        logger.warning("Failed to set {} to {}".format(item_name, item_value))
+                        logger.warning("Failed to set {0} to {1}".format(item_name, item_value))
                         continue
                 except KeyError:
                     logger.debug("Item {0} not in index.".format(item_name))
