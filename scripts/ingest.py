@@ -34,9 +34,10 @@ def parse_opts(argv):
     parser = optparse.OptionParser()
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
-    parser.add_option('--data-port', default=7148, type=int, help='port to receive SPEAD data and meta-data from CBF on')
-    parser.add_option('--data-host', default='127.0.0.1', help='default host to receive SPEAD data from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
-    parser.add_option('--meta-data-port', default=7147, type=int, help='port to receive SPEAD meta-data from CAM on')
+    parser.add_option('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on')
+    parser.add_option('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
+    parser.add_option('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on')
+    parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
@@ -171,10 +172,10 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(opts.data_host, opts.data_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+        self.cbf_thread = CBFIngest(opts.cbf_spead_host, opts.cbf_spead_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.meta_data_port, self.h5_file, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
@@ -298,12 +299,12 @@ class IngestDeviceServer(DeviceServer):
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.data_port))
+            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead_port))
             tx.end()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.meta_data_port))
+            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cam_spead_port))
             tx.end()
             time.sleep(1)
 
