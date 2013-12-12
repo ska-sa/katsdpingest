@@ -11,7 +11,7 @@ setup (
     include_package_data = True,
     scripts = [
         "scripts/ingest.py",
-        "scripts/cbf_simulator.py",
+        "scripts/cbf_data_simulator.py",
         "scripts/cam2spead.py",
         "scripts/sim_observe.py",
         ],
