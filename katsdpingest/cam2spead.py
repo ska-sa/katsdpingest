@@ -217,16 +217,6 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
-        #name = 'obs_label'
-        #logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
-        #self.ig.add_item(name=name, id=spead_id, description='Observation label',
-        #                 shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-        #spead_id += 1
-        #name = 'obs_params'
-        #logger.debug("Registering sensor %r with SPEAD id 0x%x" % (name, spead_id))
-        #self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
-        #                 shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-        #spead_id += 1
         SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
@@ -235,6 +225,20 @@ class Cam2SpeadDeviceServer(DeviceServer):
                              description=bridge.katcp_sensor.description,
                              shape=-1, fmt=spead.mkfmt(('s', 8)),
                              init_val=bridge.last_update)
+        # Register observation sensors explicitly as they do not exist on KAT object,
+        # but sim_observe will actually provide them as sensors, hence check first
+        name = 'obs_label'
+        if name not in self.ig.keys():
+            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
+            self.ig.add_item(name=name, id=spead_id, description='Observation label',
+                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+            spead_id += 1
+        name = 'obs_params'
+        if name not in self.ig.keys():
+            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
+            self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
+                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+            spead_id += 1
         return self.ig.get_heap()
 
     def start_destination(self, name, spead_host=None, spead_port=None):
