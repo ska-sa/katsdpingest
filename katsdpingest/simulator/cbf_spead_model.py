@@ -88,7 +88,8 @@ class DBE7SpeadData(object):
 
     def spead_labelling_issue(self):
         tx=self.tx
-        ig=self.data_ig
+        ig=spead.ItemGroup()
+
 #        ig.add_item(name="bls_ordering",id=0x100C,
 #            description="The output ordering of the baselines from each X engine. Packed as a pair of unsigned integers, ant1,ant2 where ant1 < ant2.",
 #            shape=[self.config['n_bls'],2],fmt=spead.mkfmt(('u',16)),
