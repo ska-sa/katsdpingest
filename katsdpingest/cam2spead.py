@@ -206,7 +206,6 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
-        SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
@@ -228,6 +227,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
                             shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
             spead_id += 1
+        SensorBridge.next_available_spead_id = spead_id
         return self.ig.get_heap()
 
     def start_destination(self, name, spead_host=None, spead_port=None):
