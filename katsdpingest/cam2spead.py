@@ -227,6 +227,12 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
                             shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
             spead_id += 1
+        name = 'obs_script_log'
+        if name not in self.ig.keys():
+            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
+            self.ig.add_item(name=name, id=spead_id, description='Observation script log',
+                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+            spead_id += 1
         SensorBridge.next_available_spead_id = spead_id
         return self.ig.get_heap()
 
@@ -416,4 +422,13 @@ class Cam2SpeadDeviceServer(DeviceServer):
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.update_sensor('obs_params', ' '.join((key, value)))
+        return ("ok",)
+
+    @request(Str(), Str())
+    @return_reply()
+    def request_script_log(self, req, name, log):
+        """Add an entry to the script log on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
+        self.update_sensor('obs_script_log', log)
         return ("ok",)
