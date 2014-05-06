@@ -360,5 +360,5 @@ class Observation(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Observation, self).__init__(*args, **kwargs)
         self._critical_sensors = ['label','params']
+        self._std_sensors = ['script_log']
         self._build()
-

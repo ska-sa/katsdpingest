@@ -83,7 +83,6 @@ class CBFIngest(threading.Thread):
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
 
-        self._log_idx = 0
         self._process_log_idx = 0
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
@@ -168,13 +167,6 @@ class CBFIngest(threading.Thread):
             for tx in self.sdisp_ips.itervalues():
                 mdata = copy.deepcopy(self._sd_metadata)
                 tx.send_heap(mdata)
-
-    def write_log(self, log):
-        """Write a log value directly into the current hdf5 file."""
-        if self._log_idx > 0:
-            self.h5_file['/History/script_log'].resize(self._log_idx+1,axis=0)
-        self.h5_file['/History/script_log'][self._log_idx] = (time.time(), log)
-        self._log_idx += 1
 
     def write_process_log(self, process, args, revision):
         """Write an entry into the process log."""

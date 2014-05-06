@@ -25,8 +25,8 @@ class SensorBridge(object):
         Sensor name (used to name the corresponding SPEAD item)
     katcp_sensor : :class:`katcorelib.KATSensor` object
         Sensor object representing KATCP sensor
-    server : :class:`Cam2SpeadDeviceServer` object
-        Device server that serves SPEAD stream
+    server : :class:`Cam2SpeadDeviceServer` object or similar
+        Device server that serves SPEAD stream (via update_sensor method)
 
     """
 
@@ -78,22 +78,11 @@ class SensorBridge(object):
             self._sensor._kattype._valid_values.add(value_string)
         # First convert value string to intended type to get appropriate repr()
         value = self._sensor.parse_value(value_string)
-        # All KATCP events are sent as strings containing space-separated
-        # value_timestamp + status + value, regardless of KATCP type
-        # (consistent with the fact that KATCP data is string-based on the wire)
-        update = "%r %s %r" % (value_seconds, status, value)
-        logger.debug("Updating sensor %r: %s" % (self.name, update))
-        # A lock is needed because each KATCP device client runs in its own
-        # thread while calling this callback and the main SPEAD item group
-        # of the server is shared among them (blame ig.get_heap()...)
-        if self.server.streaming:
-            with self.server._spead_lock:
-                self.server.ig[self.name] = update
-                # Transmit event-based updates immediately, while other updates
-                # are periodically resampled in a separate thread
-                if self.strategy == 'event':
-                    self.server.transmit(self.server.ig.get_heap())
-        self.last_update = update
+        # Transmit event-based updates immediately, while other updates
+        # are periodically resampled in a separate thread
+        self.last_update = self.server.update_sensor(self.name, value,
+                                                     value_seconds, status,
+                                                     self.strategy == 'event')
 
     def start_listening(self):
         """Start listening to sensor and send updates to SPEAD stream."""
@@ -217,7 +206,6 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
             spead_id += 1
-        SensorBridge.next_available_spead_id = spead_id
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
@@ -239,6 +227,13 @@ class Cam2SpeadDeviceServer(DeviceServer):
             self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
                             shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
             spead_id += 1
+        name = 'obs_script_log'
+        if name not in self.ig.keys():
+            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
+            self.ig.add_item(name=name, id=spead_id, description='Observation script log',
+                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
+            spead_id += 1
+        SensorBridge.next_available_spead_id = spead_id
         return self.ig.get_heap()
 
     def start_destination(self, name, spead_host=None, spead_port=None):
@@ -300,23 +295,49 @@ class Cam2SpeadDeviceServer(DeviceServer):
                 self.transmit(self.ig.get_heap())
             transmit_time = time.time() - start
 
-    def set_obs_label(self, name, label):
-        """Update observation label sensor on SPEAD stream."""
-        if self.streaming:
-            with self._spead_lock:
-                # Treat label as event-based string sensor on product "device"
-                update = "%r nominal %r" % (time.time(), label)
-                self.ig['obs_label'] = update
-                self.transmit(self.ig.get_heap())
+    def update_sensor(self, name, value,
+                      timestamp=None, status=None, transmit=True):
+        """Construct KATCP sensor update and optionally push to SPEAD stream.
 
-    def set_obs_param(self, name, key, value):
-        """Update observation parameter sensor on SPEAD stream."""
+        All KATCP events are sent as strings containing space-separated
+        value_timestamp + status + value, regardless of KATCP type
+        (consistent with the fact that KATCP data is string-based on the wire).
+
+        Parameters
+        ----------
+        name : string
+            Sensor name (used to name the corresponding SPEAD item)
+        value : object
+            Sensor value in original type (will be repr'ed onto the stream)
+        timestamp : float or None, optional
+            Unix timestamp when sensor value was measured (defaults to now)
+        status : string or None, optional
+            Status of this update (defaults to 'nominal' -> all is well)
+        transmit : {True, False}, optional
+            True if update should be streamed immediately (as opposed to later)
+
+        Returns
+        -------
+        update : string
+            Constructed KATCP sensor update string (even if not streaming)
+
+        """
+        timestamp = time.time() if not timestamp else timestamp
+        status = 'nominal' if not status else status
+        update = "%r %s %r" % (timestamp, status, value)
+        action = 'Received'
+        # A lock is needed because each KATCP device client runs in its own
+        # thread while calling this method via callback and the main SPEAD item
+        # group of the server is shared among them (blame ig.get_heap()...)
         if self.streaming:
+            action = 'Updated'
             with self._spead_lock:
-                # Treat obs_params as event-based string sensor on "device"
-                update = "%r nominal %r" % (time.time(), ' '.join((key, value)))
-                self.ig['obs_params'] = update
-                self.transmit(self.ig.get_heap())
+                self.ig[name] = update
+                if transmit:
+                    action = 'Transmitted'
+                    self.transmit(self.ig.get_heap())
+        logger.debug("%s sensor %r: %s" % (action, name, update))
+        return update
 
     @request(Str(optional=True), Address(optional=True))
     @return_reply(Str())
@@ -391,7 +412,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
         """Set an observation label on the desired SPEAD stream."""
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
-        self.set_obs_label(name, label)
+        self.update_sensor('obs_label', label)
         return ("ok",)
 
     @request(Str(), Str(), Str())
@@ -400,5 +421,14 @@ class Cam2SpeadDeviceServer(DeviceServer):
         """Set an observation parameter on the desired SPEAD stream."""
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
-        self.set_obs_param(name, key, value)
+        self.update_sensor('obs_params', ' '.join((key, value)))
+        return ("ok",)
+
+    @request(Str(), Str())
+    @return_reply()
+    def request_script_log(self, req, name, log):
+        """Add an entry to the script log on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
+        self.update_sensor('obs_script_log', log)
         return ("ok",)

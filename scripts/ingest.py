@@ -242,17 +242,6 @@ class IngestDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_script_log(self, req, log):
-        """Add an entry to the script log."""
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_start")
-        self._my_sensors["script-log"].set_value(log)
-        self.cbf_thread.write_log(log)
-        smsg = "Script log entry added (%s)" % log
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @request(Str())
-    @return_reply(Str())
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
         if self.cbf_thread is not None:
