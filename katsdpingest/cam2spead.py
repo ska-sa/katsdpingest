@@ -57,9 +57,9 @@ class Cam2SpeadDeviceServer(DeviceServer):
     all_sensors : group of :class:`katcp.Sensor` objects
         Object (e.g. a :class:`katcorelib.ObjectGroup`) with all available
         sensors as attributes
-    sensor_list : list of tuples of 3 strings
+    sensor_list : list of tuples of 4 strings
         List of sensors to listen to, and corresponding sensor strategy to be
-        set as (name, strategy, param) tuple
+        set as (name, description, strategy, param) tuple
     tx_period : float
         Non-event based sensor updates will be periodically resampled with
         this period in seconds and collated into a single SPEAD packet
@@ -88,7 +88,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
 
     def register_sensors(self):
         """Register all requested KATCP sensors, skipping the unknown ones."""
-        for name, strategy, param in self.sensor_strategies:
+        for name, desc, strategy, param in self.sensor_strategies:
             if name not in self.sensor_bridges:
                 try:
                     sensor = getattr(self.sensors, name)

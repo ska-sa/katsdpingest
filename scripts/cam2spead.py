@@ -78,10 +78,12 @@ else:
 # Load names of sensors to be streamed
 sensors = np.loadtxt(opts.sensor_list, delimiter=',', skiprows=1, dtype=np.str)
 sensor_names = [line[0].strip() for line in sensors]
+sensor_descriptions = [line[1].strip() for line in sensors]
 # Antenna position sensors are currently the only high-frequency sensors that
 # update too regularly to be treated as event sensors
-sensor_list = [(name, 'period', '0.4') if name.find('_pos_') > 0 else
-               (name, 'event', '') for name in sensor_names]
+sensor_list = [(name, desc, 'period', '0.4') if name.find('_pos_') > 0 else
+               (name, desc, 'event', '') for (name, desc) in
+               zip(sensor_names, sensor_descriptions)]
 logger.info('Listening to %d attributes and %d sensors selected from %d %s ones' %
             (len(attributes), len(sensor_list),
              len([k for k in vars(all_sensors) if k.find('_') > 0]),
