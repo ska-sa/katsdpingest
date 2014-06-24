@@ -1,4 +1,4 @@
-"""Bridge between single KATCP sensor and corresponding SPEAD item in stream."""
+"""Bridge between single sensor and corresponding SPEAD item in stream."""
 
 import logging
 
@@ -9,6 +9,50 @@ logger = logging.getLogger(__name__)
 
 
 class SensorBridge(object):
+    """Bridge between single sensor and corresponding SPEAD item in stream.
+
+    Parameters
+    ----------
+    name : string
+        Sensor name (used to name the corresponding SPEAD item)
+    description : string
+        Sensor description (which becomes the SPEAD item description)
+
+    Attributes
+    ----------
+    spead_id : int
+        SPEAD ID associated with sensor item
+    last_update : string
+        Last sensor update in form of "timestamp status 'value'" string
+    strategy : string
+        Name of strategy used to monitor sensor
+    param : string
+        Parameter of selected strategy
+
+    """
+
+    # Pick a SPEAD id range that is not in use here
+    next_available_spead_id = 0x7000
+
+    def __init__(self, name, description):
+        self.name = name
+        self.description = description
+        self.spead_id = SensorBridge.next_available_spead_id
+        SensorBridge.next_available_spead_id += 1
+        self.last_update = ''
+        self.strategy = 'none'
+        self.param = ''
+
+    def start_listening(self):
+        """Start listening to sensor and send updates to SPEAD stream."""
+        pass
+
+    def stop_listening(self):
+        """Stop listening to sensor and stop updates to SPEAD stream."""
+        pass
+
+
+class KatcpSensorBridge(object):
     """Bridge between single KATCP sensor and corresponding SPEAD item in stream.
 
     Parameters
@@ -21,33 +65,16 @@ class SensorBridge(object):
         Device server that serves SPEAD stream (via update_sensor method)
 
     """
-
-    # Pick a SPEAD id range that is not in use here
-    next_available_spead_id = 0x7000
-
     def __init__(self, name, katcp_sensor, server):
-        self.name, self.katcp_sensor, self.server = name, katcp_sensor, server
-        self.spead_id = SensorBridge.next_available_spead_id
-        SensorBridge.next_available_spead_id += 1
-        self.strategy = 'none'
-        self.param = ''
+        super(KatcpSensorBridge, self).__init__(name, katcp_sensor.description)
+        self.katcp_sensor, self.server = katcp_sensor, server
         self.listening = False
-        self.last_update = ''
         # Store katcp.Sensor which will be used to parse KATCP string in listener
         sensor_type = Sensor.parse_type(self.katcp_sensor.type)
         params = ['unknown'] if sensor_type == Sensor.DISCRETE else None
         self._sensor = Sensor(sensor_type, self.katcp_sensor.name,
                               self.katcp_sensor.description, self.katcp_sensor.units,
                               params)
-
-    def store_strategy(self, strategy, param):
-        """Store sensor strategy if it has changed."""
-        if strategy == self.strategy and param == self.param:
-            return
-        self.strategy = strategy
-        self.param = param
-        logger.info("Registered KATCP sensor %r with strategy (%r, %r) and SPEAD id 0x%x" %
-                    (self.name, self.strategy, self.param, self.spead_id))
 
     def listen(self, update_seconds, value_seconds, status, value_string):
         """Callback that pushes KATCP sensor update to SPEAD stream.
@@ -93,3 +120,18 @@ class SensorBridge(object):
             self.katcp_sensor.set_strategy('none')
             logger.debug("Stopped listening to sensor %r" % (self.name,))
             self.listening = False
+
+
+class VirtualSensorBridge(SensorBridge):
+    """Bridge between single virtual sensor and corresponding SPEAD item.
+
+    Parameters
+    ----------
+    name : string
+        Sensor name (used to name the corresponding SPEAD item)
+    description : string
+        Sensor description (which becomes the SPEAD item description)
+
+    """
+    def __init__(self, name, description):
+        super(VirtualSensorBridge, self).__init__(name, description)
