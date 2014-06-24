@@ -9,7 +9,8 @@ import copy
 import spead
 from katcp import DeviceServer
 from katcp.kattypes import request, return_reply, Str, Int, Address
-from katsdpingest.sensorbridge import SensorBridge
+from katsdpingest.sensorbridge import (SensorBridge, KatcpSensorBridge,
+                                       VirtualSensorBridge)
 from katsdpingest import __version__
 
 
@@ -87,17 +88,28 @@ class Cam2SpeadDeviceServer(DeviceServer):
         pass
 
     def register_sensors(self):
-        """Register all requested KATCP sensors, skipping the unknown ones."""
+        """Register all requested sensors assuming unknown ones are virtual."""
         for name, desc, strategy, param in self.sensor_strategies:
+            action = ''
             if name not in self.sensor_bridges:
                 try:
                     sensor = getattr(self.sensors, name)
                 except AttributeError:
-                    logger.warning("Could not register unavailable KATCP sensor %r" % (name,))
-                    continue
-                self.sensor_bridges[name] = SensorBridge(name, sensor, self)
+                    logger.debug("No KATCP sensor %r, assuming it is virtual" % (name,))
+                    self.sensor_bridges[name] = VirtualSensorBridge(name, desc)
+                    action = 'Registered virtual'
+                else:
+                    self.sensor_bridges[name] = KatcpSensorBridge(name, sensor, self)
+                    action = 'Registered KATCP'
             # It is possible to change the strategy on an existing sensor bridge
-            self.sensor_bridges[name].store_strategy(strategy, param)
+            bridge = self.sensor_bridges[name]
+            if not action and bridge.strategy == strategy and bridge.param == param:
+                continue
+            bridge.strategy = strategy
+            bridge.param = param
+            action = 'Updated existing' if not action else action
+            logger.info("%s sensor %r with strategy (%r, %r) and SPEAD id 0x%x"
+                        % (action, name, strategy, param, bridge.spead_id))
 
     def start_listening(self):
         """Start listening to all registered sensors."""
@@ -112,41 +124,20 @@ class Cam2SpeadDeviceServer(DeviceServer):
     def initial_spead_heap(self, stream_name):
         """This creates the SPEAD item structure and fills in attributes."""
         self.ig = spead.ItemGroup()
-        spead_id = SensorBridge.next_available_spead_id
         for name, value in self.attributes.items():
+            spead_id = SensorBridge.next_available_spead_id
             logger.debug("Registering attribute %r with SPEAD id 0x%x and value %s" %
                          (name, spead_id, value))
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
-            spead_id += 1
+            SensorBridge.next_available_spead_id += 1
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
             self.ig.add_item(name=name, id=bridge.spead_id,
-                             description=bridge.katcp_sensor.description,
+                             description=bridge.description,
                              shape=-1, fmt=spead.mkfmt(('s', 8)),
                              init_val=bridge.last_update)
-        # Register observation sensors explicitly as they do not exist on KAT object,
-        # but sim_observe will actually provide them as sensors, hence check first
-        name = 'obs_label'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation label',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        name = 'obs_params'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        name = 'obs_script_log'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation script log',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        SensorBridge.next_available_spead_id = spead_id
         return self.ig.get_heap()
 
     def start_destination(self, name, spead_host=None, spead_port=None):
