@@ -25,9 +25,7 @@ class SensorBridge(object):
     last_update : string
         Last sensor update in form of "timestamp status 'value'" string
     strategy : string
-        Name of strategy used to monitor sensor
-    param : string
-        Parameter of selected strategy
+        Strategy used to monitor sensor (including possible parameters)
 
     """
 
@@ -41,7 +39,6 @@ class SensorBridge(object):
         SensorBridge.next_available_spead_id += 1
         self.last_update = ''
         self.strategy = 'none'
-        self.param = ''
 
     def start_listening(self):
         """Start listening to sensor and send updates to SPEAD stream."""
@@ -73,8 +70,8 @@ class KatcpSensorBridge(object):
         sensor_type = Sensor.parse_type(self.katcp_sensor.type)
         params = ['unknown'] if sensor_type == Sensor.DISCRETE else None
         self._sensor = Sensor(sensor_type, self.katcp_sensor.name,
-                              self.katcp_sensor.description, self.katcp_sensor.units,
-                              params)
+                              self.katcp_sensor.description,
+                              self.katcp_sensor.units, params)
 
     def listen(self, update_seconds, value_seconds, status, value_string):
         """Callback that pushes KATCP sensor update to SPEAD stream.
@@ -106,7 +103,8 @@ class KatcpSensorBridge(object):
     def start_listening(self):
         """Start listening to sensor and send updates to SPEAD stream."""
         if not self.listening:
-            self.katcp_sensor.set_strategy(self.strategy, self.param)
+            strategy, _, strategy_params = self.strategy.partition(' ')
+            self.katcp_sensor.set_strategy(strategy, strategy_params)
             self.katcp_sensor.register_listener(self.listen)
             # This triggers the callback to obtain a valid last_update
             self.katcp_sensor.get_value()

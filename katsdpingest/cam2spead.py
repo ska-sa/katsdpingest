@@ -59,9 +59,9 @@ class Cam2SpeadDeviceServer(DeviceServer):
     all_sensors : group of :class:`katcp.Sensor` objects
         Object (e.g. a :class:`katcorelib.ObjectGroup`) with all available
         sensors as attributes
-    sensor_list : list of tuples of 4 strings
-        List of sensors to listen to, and corresponding sensor strategy to be
-        set as (name, description, strategy, param) tuple
+    sensor_list : list of tuples of 3 strings
+        List of sensors to listen to, and corresponding description and sensor
+        strategy to be set as (name, description, strategy) tuple
     tx_period : float
         Non-event based sensor updates will be periodically resampled with
         this period in seconds and collated into a single SPEAD packet
@@ -90,7 +90,7 @@ class Cam2SpeadDeviceServer(DeviceServer):
 
     def register_sensors(self):
         """Register all requested sensors assuming unknown ones are virtual."""
-        for name, desc, strategy, param in self.sensor_strategies:
+        for name, desc, strategy in self.sensor_strategies:
             action = ''
             if name not in self.sensor_bridges:
                 try:
@@ -104,13 +104,12 @@ class Cam2SpeadDeviceServer(DeviceServer):
                     action = 'Registered KATCP'
             # It is possible to change the strategy on an existing sensor bridge
             bridge = self.sensor_bridges[name]
-            if not action and bridge.strategy == strategy and bridge.param == param:
+            if not action and bridge.strategy == strategy:
                 continue
             bridge.strategy = strategy
-            bridge.param = param
             action = 'Updated existing' if not action else action
-            logger.info("%s sensor %r with strategy (%r, %r) and SPEAD id 0x%x"
-                        % (action, name, strategy, param, bridge.spead_id))
+            logger.info("%s sensor %r with strategy %r and SPEAD id 0x%x" %
+                        (action, name, strategy, bridge.spead_id))
 
     def start_listening(self):
         """Start listening to all registered sensors."""

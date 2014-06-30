@@ -81,8 +81,8 @@ sensor_names = [line[0].strip() for line in sensors]
 sensor_descriptions = [line[1].strip() for line in sensors]
 # Antenna position sensors are currently the only high-frequency sensors that
 # update too regularly to be treated as event sensors
-sensor_list = [(name, desc, 'period', '0.4') if name.find('_pos_') > 0 else
-               (name, desc, 'event', '') for (name, desc) in
+sensor_list = [(name, desc, 'period 0.4') if name.find('_pos_') > 0 else
+               (name, desc, 'event') for (name, desc) in
                zip(sensor_names, sensor_descriptions)]
 logger.info('Listening to %d attributes and %d sensors selected from %d %s ones' %
             (len(attributes), len(sensor_list),
