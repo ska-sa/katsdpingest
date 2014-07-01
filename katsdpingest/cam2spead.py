@@ -7,100 +7,15 @@ import Queue
 import copy
 
 import spead
-from katcp import DeviceServer, Sensor
-from katcp.kattypes import request, return_reply, Str, Int, Address
-
+from katcp import DeviceServer
+from katcp.kattypes import (request, return_reply,
+                            Str, Address, Timestamp, Bool)
+from katsdpingest.sensorbridge import (SensorBridge, KatcpSensorBridge,
+                                       VirtualSensorBridge)
 from katsdpingest import __version__
 
 
 logger = logging.getLogger(__name__)
-
-
-class SensorBridge(object):
-    """Bridge between single KATCP sensor and corresponding SPEAD item in stream.
-
-    Parameters
-    ----------
-    name : string
-        Sensor name (used to name the corresponding SPEAD item)
-    katcp_sensor : :class:`katcorelib.KATSensor` object
-        Sensor object representing KATCP sensor
-    server : :class:`Cam2SpeadDeviceServer` object or similar
-        Device server that serves SPEAD stream (via update_sensor method)
-
-    """
-
-    # Pick a SPEAD id range that is not in use here
-    next_available_spead_id = 0x7000
-
-    def __init__(self, name, katcp_sensor, server):
-        self.name, self.katcp_sensor, self.server = name, katcp_sensor, server
-        self.spead_id = SensorBridge.next_available_spead_id
-        SensorBridge.next_available_spead_id += 1
-        self.strategy = 'none'
-        self.param = ''
-        self.listening = False
-        self.last_update = ''
-        # Store katcp.Sensor which will be used to parse KATCP string in listener
-        sensor_type = Sensor.parse_type(self.katcp_sensor.type)
-        params = ['unknown'] if sensor_type == Sensor.DISCRETE else None
-        self._sensor = Sensor(sensor_type, self.katcp_sensor.name,
-                              self.katcp_sensor.description, self.katcp_sensor.units,
-                              params)
-
-    def store_strategy(self, strategy, param):
-        """Store sensor strategy if it has changed."""
-        if strategy == self.strategy and param == self.param:
-            return
-        self.strategy = strategy
-        self.param = param
-        logger.info("Registered KATCP sensor %r with strategy (%r, %r) and SPEAD id 0x%x" %
-                    (self.name, self.strategy, self.param, self.spead_id))
-
-    def listen(self, update_seconds, value_seconds, status, value_string):
-        """Callback that pushes KATCP sensor update to SPEAD stream.
-
-        Parameters
-        ----------
-        update_seconds : float
-            Unix timestamp indicating when update was received by local client
-        value_seconds : float
-            Unix timestamp indicating when sensor value was measured
-        status : string
-            Status of this update ('nominal' if all is well)
-        value_string : string
-            Sensor value encoded as a KATCP string
-
-        """
-        # Force value to be accepted by discrete sensor
-        if self._sensor.stype == 'discrete':
-            self._sensor._kattype._values.append(value_string)
-            self._sensor._kattype._valid_values.add(value_string)
-        # First convert value string to intended type to get appropriate repr()
-        value = self._sensor.parse_value(value_string)
-        # Transmit event-based updates immediately, while other updates
-        # are periodically resampled in a separate thread
-        self.last_update = self.server.update_sensor(self.name, value,
-                                                     value_seconds, status,
-                                                     self.strategy == 'event')
-
-    def start_listening(self):
-        """Start listening to sensor and send updates to SPEAD stream."""
-        if not self.listening:
-            self.katcp_sensor.set_strategy(self.strategy, self.param)
-            self.katcp_sensor.register_listener(self.listen)
-            # This triggers the callback to obtain a valid last_update
-            self.katcp_sensor.get_value()
-            logger.debug("Start listening to sensor %r" % (self.name,))
-            self.listening = True
-
-    def stop_listening(self):
-        """Stop listening to sensor and stop updates to SPEAD stream."""
-        if self.listening:
-            self.katcp_sensor.unregister_listener(self.listen)
-            self.katcp_sensor.set_strategy('none')
-            logger.debug("Stopped listening to sensor %r" % (self.name,))
-            self.listening = False
 
 
 class TransmitThread(threading.Thread):
@@ -145,8 +60,8 @@ class Cam2SpeadDeviceServer(DeviceServer):
         Object (e.g. a :class:`katcorelib.ObjectGroup`) with all available
         sensors as attributes
     sensor_list : list of tuples of 3 strings
-        List of sensors to listen to, and corresponding sensor strategy to be
-        set as (name, strategy, param) tuple
+        List of sensors to listen to, and corresponding description and sensor
+        strategy to be set as (name, description, strategy) tuple
     tx_period : float
         Non-event based sensor updates will be periodically resampled with
         this period in seconds and collated into a single SPEAD packet
@@ -174,17 +89,27 @@ class Cam2SpeadDeviceServer(DeviceServer):
         pass
 
     def register_sensors(self):
-        """Register all requested KATCP sensors, skipping the unknown ones."""
-        for name, strategy, param in self.sensor_strategies:
+        """Register all requested sensors assuming unknown ones are virtual."""
+        for name, desc, strategy in self.sensor_strategies:
+            action = ''
             if name not in self.sensor_bridges:
                 try:
                     sensor = getattr(self.sensors, name)
                 except AttributeError:
-                    logger.warning("Could not register unavailable KATCP sensor %r" % (name,))
-                    continue
-                self.sensor_bridges[name] = SensorBridge(name, sensor, self)
+                    logger.debug("No KATCP sensor %r, assuming it is virtual" % (name,))
+                    self.sensor_bridges[name] = VirtualSensorBridge(name, desc)
+                    action = 'Registered virtual'
+                else:
+                    self.sensor_bridges[name] = KatcpSensorBridge(name, sensor, self)
+                    action = 'Registered KATCP'
             # It is possible to change the strategy on an existing sensor bridge
-            self.sensor_bridges[name].store_strategy(strategy, param)
+            bridge = self.sensor_bridges[name]
+            if not action and bridge.strategy == strategy:
+                continue
+            bridge.strategy = strategy
+            action = 'Updated existing' if not action else action
+            logger.info("%s sensor %r with strategy %r and SPEAD id 0x%x" %
+                        (action, name, strategy, bridge.spead_id))
 
     def start_listening(self):
         """Start listening to all registered sensors."""
@@ -199,41 +124,20 @@ class Cam2SpeadDeviceServer(DeviceServer):
     def initial_spead_heap(self, stream_name):
         """This creates the SPEAD item structure and fills in attributes."""
         self.ig = spead.ItemGroup()
-        spead_id = SensorBridge.next_available_spead_id
         for name, value in self.attributes.items():
+            spead_id = SensorBridge.next_available_spead_id
             logger.debug("Registering attribute %r with SPEAD id 0x%x and value %s" %
                          (name, spead_id, value))
             self.ig.add_item(name=name, id=spead_id, description='todo',
                              shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
-            spead_id += 1
+            SensorBridge.next_available_spead_id += 1
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
             self.ig.add_item(name=name, id=bridge.spead_id,
-                             description=bridge.katcp_sensor.description,
+                             description=bridge.description,
                              shape=-1, fmt=spead.mkfmt(('s', 8)),
                              init_val=bridge.last_update)
-        # Register observation sensors explicitly as they do not exist on KAT object,
-        # but sim_observe will actually provide them as sensors, hence check first
-        name = 'obs_label'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation label',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        name = 'obs_params'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation parameters',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        name = 'obs_script_log'
-        if name not in self.ig.keys():
-            logger.debug("Registering virtual sensor %r with SPEAD id 0x%x" % (name, spead_id))
-            self.ig.add_item(name=name, id=spead_id, description='Observation script log',
-                            shape=-1, fmt=spead.mkfmt(('s', 8)), init_val='')
-            spead_id += 1
-        SensorBridge.next_available_spead_id = spead_id
         return self.ig.get_heap()
 
     def start_destination(self, name, spead_host=None, spead_port=None):
@@ -431,4 +335,13 @@ class Cam2SpeadDeviceServer(DeviceServer):
         if name not in self.destinations:
             return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.update_sensor('obs_script_log', log)
+        return ("ok",)
+
+    @request(Str(), Str(), Timestamp(), Bool())
+    @return_reply()
+    def request_set_nd_sensor(self, req, name, receptor, timestamp, value):
+        """Set a noise diode flag on the desired SPEAD stream."""
+        if name not in self.destinations:
+            return ("fail", "Unknown SPEAD stream %r" % (name,))
+        self.update_sensor(receptor + '_noise_source', value, timestamp)
         return ("ok",)
