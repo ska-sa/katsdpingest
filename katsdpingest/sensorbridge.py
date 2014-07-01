@@ -25,7 +25,7 @@ class SensorBridge(object):
     last_update : string
         Last sensor update in form of "timestamp status 'value'" string
     strategy : string
-        Strategy used to monitor sensor (including possible parameters)
+        Strategy used to monitor sensor (including possible space-delimited parameters)
 
     """
 
