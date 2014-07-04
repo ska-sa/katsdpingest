@@ -49,7 +49,7 @@ class SensorBridge(object):
         pass
 
 
-class KatcpSensorBridge(object):
+class KatcpSensorBridge(SensorBridge):
     """Bridge between single KATCP sensor and corresponding SPEAD item in stream.
 
     Parameters
