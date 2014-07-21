@@ -13,10 +13,8 @@ m063_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
 m063_pos_request_scan_elev, Requested elevation after scan offset, deg, float
 m063_target, Current target, , string
 m063_noise_source, Noise diode flag, , boolean
-cbf_auto_delay, Whether automatic delay parameter sending is on., , boolean
-cbf_dbe_centerfrequency, current center frequency, Hz, integer
-cbf_dbe_mode, current mode, none, discrete
-cbf_target, Current target, , string
+data_rts_auto_delay_enabled, Whether automatic delay parameter sending is on., , boolean
+data_rts_target, Current target, , string
 anc_asc_air_pressure, Air pressure, mbar, float
 anc_asc_air_relative_humidity, Relative humidity, percent, float
 anc_asc_air_temperature, Air temperature, degC, float

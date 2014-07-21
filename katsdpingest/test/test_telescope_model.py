@@ -18,7 +18,7 @@ class TelescopeModelTestCases(unittest.TestCase):
         to use with the model."""
         m063 = tm.AntennaPositioner(name='m063')
         m062 = tm.AntennaPositioner(name='m062')
-        cbf = tm.CorrelatorBeamformer(name='cbf')
+        cbf = tm.CorrelatorBeamformer(name='data_rts')
         env = tm.Enviro(name='anc_asc')
         obs = tm.Observation(name='obs')
         self.components = [m063, m062, cbf, env, obs]
