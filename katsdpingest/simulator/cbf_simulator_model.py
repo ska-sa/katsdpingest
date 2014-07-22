@@ -94,7 +94,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     standalone = False
     valid_modes = ('ready', 'c16n400M1k', 'c16n400M8k', 'c16n13M4k',
                    'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k',
-                   'bc16n400M1k', 'c8n856M32k',)
+                   'bc16n400M1k', 'c8n856M32k', 'c8n856M4k', 'c8n856M1k')
 
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
