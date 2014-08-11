@@ -65,9 +65,13 @@ class Sensor(object):
          # resets to initial state
 
     def set_value(self, sensor_string):
-        (value_time, status, sensor_value) = sensor_string.split(" ",2)
+        try:
+            value_time, status, sensor_value = sensor_string.split(" ", 2)
+        except ValueError:
+            logger.debug("Sensor {0} got malformed or empty update '{1}'. Not updating value.".format(self.name,sensor_string))
+            return
         if status == 'unknown':
-            logger.debug("Sensor {0} has type unknown. Not updating value.".format(self.name))
+            logger.debug("Sensor {0} has status 'unknown'. Not updating value.".format(self.name))
             return
         value_time = float(value_time)
         value = eval(sensor_value,{})
