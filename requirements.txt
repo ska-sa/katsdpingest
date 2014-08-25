@@ -5,3 +5,4 @@ iniparse
 blinker
 scikits.fitting
 katcp==0.5.2
+katsdpsigproc
