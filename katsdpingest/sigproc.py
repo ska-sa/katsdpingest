@@ -10,17 +10,14 @@ from katsdpdisp import CorrProdRef
 from .vanvleck import create_correction
 from .antsol import stefcal
 from .__init__ import __version__ as revision
+import katsdpsigproc.rfi.host
+import katsdpsigproc.rfi.device
+from katsdpsigproc import accel
 
 try:
-    import pycuda.autoinit
-    have_cuda = True
-except ImportError:
-    have_cuda = False
-
-if have_cuda:
-    import katsdpsigproc.rfi.device
-else:
-    import katsdpsigproc.rfi.host
+    context = accel.create_some_context(False)
+except RuntimeError:
+    context = None
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -204,14 +201,13 @@ class RFIThreshold2(ProcBlock):
     def __init__(self, n_sigma=11.0, spike_width=6, *args, **kwargs):
         super(RFIThreshold2, self).__init__(*args, **kwargs)
         width = 2 * spike_width + 1    # katsdpsigproc takes the median filter width
-        if have_cuda:
-            ctx = pycuda.autoinit.context
-            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDevice(ctx, width)
-            threshold = katsdpsigproc.rfi.device.ThresholdMADDevice(ctx, n_sigma)
+        if context:
+            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDevice(context, width)
+            threshold = katsdpsigproc.rfi.device.ThresholdMADDevice(context, n_sigma)
             self.flagger = katsdpsigproc.rfi.device.FlaggerHostFromDevice(
                     katsdpsigproc.rfi.device.FlaggerDevice(background, threshold))
         else:
-            self.logger.debug("RFI Threshold: CUDA not found, falling back to CPU")
+            self.logger.debug("RFI Threshold: CUDA/OpenCL not found, falling back to CPU")
             background = katsdpsigproc.rfi.host.BackgroundMedianFilterHost(width)
             threshold = katsdpsigproc.rfi.host.ThresholdMADHost(n_sigma)
             self.flagger = katsdpsigproc.rfi.host.FlaggerHost(background, threshold)
