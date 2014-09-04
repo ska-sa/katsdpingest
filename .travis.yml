@@ -4,6 +4,9 @@ python:
   - "2.7"
 before_install: sudo apt-get install -qq libhdf5-serial-dev
 # command to install dependencies
-install: "pip install -r requirements.txt --use-mirrors"
+install:
+  - "git clone git@github.com:ska-sa/katsdpsigproc"
+  - "python katsdpsigproc/setup.py install"
+  - "pip install -r requirements.txt --use-mirrors"
 # command to run tests
 script: nosetests katsdpingest.test.test_telescope_model
