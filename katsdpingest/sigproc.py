@@ -10,7 +10,14 @@ from katsdpdisp import CorrProdRef
 from .vanvleck import create_correction
 from .antsol import stefcal
 from .__init__ import __version__ as revision
+import katsdpsigproc.rfi.host
+import katsdpsigproc.rfi.device
+from katsdpsigproc import accel
 
+try:
+    context = accel.create_some_context(False)
+except RuntimeError:
+    context = None
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -179,7 +186,6 @@ class VanVleck(ProcBlock):
         # Contents of current data are updated in-place
         return None
 
-
 class RFIThreshold2(ProcBlock):
     """Simple RFI flagging through thresholding.
 
@@ -192,11 +198,19 @@ class RFIThreshold2(ProcBlock):
        The number of std deviations allowed
 
     """
-    def __init__(self, axis=0, n_sigma=11.0, spike_width=6, *args, **kwargs):
+    def __init__(self, n_sigma=11.0, spike_width=6, *args, **kwargs):
         super(RFIThreshold2, self).__init__(*args, **kwargs)
-        self.n_sigma = n_sigma
-        self.spike_width = spike_width
-        self.axis = axis
+        width = 2 * spike_width + 1    # katsdpsigproc takes the median filter width
+        if context:
+            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDevice(context, width)
+            threshold = katsdpsigproc.rfi.device.ThresholdMADDevice(context, n_sigma)
+            self.flagger = katsdpsigproc.rfi.device.FlaggerHostFromDevice(
+                    katsdpsigproc.rfi.device.FlaggerDevice(background, threshold))
+        else:
+            self.logger.debug("RFI Threshold: CUDA/OpenCL not found, falling back to CPU")
+            background = katsdpsigproc.rfi.host.BackgroundMedianFilterHost(width)
+            threshold = katsdpsigproc.rfi.host.ThresholdMADHost(n_sigma)
+            self.flagger = katsdpsigproc.rfi.host.FlaggerHost(background, threshold)
         self.expected_dtype = np.complex64
 
     def _proc(self):
@@ -205,35 +219,8 @@ class RFIThreshold2(ProcBlock):
         if self.flags is None:
             self.init_flags()
 
-        for bl_index in range(self.current.shape[1]):
-            spectral_data = np.abs(self.current[:,bl_index])
-            spectral_data = np.atleast_1d(spectral_data)
-            kernel_size = 2 * max(int(self.spike_width), 0) + 1
-            # Median filter data along the desired axis, with given kernel size
-            kernel = np.ones(spectral_data.ndim, dtype='int32')
-            kernel[self.axis] = kernel_size
-
-            # Medfilt now seems to upcast 32-bit floats to doubles - convert it back to floats...
-            filtered_data = np.asarray(signal.medfilt(spectral_data, kernel), spectral_data.dtype)
-
-            # The deviation is measured relative to the local median in the signal
-            abs_dev = np.abs(spectral_data - filtered_data)
-
-            # Calculate median absolute deviation (MAD)
-            med_abs_dev = np.expand_dims(np.median(abs_dev[abs_dev>0], self.axis), self.axis)
-
-            #med_abs_dev = signal.medfilt(abs_dev, kernel)
-            # Assuming normally distributed deviations, this is a robust estimator of the standard deviation
-            estm_stdev = 1.4826 * med_abs_dev
-
-            # Identify outliers (again based on normal assumption), and replace them with local median
-            #outliers = ( abs_dev > self.n_sigma * estm_stdev)
-            #print outliers
-            # Identify only positve outliers
-            outliers = (spectral_data - filtered_data > self.n_sigma*estm_stdev)
-
-            self.flags[:,bl_index,4] = outliers
-             # set appropriate flag bit for detected RFI
+        flags = self.flagger(self.current)
+        self.flags[..., 4] = flags
 
 
 class RFIThreshold(ProcBlock):

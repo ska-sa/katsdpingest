@@ -17,6 +17,7 @@ setup (
         ],
     install_requires = [
         'scikits.fitting',
+        'katsdpsigproc'
     ],
     zip_safe = False,
 )
