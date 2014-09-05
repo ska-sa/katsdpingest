@@ -5,8 +5,8 @@ python:
 before_install: sudo apt-get install -qq libhdf5-serial-dev
 # command to install dependencies
 install:
-  - "git clone git@github.com:ska-sa/katsdpsigproc"
-  - "python katsdpsigproc/setup.py install"
+  - "git clone -q -b bmerry-rfiflag-gpu --depth 1 git@github.com:ska-sa/katsdpsigproc"
+  - "(cd katsdpsigproc && python ./setup.py install)"
   - "pip install -r requirements.txt --use-mirrors"
 # command to run tests
 script: nosetests katsdpingest.test.test_telescope_model
