@@ -180,7 +180,7 @@ class IngestDeviceServer(DeviceServer):
 
         self._my_sensors["capture-active"].set_value(1)
          # add in existing signal display recipients...
-        for (ip,port) in self.sdisp_ips.iteritems():
+        for (ip,port) in self.sdisp_ips.items():
             self.cbf_thread.add_sdisp_ip(ip,port)
         smsg =  "Capture initialised at %s" % time.ctime()
         logger.info(smsg)
