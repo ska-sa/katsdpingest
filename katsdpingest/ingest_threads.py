@@ -124,7 +124,9 @@ class CBFIngest(threading.Thread):
         #    logger.debug("Sending metadata heartbeat...")
         #    self.send_sd_metadata()
 
-        for tx in self.sdisp_ips.itervalues():
+        # Revisit this in Python 3, as .values() will still be a view on dict
+        # We need a lock to be sure dict is not modified during iteration
+        for tx in self.sdisp_ips.values():
             tx.send_heap(data)
 
         self._sd_count += 1
@@ -164,7 +166,8 @@ class CBFIngest(threading.Thread):
     def send_sd_metadata(self):
         self._sd_metadata = self._update_sd_metadata()
         if self._sd_metadata is not None:
-            for tx in self.sdisp_ips.itervalues():
+            # Revisit this in Python 3, as .values() will still be a view on dict
+            for tx in self.sdisp_ips.values():
                 mdata = copy.deepcopy(self._sd_metadata)
                 tx.send_heap(mdata)
 
