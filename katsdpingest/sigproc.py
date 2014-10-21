@@ -131,7 +131,6 @@ class ProcBlock(object):
 
         return (process, self._extracted_arguments, svn_rev)
 
-
 class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.
 
@@ -202,15 +201,18 @@ class RFIThreshold2(ProcBlock):
         super(RFIThreshold2, self).__init__(*args, **kwargs)
         width = 2 * spike_width + 1    # katsdpsigproc takes the median filter width
         if context:
-            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDevice(context, width)
-            threshold = katsdpsigproc.rfi.device.ThresholdMADDevice(context, n_sigma)
+            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDeviceTemplate(context, width)
+            noise_est = katsdpsigproc.rfi.device.NoiseEstMADTDeviceTemplate(context, 10240)
+            threshold = katsdpsigproc.rfi.device.ThresholdSimpleDeviceTemplate(context, n_sigma, True)
             self.flagger = katsdpsigproc.rfi.device.FlaggerHostFromDevice(
-                    katsdpsigproc.rfi.device.FlaggerDevice(background, threshold))
+                    katsdpsigproc.rfi.device.FlaggerDeviceTemplate(background, noise_est, threshold),
+                    context.create_command_queue())
         else:
             self.logger.debug("RFI Threshold: CUDA/OpenCL not found, falling back to CPU")
             background = katsdpsigproc.rfi.host.BackgroundMedianFilterHost(width)
+            noise_est = katsdpsigproc.rfi.host.NoiseEstMADHost()
             threshold = katsdpsigproc.rfi.host.ThresholdMADHost(n_sigma)
-            self.flagger = katsdpsigproc.rfi.host.FlaggerHost(background, threshold)
+            self.flagger = katsdpsigproc.rfi.host.FlaggerHost(background, noise_est, threshold)
         self.expected_dtype = np.complex64
 
     def _proc(self):
