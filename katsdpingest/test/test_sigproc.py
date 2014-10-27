@@ -80,6 +80,7 @@ class SigProcTestCases(unittest.TestCase):
 class TestPrepare(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
+    @device_test
     def testPrepare(self):
         """Basic test of data preparation"""
         channels = 73
@@ -119,6 +120,7 @@ class TestPrepare(unittest.TestCase):
 class TestAccum(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
+    @device_test
     def testSmall(self):
         """Hand-coded test data, to test various cases"""
 
@@ -149,6 +151,7 @@ class TestAccum(unittest.TestCase):
             actual = fn.slots[name].buffer.get(test_command_queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
+    @device_test
     def testBig(self):
         """Test with large random data against a simple CPU version"""
         flag_scale = 2 ** -64

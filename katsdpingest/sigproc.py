@@ -373,6 +373,51 @@ class Accum(accel.Operation):
                 local_size = (block, block))
 
 
+class IngestTemplate(object):
+    """Template for the entire on-device ingest processing"""
+
+    def __init__(self, context, flagger):
+        self.context = context
+        self.prepare = PrepareTemplate(context)
+        self.zero_vis_accum = accel.fill.FillTemplate(
+                context, np.complex64, 'float2')
+        self.transpose_float32 = accel.transpose.TransposeTemplate(
+                context, np.float32, 'float')
+        self.transpose_complex64 = accel.transpose.TransposeTemplate(
+                context, np.complex64, 'float2')
+        self.flagger = flagger
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return IngestOperation(self, command_queue, channels, channel_range, baselines)
+
+class IngestOperation(accel.OperationSequence):
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        keep_channels = channel_range[1] - channel_range[0]
+        self.zero_vis_accum = self.template.fill.instantiate(
+                command_queue, (baselines, keep_channels))
+        self.prepare = self.template.prepare.instantiate(
+                command_queue, channels, channel_range, baselines)
+        self.transpose_vis_amp = self.template.transpose_float32.instantiate(
+                command_queue, (baselines, channels))
+        self.transpose_vis_accum = self.template.transpose_complex64.instantiate(
+                command_queue, (baselines, keep_channels))
+        self.flagger = self.template.flagger.instantiate(
+                command_queue, channels, baselines)
+
+        operations = [
+                ('prepare', self.prepare),
+                ('zero_vis_accum', self.zero_vis_accum),
+                ('transpose_vis_amp', self.transpose_vis_amp),
+                ('flagger', self.flagger)]
+        compounds = {
+                'vis_in':      ['prepare:vis_in'],
+                'vis_accum_t': ['prepare:vis_accum_t', 'zero_vis_accum:data', 'transpose_vis_accum:src'],
+                'vis_accum':   ['transpose_vis_accum:dest'],
+                'vis_amp_t':   ['prepare:vis_amp_t', 'transpose_vis_amp:src'],
+                'vis_amp':     ['transpose_vis_amp:dest', 'flagger:vis'],
+                'flags':       ['flagger:flags']}
+        super(IngestOperation, self).__init__(self, command_queue, operations, compounds)
+
 class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.
 
