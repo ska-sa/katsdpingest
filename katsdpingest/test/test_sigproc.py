@@ -3,6 +3,7 @@
 import unittest
 import numpy as np
 from katsdpingest import sigproc
+from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
 
 class SigProcTestCases(unittest.TestCase):
     """Exercise the sigproc library under a number of varying conditions."""
@@ -75,3 +76,121 @@ class SigProcTestCases(unittest.TestCase):
         rfi = sigproc.RFIThreshold()
         flags = np.unpackbits(rfi.proc()).reshape(self.n_chans, self.n_bls)
         self.assertEqual(flags[self.spike_channel, self.spike_bls],1)
+
+class TestPrepare(unittest.TestCase):
+    """Test :class:`katsdpingest.sigproc.Prepare`"""
+
+    def testPrepare(self):
+        """Basic test of data preparation"""
+        channels = 73
+        channel_range = (10, 55)
+        keep_channels = channel_range[1] - channel_range[0]
+        baselines = 91
+        scale = 3.625
+
+        rs = np.random.RandomState(seed=1)
+        vis_in = rs.random_integers(-1000, 1000, (channels, baselines, 2)).astype(np.int32)
+        permutation = rs.permutation(baselines).astype(np.uint16)
+
+        template = sigproc.PrepareTemplate(test_context)
+        prepare = template.instantiate(test_command_queue, channels, channel_range, baselines)
+        prepare.ensure_all_bound()
+        prepare.slots['vis_in'].buffer.set(test_command_queue, vis_in)
+        prepare.slots['permutation'].buffer.set(test_command_queue, permutation)
+        prepare(scale)
+        weights = prepare.slots['weights'].buffer.get(test_command_queue)
+        vis_out = prepare.slots['vis_out'].buffer.get(test_command_queue)
+
+        self.assertEqual((baselines, channels), vis_out.shape)
+        self.assertEqual((baselines, keep_channels), weights.shape)
+        expected_vis = np.zeros_like(vis_out)
+        expected_weights = np.zeros_like(weights)
+        for i in range(channels):
+            for j in range(baselines):
+                value = (vis_in[i, j, 0] + 1j * vis_in[i, j, 1]) * scale
+                row = permutation[j]
+                expected_vis[row, i] = value
+                if i >= channel_range[0] and i < channel_range[1]:
+                    col = i - channel_range[0]
+                    expected_weights[row, col] = 1.0
+        np.testing.assert_equal(expected_vis, vis_out)
+        np.testing.assert_equal(expected_weights, weights)
+
+class TestAccum(unittest.TestCase):
+    """Test :class:`katsdpingest.sigproc.Accum`"""
+
+    def testSmall(self):
+        """Hand-coded test data, to test various cases"""
+
+        flag_scale = 2 ** -64
+        # Host copies of arrays
+        host = {
+            'vis_in':       np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
+            'weights_in':   np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
+            'flags_in':     np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
+            'vis_out0':     np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
+            'weights_out0': np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
+            'flags_out0':   np.array([[1, 9, 0]], dtype=np.uint8).T
+        }
+
+        template = sigproc.AccumTemplate(test_context, 1)
+        fn = template.instantiate(test_command_queue, 5, [1, 4], 1)
+        fn.ensure_all_bound()
+        for name, value in host.iteritems():
+            fn.slots[name].buffer.set(test_command_queue, value)
+        fn()
+
+        expected = {
+            'vis_out0':     np.array([[11+7j, (12-12j) * flag_scale, 6+8j]], dtype=np.complex64).T,
+            'weights_out0': np.array([[3.5, 4.0 * flag_scale, 7.5]], dtype=np.float32).T,
+            'flags_out0':   np.array([[0, 8, 0]], dtype=np.uint8).T
+        }
+        for name, value in expected.iteritems():
+            actual = fn.slots[name].buffer.get(test_command_queue)
+            np.testing.assert_equal(value, actual, err_msg=name + " does not match")
+
+    def testBig(self):
+        """Test with large random data against a simple CPU version"""
+        flag_scale = 2 ** -64
+        channels = 203
+        baselines = 171
+        channel_range = [7, 198]
+        kept_channels = channel_range[1] - channel_range[0]
+        outputs = 2
+        rs = np.random.RandomState(1)
+
+        vis_in = (rs.standard_normal((baselines, channels)) + rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
+        weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
+        flags_in = rs.choice(4, (baselines, channels), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
+        vis_out = []
+        weights_out = []
+        flags_out = []
+        for i in range(outputs):
+            vis_out.append((rs.standard_normal((kept_channels, baselines)) + rs.standard_normal((kept_channels, baselines)) * 1j).astype(np.complex64))
+            weights_out.append(rs.uniform(size=(kept_channels, baselines)).astype(np.float32))
+            flags_out.append(rs.choice(4, (kept_channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8))
+
+        template = sigproc.AccumTemplate(test_context, outputs)
+        fn = template.instantiate(test_command_queue, channels, channel_range, baselines)
+        fn.ensure_all_bound()
+        for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in), ('flags_in', flags_in)]:
+            fn.slots[name].buffer.set(test_command_queue, value)
+        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
+            for i in range(outputs):
+                fn.slots[name + str(i)].buffer.set(test_command_queue, value[i])
+        fn()
+
+        # Perform the operation on the host
+        kept_vis = vis_in[:, channel_range[0] : channel_range[1]]
+        kept_flags = flags_in[:, channel_range[0] : channel_range[1]]
+        flagged_weights = weights_in * ((kept_flags == 0) + flag_scale)
+        for i in range(outputs):
+            vis_out[i] += (kept_vis * flagged_weights).T
+            weights_out[i] += flagged_weights.T
+            flags_out[i] = np.bitwise_and(flags_out[i], kept_flags.T)
+
+        # Verify results
+        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
+            for i in range(outputs):
+                actual = fn.slots[name + str(i)].buffer.get(test_command_queue)
+                np.testing.assert_allclose(value[i], actual)

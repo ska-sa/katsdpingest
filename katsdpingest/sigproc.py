@@ -1,6 +1,8 @@
+# coding: utf-8
 import logging
 import inspect
 import time
+import pkg_resources
 
 import numpy as np
 import scipy.signal as signal
@@ -130,6 +132,246 @@ class ProcBlock(object):
             svn_rev = int(revision[1:])
 
         return (process, self._extracted_arguments, svn_rev)
+
+class PrepareTemplate(object):
+    """Handles first-stage data processing on a compute device:
+
+    - Conversion to floating point
+    - Scaling
+    - Transposition
+    - Baseline reordering
+
+    When instantiating the template, one specifies a total number of channels,
+    as well as a subrange of that total for which weights will be generated.
+    At present weights are always 1.0, but this may change.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    tune : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - block: number of workitems per workgroup in each dimension
+        - vtx, vty: number of elements handled by each workitem, per dimension
+    """
+    def __init__(self, context, tune=None):
+        if tune is None:
+            tune = self.autotune(context)
+        self.block = tune['block']
+        self.vtx = tune['vtx']
+        self.vty = tune['vty']
+        program = accel.build(context, 'ingest_kernels/prepare.mako',
+                {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
+                extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('prepare')
+
+    def autotune(self, context):
+        # TODO: do real autotuning
+        return {'block': 16, 'vtx': 1, 'vty': 1}
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return Prepare(self, command_queue, channels, channel_range, baselines)
+
+class Prepare(accel.Operation):
+    """Concrete instance of :class:`PrepareTemplate`.
+
+    .. rubric:: Slots
+
+    **vis_in** : channels × baselines × 2, int32
+        Input visibilities
+    **permutation** : baselines, uint16
+        Permutation mapping original to new baseline index
+    **vis_out** : baselines × channels, complex64
+        Transformed visibilities
+    **weigths** : baselines × kept-channels, float32
+        Weights corresponding to visibilities
+
+    Parameters
+    ----------
+    channels : int
+        Number of channels
+    channel_range : tuple of two ints
+        Half-open interval of channels that will be written to **weights**
+    baselines : int
+        Number of baselines
+    """
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        super(Prepare, self).__init__(command_queue)
+        tilex = template.block * template.vtx
+        tiley = template.block * template.vty
+        self.template = template
+        self.channels = channels
+        self.channel_range = channel_range
+        self.baselines = baselines
+        self.slots['vis_in'] = accel.IOSlot(
+                (channels, baselines, 2), np.int32,
+                (tiley, tilex, 1))
+        # For output we do not need to pad the baselines, because the
+        # permutation requires that we do range checks anyway.
+        self.slots['vis_out'] = accel.IOSlot(
+                (baselines, channels), np.complex64,
+                (1, tiley))
+        # Channels need to be range-checked anywhere here, so no padding
+        self.slots['weights'] = accel.IOSlot(
+                (baselines, channel_range[1] - channel_range[0]), np.float32)
+        self.slots['permutation'] = accel.IOSlot((baselines,), np.uint16)
+
+    def __call__(self, scale, **kwargs):
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        vis_in = self.slots['vis_in'].buffer
+        permutation = self.slots['permutation'].buffer
+        vis_out = self.slots['vis_out'].buffer
+        weights = self.slots['weights'].buffer
+
+        block = self.template.block
+        tilex = block * self.template.vtx
+        tiley = block * self.template.vty
+        xblocks = accel.divup(self.baselines, tilex)
+        yblocks = accel.divup(self.channels, tiley)
+        self.command_queue.enqueue_kernel(
+                self.template.kernel,
+                [
+                    vis_out.buffer,
+                    weights.buffer,
+                    vis_in.buffer,
+                    permutation.buffer,
+                    np.int32(vis_out.padded_shape[1]),
+                    np.int32(weights.padded_shape[1]),
+                    np.int32(vis_in.padded_shape[1]),
+                    np.int32(self.channel_range[0]),
+                    np.int32(self.channel_range[1]),
+                    np.int32(self.baselines),
+                    np.float32(scale)
+                ],
+                global_size = (xblocks * block, yblocks * block),
+                local_size = (block, block))
+
+class AccumTemplate(object):
+    """Template for weighted visibility accumulation with flags. The
+    inputs are in baseline-major order, while the outputs are in
+    channel-major order. Support is provided for accumulating to multiple
+    output sets.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    outputs : int
+        Number of outputs in which to accumulate
+    tune : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - block: number of workitems per workgroup in each dimension
+        - vtx, vty: number of elements handled by each workitem, per dimension
+    """
+    def __init__(self, context, outputs, tune=None):
+        if tune is None:
+            tune = self.autotune(context)
+        self.block = tune['block']
+        self.vtx = tune['vtx']
+        self.vty = tune['vty']
+        self.outputs = outputs
+        program = accel.build(context, 'ingest_kernels/accum.mako',
+            {
+                'block': self.block,
+                'vtx': self.vtx,
+                'vty': self.vty,
+                'outputs': self.outputs},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('accum')
+
+    def autotune(self, context):
+        # TODO: do real autotuning
+        return {'block': 16, 'vtx': 1, 'vty': 1}
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return Accum(self, command_queue, channels, channel_range, baselines)
+
+class Accum(accel.Operation):
+    """Concrete instance of :class:`AccumTemplate`.
+
+    .. rubric:: Slots
+
+    In the outputs, *N* is an index starting from zero.
+
+    **vis_in** : baselines × channels, complex64
+        Input visibilities
+    **weights_in** : baselines × kept-channels, float32
+        Input weights
+    **flags_in** : baselines × channels, uint8
+        Input flags: non-zero values cause downweighting by 2^-64
+    **vis_outN** : kept-channels × baselines, complex64
+        Incremented by weight × visibility
+    **weights_outN** : kept-channels × baselines, float32
+        Incremented by (computed) weight
+    **flags_outN** : kept-channels × baselines, uint8
+        ANDed with the input flags
+    """
+
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        super(Accum, self).__init__(command_queue)
+        tilex = template.block * template.vtx
+        tiley = template.block * template.vty
+        self.template = template
+        self.channels = channels
+        self.channel_range = channel_range
+        self.baselines = baselines
+        kept_channels = channel_range[1] - channel_range[0]
+        self.slots['vis_in'] = accel.IOSlot(
+                (baselines, channels), np.complex64,
+                (tiley, tilex))
+        self.slots['weights_in'] = accel.IOSlot(
+                (baselines, kept_channels), np.float32,
+                (tiley, tilex))
+        self.slots['flags_in'] = accel.IOSlot(
+                (baselines, channels), np.uint8,
+                (tiley, tilex))
+        for i in range(self.template.outputs):
+            label = str(i)
+            self.slots['vis_out' + label] = accel.IOSlot(
+                (kept_channels, baselines), np.complex64,
+                (tilex, tiley))
+            self.slots['weights_out' + label] = accel.IOSlot(
+                (kept_channels, baselines), np.float32,
+                (tilex, tiley))
+            self.slots['flags_out' + label] = accel.IOSlot(
+                (kept_channels, baselines), np.uint8,
+                (tilex, tiley))
+
+    def __call__(self, **kwargs):
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        buffer_names = []
+        for i in range(self.template.outputs):
+            label = str(i)
+            buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
+        buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
+        buffers = [self.slots[x].buffer for x in buffer_names]
+        # Arguments are structured as a list of buffers followed by a list of
+        # their strides in the same order.
+        args = [x.buffer for x in buffers] + \
+               [np.int32(x.padded_shape[1]) for x in buffers] + \
+               [np.int32(self.channel_range[0])]
+
+        kept_channels = self.channel_range[1] - self.channel_range[0]
+        block = self.template.block
+        tilex = block * self.template.vtx
+        tiley = block * self.template.vty
+        xblocks = accel.divup(kept_channels, tilex)
+        yblocks = accel.divup(self.baselines, tiley)
+
+        self.command_queue.enqueue_kernel(
+                self.template.kernel,
+                args,
+                global_size = (xblocks * block, yblocks * block),
+                local_size = (block, block))
+
 
 class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.
