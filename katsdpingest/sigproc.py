@@ -14,7 +14,7 @@ from .antsol import stefcal
 from .__init__ import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
-from katsdpsigproc import accel
+from katsdpsigproc import accel, tune
 
 try:
     context = accel.create_some_context(False)
@@ -167,7 +167,9 @@ class PrepareTemplate(object):
                 extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('prepare')
 
-    def autotune(self, context):
+    @classmethod
+    @tune.autotuner
+    def autotune(cls, context):
         # TODO: do real autotuning
         return {'block': 16, 'vtx': 1, 'vty': 1}
 
@@ -185,11 +187,15 @@ class Prepare(accel.Operation):
         Permutation mapping original to new baseline index
     **vis_out** : baselines × channels, complex64
         Transformed visibilities
-    **weigths** : baselines × kept-channels, float32
+    **weights** : baselines × kept-channels, float32
         Weights corresponding to visibilities
 
     Parameters
     ----------
+    template : :class:`PrepareTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
     channels : int
         Number of channels
     channel_range : tuple of two ints
@@ -272,6 +278,7 @@ class AccumTemplate(object):
     def __init__(self, context, outputs, tune=None):
         if tune is None:
             tune = self.autotune(context)
+        self.context = context
         self.block = tune['block']
         self.vtx = tune['vtx']
         self.vty = tune['vty']
@@ -285,7 +292,9 @@ class AccumTemplate(object):
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('accum')
 
-    def autotune(self, context):
+    @classmethod
+    @tune.autotuner
+    def autotune(cls, context):
         # TODO: do real autotuning
         return {'block': 16, 'vtx': 1, 'vty': 1}
 
@@ -311,6 +320,21 @@ class Accum(accel.Operation):
         Incremented by (computed) weight
     **flags_outN** : kept-channels × baselines, uint8
         ANDed with the input flags
+
+    Here *kept-channels* indicates the number of channels in `channel_range`.
+
+    Parameters
+    ----------
+    template : :class:`AccumTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    change_range : tuple of two ints
+        Half-open interval of channels that will appear in the output and in **weights_in**
+    baselines : int
+        Number of baselines
     """
 
     def __init__(self, template, command_queue, channels, channel_range, baselines):
@@ -372,6 +396,222 @@ class Accum(accel.Operation):
                 global_size = (xblocks * block, yblocks * block),
                 local_size = (block, block))
 
+class PostprocTemplate(object):
+    """Postprocessing performed on each output dump:
+
+    - Accumulated visibility-weight product divided by weight
+    - Weights for flagged outputs set to zero
+    - Computation of continuum visibilities, weights and flags (flags are ANDed)
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    tune : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - wgsx, wgsy: number of workitems per workgroup in each dimension
+    """
+    def __init__(self, context, cont_factor, tune=None):
+        if tune is None:
+            tune = self.autotune(context, cont_factor)
+        self.context = context
+        self.cont_factor = cont_factor
+        self.wgsx = tune['wgsx']
+        self.wgsy = tune['wgsy']
+        program = accel.build(context, 'ingest_kernels/postproc.mako',
+            {
+                'wgsx': self.wgsx,
+                'wgsy': self.wgsy,
+                'cont_factor': cont_factor
+            },
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('postproc')
+
+    @classmethod
+    @tune.autotuner
+    def autotune(cls, context, cont_factor):
+        # TODO: do real autotuning
+        return {'wgsx': 32, 'wgsy': 8}
+
+    def instantiate(self, context, channels, baselines):
+        return Postproc(self, context, channels, baselines)
+
+class Postproc(accel.Operation):
+    """Concrete instance of :class:`PostprocTemplate`.
+
+    .. rubric:: Slots
+
+    **vis** : channels × baselines, complex64
+        Sum of visibility times weight (on input), average visibility (on output)
+    **weights** : channels × baselines, float32
+        Sum of weights; on output, flagged results are set to zero
+    **flags** : channels × baselines, uint8
+        Flags (read-only)
+    **cont_vis** : channels/cont_factor × baselines, complex64
+        Output continuum visibilities
+    **cont_weights** : channels/cont_factor × baselines, float32
+        Output continuum weights
+    **cont_flags** : channels/cont_factor × baselines, uint8
+        Output continuum flags
+
+    Parameters
+    ----------
+    template : :class:`PostprocTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels (must be a multiple of `template.cont_factor`)
+    baselines : int
+        Number of baselines
+
+    Raises
+    ------
+    ValueError
+        If `channels` is not a multiple of `template.cont_factor`
+    """
+    def __init__(self, template, command_queue, channels, baselines):
+        super(Postproc, self).__init__(command_queue)
+        self.template = template
+        self.channels = channels
+        self.baselines = baselines
+
+        if channels % template.cont_factor:
+            raise ValueError('Number of channels must be a multiple of the continuum factor')
+        cont_channels = channels // template.cont_factor
+
+        spectral_shape = (channels, baselines)
+        spectral_round = (template.cont_factor * template.wgsy, template.wgsx)
+        cont_shape = (cont_channels, baselines)
+        cont_round = (template.wgsy, template.wgsx)
+        self.slots['vis'] =     accel.IOSlot(spectral_shape, np.complex64, spectral_round)
+        self.slots['weights'] = accel.IOSlot(spectral_shape, np.float32, spectral_round)
+        self.slots['flags'] =   accel.IOSlot(spectral_shape, np.uint8, spectral_round)
+        self.slots['cont_vis'] =     accel.IOSlot(cont_shape, np.complex64, cont_round)
+        self.slots['cont_weights'] = accel.IOSlot(cont_shape, np.float32, cont_round)
+        self.slots['cont_flags'] =   accel.IOSlot(cont_shape, np.uint8, cont_round)
+
+    def __call__(self, **kwargs):
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
+        buffers = [self.slots[name].buffer for name in buffer_names]
+        args = [x.buffer for x in buffers] + [np.int32(x.padded_shape[1]) for x in buffers]
+        xblocks = accel.divup(self.baselines, self.template.wgsx)
+        yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
+        self.command_queue.enqueue_kernel(
+            self.template.kernel, args,
+            global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
+            local_size=(self.template.wgsx, self.template.wgsy))
+
+class IngestTemplate(object):
+    """Template for the entire on-device ingest processing"""
+
+    def __init__(self, context, flagger, cont_factor):
+        self.context = context
+        self.prepare = PrepareTemplate(context)
+        # TODO: create a zero-fill template that handles all these cases
+        self.zero_vis_accum = accel.fill.FillTemplate(
+                context, np.complex64, 'float2')
+        self.zero_weights_accum = accel.fill.FillTemplate(
+                context, np.float32, 'float')
+        self.zero_flags_accum = accel.fill.FillTemplate(
+                context, np.uint8, 'unsigned char')
+        self.transpose_vis = accel.transpose.TransposeTemplate(
+                context, np.complex64, 'float2')
+        self.flagger = flagger
+        self.accum = AccumTemplate(context, 1)
+        self.postproc = PostprocTemplate(context, cont_factor)
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return IngestOperation(self, command_queue, channels, channel_range, baselines)
+
+class IngestOperation(accel.OperationSequence):
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        kept_channels = channel_range[1] - channel_range[0]
+        self.prepare = self.template.prepare.instantiate(
+                command_queue, channels, channel_range, baselines)
+        self.zero_vis_sum = self.template.zero_vis_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.zero_weights_sum = self.template.zero_weights_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.zero_flags_sum = self.template.zero_flags_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        # TODO: need a single transpose+absolute value kernel
+        self.transpose_vis = self.template.transpose_vis.instantiate(
+                command_queue, (baselines, channels))
+        self.flagger = self.template.flagger.instantiate(
+                command_queue, channels, baselines)
+        self.accum = self.template.accum.instantiate(
+                command_queue, channels, channel_range, baselines)
+        self.postproc = self.template.postproc.instantiate(
+                command_queue, kept_channels, baselines)
+
+        # The order of these does not matter, since the actual sequencing is
+        # done by methods in this class.
+        operations = [
+                ('prepare', self.prepare),
+                ('zero_vis_sum', self.zero_vis_sum),
+                ('zero_weights_sum', self.zero_weights_sum),
+                ('zero_flags_sum', self.zero_flags_sum),
+                ('transpose_vis', self.transpose_vis),
+                ('flagger', self.flagger),
+                ('accum', self.accum),
+                ('postproc', self.postproc)
+        ]
+        # TODO: eliminate transposition of flags, which aren't further used
+        assert 'flags_t' in self.flagger.slots
+        compounds = {
+                'vis_in':       ['prepare:vis_in'],
+                'permutation':  ['prepare:permutation'],
+                'vis_t':        ['prepare:vis_out', 'transpose_vis:src'],
+                'weights':      ['prepare:weights', 'accum:weights_in'],
+                'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
+                'deviations':   ['flagger:deviations'],
+                'deviations_t': ['flagger:deviations_t'],
+                'noise':        ['flagger:noise'],
+                'flags_unused': ['flagger:flags'],
+                'flags':        ['flagger:flags_t', 'accum:flags_in'],
+                'vis_sum':      ['accum:vis_out0', 'zero_vis_sum:data', 'postproc:vis'],
+                'weights_sum':  ['accum:weights_out0', 'zero_weights_sum:data', 'postproc:weights'],
+                'flags_sum':    ['accum:flags_out0', 'zero_flags_sum:data', 'postproc:flags'],
+                'cont_vis':     ['postproc:cont_vis'],
+                'cont_weights': ['postproc:cont_weights'],
+                'cont_flags':   ['postproc:cont_flags']
+        }
+        # TODO: aliasing of buffers
+
+        super(IngestOperation, self).__init__(self, command_queue, operations, compounds)
+
+    def __call__(self, scale, **kwargs):
+        """Process a single input dump"""
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        self.prepare(scale)
+        self.transpose_vis()
+        self.flagger()
+        self.accum()
+
+    def start_sum(self, **kwargs):
+        """Reset accumulation buffers for a new output dump"""
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        self.zero_vis_sum(0)
+        self.zero_weights_sum(0)
+        self.zero_flags_sum(0xff)
+
+    def end_sum(self, **kwargs):
+        """Perform postprocessing for an output dump. This only does
+        on-device processing; it does not transfer the results to the host.
+        """
+        self.postproc()
 
 class Scale(ProcBlock):
     """Trivial block to perform data scaling and type conversion.

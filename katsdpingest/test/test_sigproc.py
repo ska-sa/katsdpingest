@@ -1,6 +1,7 @@
 """Test for the sigproc module."""
 
 import unittest
+import mock
 import numpy as np
 from katsdpingest import sigproc
 from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
@@ -197,3 +198,55 @@ class TestAccum(unittest.TestCase):
             for i in range(outputs):
                 actual = fn.slots[name + str(i)].buffer.get(test_command_queue)
                 np.testing.assert_allclose(value[i], actual)
+
+class TestPostproc(unittest.TestCase):
+    """Tests for :class:`katsdpingest.sigproc.Postproc`"""
+
+    def test_bad_cont_factor(self):
+        """Test with a continuum factor that does not divide into the channel count"""
+        template = mock.sentinel.template
+        template.cont_factor = 8
+        self.assertRaises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8)
+
+    @device_test
+    def testPostproc(self):
+        """Test with random data against a CPU implementation"""
+
+        channels = 1024
+        baselines = 512
+        cont_factor = 16
+        cont_channels = channels // cont_factor
+        rs = np.random.RandomState(1)
+        vis_in = (rs.standard_normal((channels, baselines)) + rs.standard_normal((channels, baselines)) * 1j).astype(np.complex64)
+        weights_in = rs.uniform(0.5, 2.0, (channels, baselines)).astype(np.float32)
+        flags_in = rs.choice(4, (channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
+        # Ensure that we test the case of none flagged and all flagged when
+        # doing continuum reduction
+        flags_in[:, 123] = 1
+        flags_in[:, 234] = 0
+
+        template = sigproc.PostprocTemplate(test_context, cont_factor)
+        fn = sigproc.Postproc(template, test_command_queue, channels, baselines)
+        fn.ensure_all_bound()
+        fn.slots['vis'].buffer.set(test_command_queue, vis_in)
+        fn.slots['weights'].buffer.set(test_command_queue, weights_in)
+        fn.slots['flags'].buffer.set(test_command_queue, flags_in)
+        fn()
+
+        # Compute expected spectral values
+        expected_vis = vis_in / weights_in
+        expected_weights = weights_in * (flags_in == 0) # Flagged visibilities have their weights set to zero
+
+        # Compute expected continuum values.
+        indices = range(0, channels, cont_factor)
+        cont_weights = np.add.reduceat(weights_in, indices, axis=0)
+        cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
+        cont_flags = np.bitwise_and.reduceat(flags_in, indices, axis=0)
+        cont_weights *= (cont_flags == 0)
+
+        # Verify results
+        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(test_command_queue))
+        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(test_command_queue))
+        np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(test_command_queue), rtol=1e-5)
+        np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(test_command_queue), rtol=1e-5)
+        np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(test_command_queue))
