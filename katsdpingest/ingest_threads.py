@@ -13,6 +13,8 @@ import spead
 import time
 import copy
 import katsdpingest.sigproc as sp
+import katsdpsigproc.accel as accel
+import katsdpsigproc.rfi.device as rfi
 import logging
 import socket
 import struct
@@ -72,6 +74,19 @@ class CAMIngest(threading.Thread):
 
 
 class CBFIngest(threading.Thread):
+    @classmethod
+    def _create_proc_template(cls, context):
+        flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
+        # TODO: these parameters should probably come from somewhere else
+        # (particularly cont_factor).
+        background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
+        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=10240)
+        threshold_template = rfi.ThresholdSimpleDeviceTemplate(
+                context, n_sigma=11.0, transposed=True, flag_value=flag_value)
+        flagger_template = rfi.FlaggerDeviceTemplate(
+                background_template, noise_est_template, threshold_template)
+        return sp.IngestTemplate(context, flagger_template, cont_factor=16)
+
     def __init__(self, spead_host, spead_port, h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -101,18 +116,15 @@ class CBFIngest(threading.Thread):
         self._script_ants = None
          # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
-        self.scale = sp.Scale(1.0)
-         # at this stage the scale factor is unknown
-        self.rfi = sp.RFIThreshold2()
-         # basic rfi thresholding flagger
-        self.flags_description = [[nm,self.rfi.flag_descriptions[i]] for (i,nm) in enumerate(self.rfi.flag_names)]
+        self.context = accel.create_some_context(interactive=False)
+        self.command_queue = self.context.create_command_queue()
+        self.proc_template = self._create_proc_template(self.context)
+        self.proc = None    # Instantiation of the template delayed until data shape is known
+        self.flags_description = zip(self.proc_template.flag_names, self.proc_template.flag_descriptions)
          # an array describing the flags produced by the rfi flagger
         self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
          # insert flags descriptions into output file
-        self.van_vleck = self.ant_gains = None
-         # defer creation until we know baseline ordering
         #### Done with blocks
-        self.write_process_log(*self.rfi.description())
         threading.Thread.__init__(self)
 
     def enable_debug(self, debug):
@@ -160,6 +172,33 @@ class CBFIngest(threading.Thread):
                 new_bls = np.array([b[idx] for idx in self.baseline_mask])
                  # we need to recalculate the bls ordering as well...
         return new_bls
+
+    @classmethod
+    def baseline_permutation(cls, bls_ordering):
+        """Construct a permutation to place the baselines into the desired
+        order for internal processing.
+
+        Parameters
+        ----------
+        bls_ordering : list of pairs of strings
+            Names of inputs in current ordering
+
+        Returns
+        -------
+        (list, list)
+            The permutation giving the reordering and the new ordering
+        """
+        def key(item):
+            ant1, ant2 = item[1]
+            pol1 = ant1[-1]
+            pol2 = ant2[-1]
+            return (ant1[:-1] != ant2[:-1], pol1 != pol2, pol1, pol2)
+        reordered = sorted(enumerate(bls_ordering), key=key)
+        permutation = [x[0] for x in reordered]
+        # permutation contains the mapping from new position to original
+        # position, but we need the inverse. np.argsort inverts a permutation
+        permutation = np.argsort(permutation)
+        return permutation, np.array([x[1] for x in reordered])
 
     def send_sd_metadata(self):
         self._sd_metadata = self._update_sd_metadata()
@@ -272,14 +311,14 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metedata
 
-            self.baseline_mask = range(self.cbf_attr['n_bls'].value)
-             # default mask is to include all known baseline
-
-            if self._script_ants is not None:
-             # we need to calculate a baseline_mask to match the specified script_ants
-                self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
-
             if idx == 0:
+                # set up baseline mask
+                self.baseline_mask = range(self.cbf_attr['n_bls'].value)
+                 # default mask is to include all known baselines
+                if self._script_ants is not None:
+                 # we need to calculate a baseline_mask to match the specified script_ants
+                    self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+
                  # we need to create the raw and timestamp datasets.
                 new_shape = list(data_item.shape)
                 new_shape[-2] = len(self.baseline_mask)
@@ -287,12 +326,19 @@ class CBFIngest(threading.Thread):
                 self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
                 self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
-                 # configure the signal processing blocks
-                self.scale.scale_factor = np.float32(self.cbf_attr['n_accs'].value)
-                self.write_process_log(*self.scale.description())
+                # configure the signal processing blocks
+                channels = self.cbf_attr['n_chans'].value
+                baselines = len(self.baseline_mask)
+                self.proc = self.proc_template.instantiate(
+                        self.command_queue, channels, (0, channels), baselines)
+                self.proc.set_scale(1.0 / self.cbf_attr['n_accs'].value)
+                self.proc.ensure_all_bound()
+                permutation, self.cbf_attr['bls_ordering'] = self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
+                self.proc.slots['permutation'].buffer.set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
 
-                self.van_vleck = sp.VanVleck(np.float32(self.cbf_attr['n_accs'].value), bls_ordering=self.cbf_attr['bls_ordering'].value)
-                self.write_process_log(*self.van_vleck.description())
+                # TODO: configure van_vleck once implemented
+                for description in self.proc.descriptions():
+                    self.write_process_log(*description)
             else:
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
@@ -315,43 +361,24 @@ class CBFIngest(threading.Thread):
 
             ##### Perform data processing
 
-            sp.ProcBlock.current = data_item.get_value()[...,self.baseline_mask,:]
-             # update our data pointer. at this stage dtype is int32 and shape (channels, baselines, 2)
-            self.scale.proc()
-             # scale the data
-            if False: #self.van_vleck is not None:
-                power_before = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                try:
-                    self.van_vleck.proc()
-                      # in place van vleck correction of the data
-                except sp.VanVleckOutOfRangeError:
-                    self.logger.warning("Out of range error whilst applying Van Vleck data correction")
-                power_after = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                print "Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before)
-            sp.ProcBlock.current = sp.ProcBlock.current.copy()
-             # *** Dont delete this line ***
-             # since array uses advanced selection (baseline_mask not contiguous) we may
-             # have a changed the striding underneath wich can prevent the array being viewed
-             # as complex64. A copy resets the stride to its natural form and fixes this.
-            sp.ProcBlock.current = sp.ProcBlock.current.view(np.complex64)[...,0]
-             # temporary reshape to complex, eventually this will be done by Scale
-             # (Once the final data format uses C64 instead of float32)
-            self.rfi.init_flags()
-             # begin flagging operations
-            #self.rfi.proc()
-             # perform rfi thresholding
-            flags = self.rfi.finalise_flags()
-             # finalise flagging operations and return flag data to write
+            masked_data = data_item.get_value()[...,self.baseline_mask,:]
+            self.proc.slots['vis_in'].buffer.set(self.command_queue, masked_data)
+            self.start_sum()
+            self.proc()
+            self.end_sum()
+
+            flags = self.proc.slots['flags'].buffer.get(self.command_queue)
+            vis = self.proc.slots['vis_sum'].buffer.get(self.command_queue)
+            # Complex values are written to file as an extra dimension of size 2,
+            # rather than as structs
+            vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
             self.h5_file[flags_dataset][idx] = flags
-             # write flags to file
-            self.h5_file[cbf_data_dataset][idx] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
-             # write data to file (with temporary remap as mentioned above...)
+            self.h5_file[cbf_data_dataset][idx] = vis
 
             #### Send signal display information
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
-            self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
+            self.ig_sd['sd_data'] = vis
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
-             # check that this is from cache, not re-read from disk
             self.ig_sd['sd_flags'] = flags
              # send out RFI flags with the data
             self.send_sd_data(self.ig_sd.get_heap())

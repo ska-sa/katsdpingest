@@ -14,7 +14,7 @@ from .antsol import stefcal
 from .__init__ import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
-from katsdpsigproc import accel, tune
+from katsdpsigproc import accel, tune, fill, transpose
 
 try:
     context = accel.create_some_context(False)
@@ -36,25 +36,9 @@ class ProcBlock(object):
     avaiable via the history.
 
     Support for both inline modification and production of new data products is provided.
-
-    A flag array is used to refer to values within the currently linked data that should be flagged. The flag array is eventually finalised
-    into a packed int8 array hence the requirement for the flag column to be a multiple of 8. Currently the following bits are specified:
-        0 - reserved
-        1 - predefined static flag list
-        2 - flag based on live CAM information
-        3 - reserved
-        4 - RFI detected in the online system
-        5 - RFI predicted from space based pollutants
-        6 - reserved
-        7 - reserved
-
-    NOTE: Currently np.packbits is used to pack the boolean flag array into an integer value. This means that the flags
-          listed above are in MSB *first* order. e.g.. setting flag 4 (flag[:,:,4]=1) will toggle the 4th bit and produce an
-          integer value of 8 (00001000) once packed.
     """
     current = None
     history = None
-    flags = None
     logger = logging.getLogger("kat.k7capture.sigproc")
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
@@ -62,36 +46,12 @@ class ProcBlock(object):
     def __init__(self, **kwargs):
         self.cpref = CorrProdRef(**kwargs)
         self.expected_dtype = None
-        self.flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
-        self.flag_descriptions = ['reserved - bit 0','predefined static flag list','flag based on live CAM information',
-                                  'reserved - bit 3','RFI detected in the online system','RFI predicted from space based pollutants',
-                                  'reserved - bit 6','reserved - bit 7']
         self._extracted_arguments = self._extract_args(inspect.currentframe(1))
          # extract the arguments from the parent __init__
 
     def _extract_args(self, frame):
         args, _, _, values = inspect.getargvalues(frame)
         return ", ".join(["%s=%s" % (k,values[k]) for k in args if k is not 'self'])
-
-    def finalise_flags(self):
-        """Packs flags into optimal structure and returns them to caller."""
-        if self.flags is None:
-            self.logger.error("No flags yet defined. Using init_flags to setup the basic flag table.")
-        return np.packbits(self.flags).reshape(self.current.shape)
-
-    def init_flags(self, flag_size=8):
-        """Initialise a flag array based on the shape of current.
-
-        Typically this is called after updating the current reference to the current data.
-        Flags are stored in the final axis of the array (with size as given in flag_size).
-        Flag size must be a multiple of 8 to allow packbits to work unambiguously.
-
-        """
-        if flag_size % 8 != 0:
-            self.logger.error("given flag_size (%i) is not a multiple of 8." % flag_size)
-        if self.current is None:
-            self.logger.error("No current data. Unable to create flag table until ProcBlock.current has been initialised.")
-        self.flags = np.zeros(list(self.current.shape) + [flag_size], dtype=np.int8)
 
     def proc(self, *args, **kwargs):
         """Process a single time instance of data."""
@@ -211,6 +171,7 @@ class Prepare(accel.Operation):
         self.channels = channels
         self.channel_range = channel_range
         self.baselines = baselines
+        self.scale = 1.0
         self.slots['vis_in'] = accel.IOSlot(
                 (channels, baselines, 2), np.int32,
                 (tiley, tilex, 1))
@@ -224,7 +185,10 @@ class Prepare(accel.Operation):
                 (baselines, channel_range[1] - channel_range[0]), np.float32)
         self.slots['permutation'] = accel.IOSlot((baselines,), np.uint16)
 
-    def __call__(self, scale, **kwargs):
+    def set_scale(self, scale):
+        self.scale = scale
+
+    def __call__(self, **kwargs):
         self.bind(**kwargs)
         self.ensure_all_bound()
 
@@ -251,10 +215,18 @@ class Prepare(accel.Operation):
                     np.int32(self.channel_range[0]),
                     np.int32(self.channel_range[1]),
                     np.int32(self.baselines),
-                    np.float32(scale)
+                    np.float32(self.scale)
                 ],
                 global_size = (xblocks * block, yblocks * block),
                 local_size = (block, block))
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'channel_range': self.channel_range,
+            'baselines': self.baselines,
+            'scale': self.scale
+        }
 
 class AccumTemplate(object):
     """Template for weighted visibility accumulation with flags. The
@@ -396,6 +368,14 @@ class Accum(accel.Operation):
                 global_size = (xblocks * block, yblocks * block),
                 local_size = (block, block))
 
+    def parameters(self):
+        return {
+            'outputs': self.template.outputs,
+            'channels': self.channels,
+            'channel_range': self.channel_range,
+            'baselines': self.baselines
+        }
+
 class PostprocTemplate(object):
     """Postprocessing performed on each output dump:
 
@@ -509,20 +489,47 @@ class Postproc(accel.Operation):
             global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
             local_size=(self.template.wgsx, self.template.wgsy))
 
+    def parameters(self):
+        return {
+            'cont_factor': self.template.cont_factor,
+            'channels': self.channels,
+            'baselines': self.baselines
+        }
+
 class IngestTemplate(object):
-    """Template for the entire on-device ingest processing"""
+    """Template for the entire on-device ingest processing
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
+        Template for RFI flagging. It must have transposed flag outputs.
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    """
+
+    flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
+    flag_descriptions = [
+            'reserved - bit 0',
+            'predefined static flag list',
+            'flag based on live CAM information',
+            'reserved - bit 3',
+            'RFI detected in the online system',
+            'RFI predicted from space based pollutants',
+            'reserved - bit 6','reserved - bit 7']
 
     def __init__(self, context, flagger, cont_factor):
         self.context = context
         self.prepare = PrepareTemplate(context)
         # TODO: create a zero-fill template that handles all these cases
-        self.zero_vis_accum = accel.fill.FillTemplate(
+        self.zero_vis_accum = fill.FillTemplate(
                 context, np.complex64, 'float2')
-        self.zero_weights_accum = accel.fill.FillTemplate(
+        self.zero_weights_accum = fill.FillTemplate(
                 context, np.float32, 'float')
-        self.zero_flags_accum = accel.fill.FillTemplate(
+        self.zero_flags_accum = fill.FillTemplate(
                 context, np.uint8, 'unsigned char')
-        self.transpose_vis = accel.transpose.TransposeTemplate(
+        self.transpose_vis = transpose.TransposeTemplate(
                 context, np.complex64, 'float2')
         self.flagger = flagger
         self.accum = AccumTemplate(context, 1)
@@ -532,24 +539,54 @@ class IngestTemplate(object):
         return IngestOperation(self, command_queue, channels, channel_range, baselines)
 
 class IngestOperation(accel.OperationSequence):
+    """Concrete instance of :class:`IngestTemplate`.
+
+    .. rubric:: Input slots
+
+    **vis_in** : channels × baselines × 2, int32
+        Input visibilities from the correlator
+    **permutation** : baselines, uint16
+        Permutation mapping original to new baseline index
+
+    .. rubric:: Output slots
+
+    **vis_sum** : kept-channels × baselines, complex64
+        Spectral visibilities
+    **weights_sum** : kept-channels × baselines, float32
+        Spectral weights
+    **flags_sum** : kept-channels × baselines, uint8
+        Spectral flags
+    **cont_vis** : kept-channels/`cont_factor` × baselines, complex64
+        Continuum visibilities
+    **cont_weights** : kept-channels/`cont_factor` × baselines, float32
+        Continuum weights
+    **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
+        Continuum flags
+
+    .. rubric:: Scratch slots
+
+    These are subject to change and so are not documented at this time.
+    """
     def __init__(self, template, command_queue, channels, channel_range, baselines):
         kept_channels = channel_range[1] - channel_range[0]
-        self.prepare = self.template.prepare.instantiate(
+        self.template = template
+        self.prepare = template.prepare.instantiate(
                 command_queue, channels, channel_range, baselines)
-        self.zero_vis_sum = self.template.zero_vis_accum.instantiate(
+        self.zero_vis_sum = template.zero_vis_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        self.zero_weights_sum = self.template.zero_weights_accum.instantiate(
+        self.zero_weights_sum = template.zero_weights_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        self.zero_flags_sum = self.template.zero_flags_accum.instantiate(
+        self.zero_flags_sum = template.zero_flags_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        # TODO: need a single transpose+absolute value kernel
-        self.transpose_vis = self.template.transpose_vis.instantiate(
+        self.zero_flags_sum.set_value(0xff)
+        # TODO: a single transpose+absolute value kernel uses less memory
+        self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
-        self.flagger = self.template.flagger.instantiate(
+        self.flagger = template.flagger.instantiate(
                 command_queue, channels, baselines)
-        self.accum = self.template.accum.instantiate(
+        self.accum = template.accum.instantiate(
                 command_queue, channels, channel_range, baselines)
-        self.postproc = self.template.postproc.instantiate(
+        self.postproc = template.postproc.instantiate(
                 command_queue, kept_channels, baselines)
 
         # The order of these does not matter, since the actual sequencing is
@@ -586,14 +623,17 @@ class IngestOperation(accel.OperationSequence):
         }
         # TODO: aliasing of buffers
 
-        super(IngestOperation, self).__init__(self, command_queue, operations, compounds)
+        super(IngestOperation, self).__init__(command_queue, operations, compounds)
 
-    def __call__(self, scale, **kwargs):
+    def set_scale(self, scale):
+        self.prepare.set_scale(scale)
+
+    def __call__(self, **kwargs):
         """Process a single input dump"""
         self.bind(**kwargs)
         self.ensure_all_bound()
 
-        self.prepare(scale)
+        self.prepare()
         self.transpose_vis()
         self.flagger()
         self.accum()
@@ -603,9 +643,9 @@ class IngestOperation(accel.OperationSequence):
         self.bind(**kwargs)
         self.ensure_all_bound()
 
-        self.zero_vis_sum(0)
-        self.zero_weights_sum(0)
-        self.zero_flags_sum(0xff)
+        self.zero_vis_sum()
+        self.zero_weights_sum()
+        self.zero_flags_sum()
 
     def end_sum(self, **kwargs):
         """Perform postprocessing for an output dump. This only does
@@ -613,25 +653,26 @@ class IngestOperation(accel.OperationSequence):
         """
         self.postproc()
 
-class Scale(ProcBlock):
-    """Trivial block to perform data scaling and type conversion.
-
-    Parameters
-    ----------
-    scale_factor : float
-        The scale factor to use.
-
-    """
-    def __init__(self, scale_factor, *args, **kwargs):
-        super(Scale, self).__init__(*args, **kwargs)
-        self.scale_factor = scale_factor
-        self.expected_dtype = np.int32
-
-    def _proc(self):
-        self.current.dtype = np.float32
-        self.current[:] = (np.float32(self.current.view(np.int32)) / (1.0 * self.scale_factor))[:]
-         # avoid making a new current object. Just replace contents.
-        return None
+    def descriptions(self):
+        """Generate descriptions of all the components, for the process log.
+        Each description is a 3-tuple consisting of a component name, a
+        string describing the parameters, and a version string."""
+        def generate(operation, name):
+            try:
+                revision = operation.__class__.__module__.__version__
+            except AttributeError:
+                revision = 'unknown'
+            parameters = dict(operation.parameters())
+            parameters['class'] = operation.__class__.__module__ + '.' + operation.__class__.__name__
+            yield (
+                name,
+                ', '.join(['%s=%s' % x for x in sorted(parameters.iteritems())]),
+                revision)
+            if isinstance(operation, accel.OperationSequence):
+                for child_name, child_op in operation.operations.iteritems():
+                    for d in generate(child_op, child_name):
+                        yield (name + ':' + d[0], d[1], d[2])
+        return list(generate(self, 'ingest'))
 
 
 class VanVleckOutOfRangeError(Exception):
@@ -667,96 +708,6 @@ class VanVleck(ProcBlock):
         # Contents of current data are updated in-place
         return None
 
-class RFIThreshold2(ProcBlock):
-    """Simple RFI flagging through thresholding.
-
-    Trivial thresholder that looks for n sigma deviations from the average
-    of the supplied frame.
-
-    Parameters
-    ----------
-    n_sigma : float
-       The number of std deviations allowed
-
-    """
-    def __init__(self, n_sigma=11.0, spike_width=6, *args, **kwargs):
-        super(RFIThreshold2, self).__init__(*args, **kwargs)
-        width = 2 * spike_width + 1    # katsdpsigproc takes the median filter width
-        if context:
-            background = katsdpsigproc.rfi.device.BackgroundMedianFilterDeviceTemplate(context, width)
-            noise_est = katsdpsigproc.rfi.device.NoiseEstMADTDeviceTemplate(context, 10240)
-            threshold = katsdpsigproc.rfi.device.ThresholdSimpleDeviceTemplate(context, n_sigma, True)
-            self.flagger = katsdpsigproc.rfi.device.FlaggerHostFromDevice(
-                    katsdpsigproc.rfi.device.FlaggerDeviceTemplate(background, noise_est, threshold),
-                    context.create_command_queue())
-        else:
-            self.logger.debug("RFI Threshold: CUDA/OpenCL not found, falling back to CPU")
-            background = katsdpsigproc.rfi.host.BackgroundMedianFilterHost(width)
-            noise_est = katsdpsigproc.rfi.host.NoiseEstMADHost()
-            threshold = katsdpsigproc.rfi.host.ThresholdMADHost(n_sigma)
-            self.flagger = katsdpsigproc.rfi.host.FlaggerHost(background, noise_est, threshold)
-        self.expected_dtype = np.complex64
-
-    def _proc(self):
-        self.logger.debug("RFI Threshold: Processing block of shape %s" % str(self.current.shape))
-
-        if self.flags is None:
-            self.init_flags()
-
-        flags = self.flagger(self.current)
-        self.flags[..., 4] = flags
-
-
-class RFIThreshold(ProcBlock):
-    """Simple RFI flagging through thresholding.
-
-    Trivial thresholder that looks for n sigma deviations from the average
-    of the supplied frame.
-
-    Parameters
-    ----------
-    n_sigma : float
-       The number of std deviations allowed
-
-    """
-    def __init__(self,axis=0, *args, **kwargs):
-        super(RFIThreshold, self).__init__(*args, **kwargs)
-        self.axis = axis
-
-    def _proc(self):
-
-        flags = np.zeros(self.current.shape)
-        for bl_index in range(self.current.shape[1]):
-            spectral_data = np.abs(self.current[:,bl_index])
-            spectral_data = np.atleast_1d(spectral_data)
-            kernel = np.ones(spectral_data.ndim, dtype='int32')
-            kernel[self.axis] = 3
-            # Medfilt now seems to upcast 32-bit floats to doubles - convert it back to floats...
-            filtered_data = signal.medfilt(spectral_data, kernel)
-            # The deviation is measured relative to the local median in the signal
-            abs_dev = spectral_data - filtered_data
-            # Identify outliers (again based on normal assumption), and replace them with local median
-            outliers = (abs_dev > np.std(abs_dev)*2.3)
-            flags[:,bl_index] = outliers
-
-        return np.packbits(flags.astype(np.int8))
-
-######################################################################################################
-    #if self.history.shape[0] > 1:
-         # in this case we want to use available historical data rather than just the current frame.
-         # self.history has shape (Ntimestamps, Nchannels, Nbaselines)
-        #    m = np.mean(np.abs(self.history[1:]), axis=0)
-         #   s = np.std(np.abs(self.history[1:]), axis=0)
-             # these array now have shape (Nchannels, Nbaselines)
-    #    else:
-    #        m = np.mean(np.abs(self.current), axis=0)
-    #        s = np.std(np.abs(self.current), axis=0)
-             # these arrays have shape (Nbaselines). i.e. a single point per spectrum
-    #    flags = np.abs(self.current) >= (m + self.n_sigma * s)
-
-        ### End of section to replace
-
-#        return np.packbits(flags.astype(np.int8))
 
 ###################################################################################################################
 

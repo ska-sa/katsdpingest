@@ -4,79 +4,9 @@ import unittest
 import mock
 import numpy as np
 from katsdpingest import sigproc
+from katsdpsigproc import accel, tune
+import katsdpsigproc.rfi.device as rfi
 from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
-
-class SigProcTestCases(unittest.TestCase):
-    """Exercise the sigproc library under a number of varying conditions."""
-
-    def setUp(self):
-        """Create the basic environment, along with test vectors."""
-        self.scale_factor = 3
-        self.n_ts = 10
-        self.n_chans = 512
-        self.n_ants = 4
-        self.n_bls = 2 * self.n_ants * (self.n_ants+1)
-
-        self.spike_channel = np.random.randint(self.n_chans)
-        self.spike_bls = np.random.randint(self.n_bls)
-         # the channel and baseline into which to insert rfi spikes
-
-        self.data = (np.random.random((self.n_chans, self.n_bls,2)) + 100).astype(np.int32)
-         # produce some random data
-        self.data_copy = self.data.copy()
-
-        sigproc.ProcBlock.history = None
-        sigproc.ProcBlock.current = self.data
-
-    def testEmptyBlock(self):
-        """Test a empty signal processing block."""
-        pc = sigproc.ProcBlock()
-        self.assertRaises(NotImplementedError, pc.proc)
-
-    def testBlsOrdering(self):
-        """Check that CorrProdRef is built correctly."""
-        pc = sigproc.ProcBlock(n_ants=self.n_ants)
-        self.assertEqual(len(pc.cpref._id_to_real), self.n_bls)
-
-    def testBasicAssignment(self):
-        """Test assignment to class variables."""
-        pc = sigproc.ProcBlock()
-        np.testing.assert_equal(pc.current,self.data)
-
-    def testScaleDataType(self):
-        """Test acceptable data type for scale."""
-        data_wrong_type = np.ones((self.n_ts,self.n_chans,self.n_bls,2), dtype=np.float32)
-        sigproc.ProcBlock.current = data_wrong_type[0]
-        sc = sigproc.Scale(self.scale_factor)
-        self.assertRaises(TypeError, sc.proc)
-
-    def testScale(self):
-        """Test basic scaling."""
-        sc = sigproc.Scale(self.scale_factor)
-        sc.proc()
-        np.testing.assert_equal(self.data, np.float32(self.data_copy) / (1.0 * self.scale_factor))
-        self.assertEqual(self.data.dtype, np.float32)
-
-    def testVanVleck(self):
-        """Not implemented yet..."""
-        pass
-
-    def testRFIThresholdDataType(self):
-        """Test acceptable data type for rfi threshold."""
-        rfi = sigproc.RFIThreshold2()
-        data_wrong_type = np.ones((self.n_ts,self.n_chans,self.n_bls,2), dtype=np.int32)
-        sigproc.ProcBlock.history = data_wrong_type
-        sigproc.ProcBlock.current = data_wrong_type[0]
-        self.assertRaises(TypeError, rfi.proc)
-
-    def testRFIThreshold2(self):
-        """Test simple RFI Thresholding..."""
-        data = (np.random.random((self.n_chans, self.n_bls)) + 100).astype(np.complex64)
-        data[self.spike_channel, self.spike_bls] += 100
-        sigproc.ProcBlock.current = data
-        rfi = sigproc.RFIThreshold()
-        flags = np.unpackbits(rfi.proc()).reshape(self.n_chans, self.n_bls)
-        self.assertEqual(flags[self.spike_channel, self.spike_bls],1)
 
 class TestPrepare(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
@@ -99,7 +29,8 @@ class TestPrepare(unittest.TestCase):
         prepare.ensure_all_bound()
         prepare.slots['vis_in'].buffer.set(test_command_queue, vis_in)
         prepare.slots['permutation'].buffer.set(test_command_queue, permutation)
-        prepare(scale)
+        prepare.set_scale(scale)
+        prepare()
         weights = prepare.slots['weights'].buffer.get(test_command_queue)
         vis_out = prepare.slots['vis_out'].buffer.get(test_command_queue)
 
@@ -250,3 +181,42 @@ class TestPostproc(unittest.TestCase):
         np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(test_command_queue))
+
+class TestIngestOperation(unittest.TestCase):
+    @mock.patch('katsdpsigproc.tune.autotune', new=tune.stub_autotune)
+    @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
+    @mock.patch('katsdpsigproc.accel.build', spec=True)
+    def testDescriptions(self, *args):
+        channels = 128
+        channel_range = (16, 96)
+        baselines = 192
+
+        context = mock.Mock()
+        command_queue = mock.Mock()
+        # In some cases the mocking on autotuning isn't sufficient, so we just pass
+        # explicit tuning parameters
+        background_template = rfi.BackgroundMedianFilterDeviceTemplate(
+                context, width=13, tune={'wgs': 32, 'csplit': 8})
+        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
+                context, 10240)
+        threshold_template = rfi.ThresholdSimpleDeviceTemplate(
+                context, n_sigma=11.0, transposed=True)
+        flagger_template = rfi.FlaggerDeviceTemplate(
+                background_template, noise_est_template, threshold_template)
+        template = sigproc.IngestTemplate(context, flagger_template, 16)
+        fn = template.instantiate(command_queue, channels, channel_range, baselines)
+
+        expected = [
+            ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 'unknown'),
+            ('ingest:prepare', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, scale=1.0', 'unknown'),
+            ('ingest:zero_vis_sum', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 'unknown'),
+            ('ingest:zero_weights_sum', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 'unknown'),
+            ('ingest:zero_flags_sum', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 'unknown'),
+            ('ingest:transpose_vis', 'class=katsdpsigproc.transpose.Transpose, ctype=float2, dtype=complex64, shape=(192, 128)', 'unknown'),
+            ('ingest:flagger', 'class=katsdpsigproc.rfi.device.FlaggerDevice', 'unknown'),
+            ('ingest:flagger:background', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.BackgroundMedianFilterDevice, width=13', 'unknown'),
+            ('ingest:flagger:transpose_deviations', 'class=katsdpsigproc.transpose.Transpose, ctype=float, dtype=float32, shape=(128, 192)', 'unknown'),
+            ('ingest:flagger:noise_est', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.NoiseEstMADTDevice, max_channels=10240', 'unknown'),
+            ('ingest:flagger:threshold', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.ThresholdSimpleDevice, flag_value=1, n_sigma=11.0, transposed=True', 'unknown'), ('ingest:flagger:transpose_flags', 'class=katsdpsigproc.transpose.Transpose, ctype=unsigned char, dtype=uint8, shape=(192, 128)', 'unknown'), ('ingest:accum', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Accum, outputs=1', 'unknown'), ('ingest:postproc', 'baselines=192, channels=80, class=katsdpingest.sigproc.Postproc, cont_factor=16', 'unknown')
+        ]
+        self.assertEqual(expected, fn.descriptions())
