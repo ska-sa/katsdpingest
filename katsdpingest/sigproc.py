@@ -109,19 +109,19 @@ class PrepareTemplate(object):
     ----------
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context for which kernels will be compiled
-    tune : mapping, optional
+    tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
-    def __init__(self, context, tune=None):
-        if tune is None:
-            tune = self.autotune(context)
-        self.block = tune['block']
-        self.vtx = tune['vtx']
-        self.vty = tune['vty']
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.block = tuning['block']
+        self.vtx = tuning['vtx']
+        self.vty = tuning['vty']
         program = accel.build(context, 'ingest_kernels/prepare.mako',
                 {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
                 extra_dirs=[pkg_resources.resource_filename(__name__, '')])
@@ -241,20 +241,20 @@ class AccumTemplate(object):
         Context for which kernels will be compiled
     outputs : int
         Number of outputs in which to accumulate
-    tune : mapping, optional
+    tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
-    def __init__(self, context, outputs, tune=None):
-        if tune is None:
-            tune = self.autotune(context)
+    def __init__(self, context, outputs, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
         self.context = context
-        self.block = tune['block']
-        self.vtx = tune['vtx']
-        self.vty = tune['vty']
+        self.block = tuning['block']
+        self.vtx = tuning['vtx']
+        self.vty = tuning['vty']
         self.outputs = outputs
         program = accel.build(context, 'ingest_kernels/accum.mako',
             {
@@ -387,19 +387,19 @@ class PostprocTemplate(object):
         Context for which kernels will be compiled
     cont_factor : int
         Number of spectral channels per continuum channel
-    tune : mapping, optional
+    tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - wgsx, wgsy: number of workitems per workgroup in each dimension
     """
-    def __init__(self, context, cont_factor, tune=None):
-        if tune is None:
-            tune = self.autotune(context, cont_factor)
+    def __init__(self, context, cont_factor, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context, cont_factor)
         self.context = context
         self.cont_factor = cont_factor
-        self.wgsx = tune['wgsx']
-        self.wgsy = tune['wgsy']
+        self.wgsx = tuning['wgsx']
+        self.wgsy = tuning['wgsy']
         program = accel.build(context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,

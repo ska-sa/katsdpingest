@@ -212,7 +212,7 @@ class TestIngestOperation(unittest.TestCase):
         # In some cases the mocking on autotuning isn't sufficient, so we just pass
         # explicit tuning parameters
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                context, width=13, tune={'wgs': 32, 'csplit': 8})
+                context, width=13, tuning={'wgs': 32, 'csplit': 8})
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
                 context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
