@@ -193,6 +193,10 @@ class Prepare(accel.Operation):
         permutation = self.slots['permutation'].buffer
         vis_out = self.slots['vis_out'].buffer
         weights = self.slots['weights'].buffer
+        # Last dimension is not a fully-fledged dimension; it is just there
+        # because numpy doesn't have the concept of an integer complex
+        # number.
+        assert vis_in.padded_shape[-1] == 2
 
         block = self.template.block
         tilex = block * self.template.vtx
@@ -597,7 +601,7 @@ class IngestOperation(accel.OperationSequence):
         compounds = {
                 'vis_in':       ['prepare:vis_in'],
                 'permutation':  ['prepare:permutation'],
-                'vis_t':        ['prepare:vis_out', 'transpose_vis:src'],
+                'vis_t':        ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
                 'weights':      ['prepare:weights', 'accum:weights_in'],
                 'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
                 'deviations':   ['flagger:deviations'],
