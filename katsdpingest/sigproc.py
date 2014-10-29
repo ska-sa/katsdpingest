@@ -188,10 +188,7 @@ class Prepare(accel.Operation):
     def set_scale(self, scale):
         self.scale = scale
 
-    def __call__(self, **kwargs):
-        self.bind(**kwargs)
-        self.ensure_all_bound()
-
+    def _run(self):
         vis_in = self.slots['vis_in'].buffer
         permutation = self.slots['permutation'].buffer
         vis_out = self.slots['vis_out'].buffer
@@ -339,10 +336,7 @@ class Accum(accel.Operation):
                 (kept_channels, baselines), np.uint8,
                 (tilex, tiley))
 
-    def __call__(self, **kwargs):
-        self.bind(**kwargs)
-        self.ensure_all_bound()
-
+    def _run(self):
         buffer_names = []
         for i in range(self.template.outputs):
             label = str(i)
@@ -475,10 +469,7 @@ class Postproc(accel.Operation):
         self.slots['cont_weights'] = accel.IOSlot(cont_shape, np.float32, cont_round)
         self.slots['cont_flags'] =   accel.IOSlot(cont_shape, np.uint8, cont_round)
 
-    def __call__(self, **kwargs):
-        self.bind(**kwargs)
-        self.ensure_all_bound()
-
+    def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
         buffers = [self.slots[name].buffer for name in buffer_names]
         args = [x.buffer for x in buffers] + [np.int32(x.padded_shape[1]) for x in buffers]
@@ -628,11 +619,8 @@ class IngestOperation(accel.OperationSequence):
     def set_scale(self, scale):
         self.prepare.set_scale(scale)
 
-    def __call__(self, **kwargs):
+    def _run(self):
         """Process a single input dump"""
-        self.bind(**kwargs)
-        self.ensure_all_bound()
-
         self.prepare()
         self.transpose_vis()
         self.flagger()
