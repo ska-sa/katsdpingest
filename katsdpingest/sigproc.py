@@ -602,9 +602,7 @@ class IngestOperation(accel.OperationSequence):
                 'weights':      ['prepare:weights', 'accum:weights_in'],
                 'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
                 'deviations':   ['flagger:deviations'],
-                'deviations_t': ['flagger:deviations_t'],
                 'noise':        ['flagger:noise'],
-                'flags_unused': ['flagger:flags'],
                 'flags':        ['flagger:flags_t', 'accum:flags_in'],
                 'vis_sum':      ['accum:vis_out0', 'zero_vis_sum:data', 'postproc:vis'],
                 'weights_sum':  ['accum:weights_out0', 'zero_weights_sum:data', 'postproc:weights'],
@@ -613,9 +611,13 @@ class IngestOperation(accel.OperationSequence):
                 'cont_weights': ['postproc:cont_weights'],
                 'cont_flags':   ['postproc:cont_flags']
         }
+
+        aliases = {
+                'scratch1': ['flagger:deviations_t', 'vis_mid', 'flagger:flags']
+        }
         # TODO: aliasing of buffers
 
-        super(IngestOperation, self).__init__(command_queue, operations, compounds)
+        super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
 
     def set_scale(self, scale):
         self.prepare.set_scale(scale)
