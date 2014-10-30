@@ -8,8 +8,10 @@ import katsdpingest.sigproc as sp
 import numpy as np
 import argparse
 
-def generate_data(channels, baselines):
-    return np.random.normal(scale=32.0, size=(channels, baselines, 2)).astype(np.int32)
+def generate_data(vis_in_device, channels, baselines):
+    vis_in = vis_in_device.empty_like()
+    vis_in[:] = np.random.normal(scale=32.0, size=(channels, baselines, 2)).astype(np.int32)
+    return vis_in
 
 def create_flagger(context, args):
     background = rfi.BackgroundMedianFilterDeviceTemplate(
@@ -57,7 +59,8 @@ def main():
 
     command_queue.finish()
 
-    dumps = [generate_data(channels, baselines) for i in range(args.time_avg)]
+    vis_in_device = proc.slots['vis_in'].buffer
+    dumps = [generate_data(vis_in_device, channels, baselines) for i in range(args.time_avg)]
     start_event = command_queue.enqueue_marker()
     proc.start_sum()
     for dump in dumps:
