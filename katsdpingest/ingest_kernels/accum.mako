@@ -14,6 +14,10 @@ DEVICE_FN void accum_vis(GLOBAL float2 *out, float2 value, float weight)
     *out = sum;
 }
 
+/*
+ * in_full_stride is for in_vis and in_flags (which are indexed from channel_start),
+ * while in_kept_stride is for in_weights (which is indexed from 0).
+ */
 KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
 % for i in range(outputs):
     GLOBAL float2 * RESTRICT out_vis${i},
@@ -23,14 +27,9 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
     const GLOBAL float2 * RESTRICT in_vis,
     const GLOBAL float * RESTRICT in_weights,
     const GLOBAL unsigned char * RESTRICT in_flags,
-% for i in range(outputs):
-    int out_vis_stride${i},
-    int out_weights_stride${i},
-    int out_flags_stride${i},
-% endfor
-    int in_vis_stride,
-    int in_weights_stride,
-    int in_flags_stride,
+    int out_stride,
+    int in_full_stride,
+    int in_kept_stride,
     int channel_start)
 {
     LOCAL_DECL transpose_vis local_vis;
@@ -42,9 +41,11 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
 
     // Load a block of data, for all channels
     <%transpose:transpose_load coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
-        local_vis.arr[${lr}][${lc}] = in_vis[${r} * in_vis_stride + ${c} + channel_start];
-        local_weights.arr[${lr}][${lc}] = in_weights[${r} * in_weights_stride + ${c}];
-        local_flags.arr[${lr}][${lc}] = in_flags[${r} * in_flags_stride + ${c} + channel_start];
+        int full_addr = ${r} * in_full_stride + ${c} + channel_start;
+        int kept_addr = ${r} * in_kept_stride + ${c};
+        local_vis.arr[${lr}][${lc}] = in_vis[full_addr];
+        local_weights.arr[${lr}][${lc}] = in_weights[kept_addr];
+        local_flags.arr[${lr}][${lc}] = in_flags[full_addr];
     </%transpose:transpose_load>
 
     BARRIER();
@@ -56,10 +57,11 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
         unsigned int flag = local_flags.arr[${lr}][${lc}];
         if (flag != 0)
             weight *= 5.42101086e-20f;  // 2^-64
+        int addr = ${r} * out_stride + ${c};
 % for i in range(outputs):
-        accum_vis(&out_vis${i}[${r} * out_vis_stride${i} + ${c}], vis, weight);
-        out_weights${i}[${r} * out_weights_stride${i} + ${c}] += weight;
-        out_flags${i}[${r} * out_flags_stride${i} + ${c}] &= flag;
+        accum_vis(&out_vis${i}[addr], vis, weight);
+        out_weights${i}[addr] += weight;
+        out_flags${i}[addr] &= flag;
 % endfor
     </%transpose:transpose_store>
 }

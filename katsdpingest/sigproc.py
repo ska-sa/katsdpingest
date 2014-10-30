@@ -172,14 +172,15 @@ class Prepare(accel.Operation):
         self.channel_range = channel_range
         self.baselines = baselines
         self.scale = 1.0
+        padded_channels = accel.Dimension(channels, tiley)
+        padded_baselines = accel.Dimension(baselines, tilex)
+        complex_parts = accel.Dimension(2, exact=True)
         self.slots['vis_in'] = accel.IOSlot(
-                (channels, baselines, 2), np.int32,
-                (tiley, tilex, 1))
+                (padded_channels, padded_baselines, complex_parts), np.int32)
         # For output we do not need to pad the baselines, because the
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
-                (baselines, channels), np.complex64,
-                (1, tiley))
+                (baselines, padded_channels), np.complex64)
         # Channels need to be range-checked anywhere here, so no padding
         self.slots['weights'] = accel.IOSlot(
                 (baselines, channel_range[1] - channel_range[0]), np.float32)
@@ -193,10 +194,6 @@ class Prepare(accel.Operation):
         permutation = self.slots['permutation'].buffer
         vis_out = self.slots['vis_out'].buffer
         weights = self.slots['weights'].buffer
-        # Last dimension is not a fully-fledged dimension; it is just there
-        # because numpy doesn't have the concept of an integer complex
-        # number.
-        assert vis_in.padded_shape[-1] == 2
 
         block = self.template.block
         tilex = block * self.template.vtx
@@ -319,26 +316,24 @@ class Accum(accel.Operation):
         self.channel_range = channel_range
         self.baselines = baselines
         kept_channels = channel_range[1] - channel_range[0]
+        padded_kept_channels = accel.Dimension(kept_channels, tilex)
+        padded_baselines = accel.Dimension(baselines, tiley)
+        padded_channels = accel.Dimension(channels,
+                min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range[0]))
         self.slots['vis_in'] = accel.IOSlot(
-                (baselines, channels), np.complex64,
-                (tiley, tilex))
+                (padded_baselines, padded_channels), np.complex64)
         self.slots['weights_in'] = accel.IOSlot(
-                (baselines, kept_channels), np.float32,
-                (tiley, tilex))
+                (padded_baselines, padded_kept_channels), np.float32)
         self.slots['flags_in'] = accel.IOSlot(
-                (baselines, channels), np.uint8,
-                (tiley, tilex))
+                (padded_baselines, padded_channels), np.uint8)
         for i in range(self.template.outputs):
             label = str(i)
             self.slots['vis_out' + label] = accel.IOSlot(
-                (kept_channels, baselines), np.complex64,
-                (tilex, tiley))
+                (padded_kept_channels, padded_baselines), np.complex64)
             self.slots['weights_out' + label] = accel.IOSlot(
-                (kept_channels, baselines), np.float32,
-                (tilex, tiley))
+                (padded_kept_channels, padded_baselines), np.float32)
             self.slots['flags_out' + label] = accel.IOSlot(
-                (kept_channels, baselines), np.uint8,
-                (tilex, tiley))
+                (padded_kept_channels, padded_baselines), np.uint8)
 
     def _run(self):
         buffer_names = []
@@ -347,11 +342,11 @@ class Accum(accel.Operation):
             buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
         buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
         buffers = [self.slots[x].buffer for x in buffer_names]
-        # Arguments are structured as a list of buffers followed by a list of
-        # their strides in the same order.
-        args = [x.buffer for x in buffers] + \
-               [np.int32(x.padded_shape[1]) for x in buffers] + \
-               [np.int32(self.channel_range[0])]
+        args = [x.buffer for x in buffers] + [
+            np.int32(buffers[0].padded_shape[1]),
+            np.int32(buffers[-3].padded_shape[1]),
+            np.int32(buffers[-2].padded_shape[1]),
+            np.int32(self.channel_range[0])]
 
         kept_channels = self.channel_range[1] - self.channel_range[0]
         block = self.template.block
@@ -462,21 +457,23 @@ class Postproc(accel.Operation):
             raise ValueError('Number of channels must be a multiple of the continuum factor')
         cont_channels = channels // template.cont_factor
 
-        spectral_shape = (channels, baselines)
-        spectral_round = (template.cont_factor * template.wgsy, template.wgsx)
-        cont_shape = (cont_channels, baselines)
-        cont_round = (template.wgsy, template.wgsx)
-        self.slots['vis'] =     accel.IOSlot(spectral_shape, np.complex64, spectral_round)
-        self.slots['weights'] = accel.IOSlot(spectral_shape, np.float32, spectral_round)
-        self.slots['flags'] =   accel.IOSlot(spectral_shape, np.uint8, spectral_round)
-        self.slots['cont_vis'] =     accel.IOSlot(cont_shape, np.complex64, cont_round)
-        self.slots['cont_weights'] = accel.IOSlot(cont_shape, np.float32, cont_round)
-        self.slots['cont_flags'] =   accel.IOSlot(cont_shape, np.uint8, cont_round)
+        spectral_dims = (
+            accel.Dimension(channels, template.cont_factor * template.wgsy),
+            accel.Dimension(baselines, template.wgsx))
+        cont_dims = (
+            accel.Dimension(cont_channels, template.wgsy),
+            spectral_dims[1])
+        self.slots['vis'] =     accel.IOSlot(spectral_dims, np.complex64)
+        self.slots['weights'] = accel.IOSlot(spectral_dims, np.float32)
+        self.slots['flags'] =   accel.IOSlot(spectral_dims, np.uint8)
+        self.slots['cont_vis'] =     accel.IOSlot(cont_dims, np.complex64)
+        self.slots['cont_weights'] = accel.IOSlot(cont_dims, np.float32)
+        self.slots['cont_flags'] =   accel.IOSlot(cont_dims, np.uint8)
 
     def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
         buffers = [self.slots[name].buffer for name in buffer_names]
-        args = [x.buffer for x in buffers] + [np.int32(x.padded_shape[1]) for x in buffers]
+        args = [x.buffer for x in buffers] + [np.int32(buffers[0].padded_shape[1])]
         xblocks = accel.divup(self.baselines, self.template.wgsx)
         yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
         self.command_queue.enqueue_kernel(

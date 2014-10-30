@@ -10,7 +10,7 @@ import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
 
 def reduce_flags(flags, axis):
-    """Reduction by logical AND along an axis. This is necessarily because
+    """Reduction by logical AND along an axis. This is necessary because
     `np.bitwise_and.identity` is 1 instead of -1, which causes it to give
     incorrect results."""
     return np.bitwise_not(
@@ -156,7 +156,6 @@ class TestPostproc(unittest.TestCase):
     @device_test
     def testPostproc(self):
         """Test with random data against a CPU implementation"""
-
         channels = 1024
         baselines = 512
         cont_factor = 16
@@ -190,8 +189,8 @@ class TestPostproc(unittest.TestCase):
         cont_weights *= (cont_flags == 0)
 
         # Verify results
-        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(test_command_queue))
-        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(test_command_queue))
+        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(test_command_queue), rtol=1e-5)
+        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(test_command_queue))
