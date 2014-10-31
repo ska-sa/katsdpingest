@@ -7,7 +7,7 @@ from katsdpingest import sigproc
 from katsdpsigproc import accel, tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
-from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
+from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue, force_autotune
 
 def reduce_flags(flags, axis):
     """Reduction by logical AND along an axis. This is necessary because
@@ -62,6 +62,11 @@ class TestPrepare(unittest.TestCase):
                     expected_weights[row, col] = 1.0
         np.testing.assert_equal(expected_vis, vis_out)
         np.testing.assert_equal(expected_weights, weights)
+
+    @device_test
+    @force_autotune
+    def testAutotune(self):
+        sigproc.PrepareTemplate(test_context)
 
 class TestAccum(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Accum`"""
@@ -144,6 +149,11 @@ class TestAccum(unittest.TestCase):
                 actual = fn.slots[name + str(i)].buffer.get(test_command_queue)
                 np.testing.assert_allclose(value[i], actual)
 
+    @device_test
+    @force_autotune
+    def testAutotune(self):
+        sigproc.AccumTemplate(test_context, 2)
+
 class TestPostproc(unittest.TestCase):
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
 
@@ -195,10 +205,14 @@ class TestPostproc(unittest.TestCase):
         np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(test_command_queue), rtol=1e-5)
         np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(test_command_queue))
 
+    @device_test
+    @force_autotune
+    def testAutotune(self):
+        sigproc.PostprocTemplate(test_context, 16)
+
 class TestIngestOperation(unittest.TestCase):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
 
-    @mock.patch('katsdpsigproc.tune.autotune', new=tune.stub_autotune)
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)
     def testDescriptions(self, *args):
@@ -208,10 +222,8 @@ class TestIngestOperation(unittest.TestCase):
 
         context = mock.Mock()
         command_queue = mock.Mock()
-        # In some cases the mocking on autotuning isn't sufficient, so we just pass
-        # explicit tuning parameters
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                context, width=13, tuning={'wgs': 32, 'csplit': 8})
+                context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
                 context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(

@@ -128,7 +128,7 @@ class PrepareTemplate(object):
         self.kernel = program.get_kernel('prepare')
 
     @classmethod
-    @tune.autotuner
+    @tune.autotuner(test={'block': 16, 'vtx': 1, 'vty': 1})
     def autotune(cls, context):
         # TODO: do real autotuning
         return {'block': 16, 'vtx': 1, 'vty': 1}
@@ -263,7 +263,7 @@ class AccumTemplate(object):
         self.kernel = program.get_kernel('accum')
 
     @classmethod
-    @tune.autotuner
+    @tune.autotuner(test={'block': 16, 'vtx': 1, 'vty': 1})
     def autotune(cls, context):
         # TODO: do real autotuning
         return {'block': 16, 'vtx': 1, 'vty': 1}
@@ -405,7 +405,7 @@ class PostprocTemplate(object):
         self.kernel = program.get_kernel('postproc')
 
     @classmethod
-    @tune.autotuner
+    @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
     def autotune(cls, context, cont_factor):
         # TODO: do real autotuning
         return {'wgsx': 32, 'wgsy': 8}
