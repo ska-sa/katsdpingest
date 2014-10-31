@@ -367,8 +367,8 @@ class CBFIngest(threading.Thread):
             self.proc()
             self.end_sum()
 
-            flags = self.proc.slots['flags'].buffer.get(self.command_queue)
-            vis = self.proc.slots['vis_sum'].buffer.get(self.command_queue)
+            flags = self.proc.slots['spec_flags'].buffer.get(self.command_queue)
+            vis = self.proc.slots['spec_vis'].buffer.get(self.command_queue)
             # Complex values are written to file as an extra dimension of size 2,
             # rather than as structs
             vis = vis.view(np.float32).reshape(list(vis.shape) + [2])

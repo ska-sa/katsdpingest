@@ -542,11 +542,11 @@ class IngestOperation(accel.OperationSequence):
 
     .. rubric:: Output slots
 
-    **vis_sum** : kept-channels × baselines, complex64
+    **spec_vis** : kept-channels × baselines, complex64
         Spectral visibilities
-    **weights_sum** : kept-channels × baselines, float32
+    **spec_weights** : kept-channels × baselines, float32
         Spectral weights
-    **flags_sum** : kept-channels × baselines, uint8
+    **spec_flags** : kept-channels × baselines, uint8
         Spectral flags
     **cont_vis** : kept-channels/`cont_factor` × baselines, complex64
         Continuum visibilities
@@ -564,13 +564,13 @@ class IngestOperation(accel.OperationSequence):
         self.template = template
         self.prepare = template.prepare.instantiate(
                 command_queue, channels, channel_range, baselines)
-        self.zero_vis_sum = template.zero_vis_accum.instantiate(
+        self.zero_spec_vis = template.zero_vis_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        self.zero_weights_sum = template.zero_weights_accum.instantiate(
+        self.zero_spec_weights = template.zero_weights_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        self.zero_flags_sum = template.zero_flags_accum.instantiate(
+        self.zero_spec_flags = template.zero_flags_accum.instantiate(
                 command_queue, (kept_channels, baselines))
-        self.zero_flags_sum.set_value(0xff)
+        self.zero_spec_flags.set_value(0xff)
         # TODO: a single transpose+absolute value kernel uses less memory
         self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
@@ -585,9 +585,9 @@ class IngestOperation(accel.OperationSequence):
         # done by methods in this class.
         operations = [
                 ('prepare', self.prepare),
-                ('zero_vis_sum', self.zero_vis_sum),
-                ('zero_weights_sum', self.zero_weights_sum),
-                ('zero_flags_sum', self.zero_flags_sum),
+                ('zero_spec_vis', self.zero_spec_vis),
+                ('zero_spec_weights', self.zero_spec_weights),
+                ('zero_spec_flags', self.zero_spec_flags),
                 ('transpose_vis', self.transpose_vis),
                 ('flagger', self.flagger),
                 ('accum', self.accum),
@@ -604,9 +604,9 @@ class IngestOperation(accel.OperationSequence):
                 'deviations':   ['flagger:deviations'],
                 'noise':        ['flagger:noise'],
                 'flags':        ['flagger:flags_t', 'accum:flags_in'],
-                'vis_sum':      ['accum:vis_out0', 'zero_vis_sum:data', 'postproc:vis'],
-                'weights_sum':  ['accum:weights_out0', 'zero_weights_sum:data', 'postproc:weights'],
-                'flags_sum':    ['accum:flags_out0', 'zero_flags_sum:data', 'postproc:flags'],
+                'spec_vis':     ['accum:vis_out0', 'zero_spec_vis:data', 'postproc:vis'],
+                'spec_weights': ['accum:weights_out0', 'zero_spec_weights:data', 'postproc:weights'],
+                'spec_flags':   ['accum:flags_out0', 'zero_spec_flags:data', 'postproc:flags'],
                 'cont_vis':     ['postproc:cont_vis'],
                 'cont_weights': ['postproc:cont_weights'],
                 'cont_flags':   ['postproc:cont_flags']
@@ -634,9 +634,9 @@ class IngestOperation(accel.OperationSequence):
         self.bind(**kwargs)
         self.ensure_all_bound()
 
-        self.zero_vis_sum()
-        self.zero_weights_sum()
-        self.zero_flags_sum()
+        self.zero_spec_vis()
+        self.zero_spec_weights()
+        self.zero_spec_flags()
 
     def end_sum(self, **kwargs):
         """Perform postprocessing for an output dump. This only does

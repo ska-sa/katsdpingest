@@ -236,9 +236,9 @@ class TestIngestOperation(unittest.TestCase):
         expected = [
             ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 'unknown'),
             ('ingest:prepare', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, scale=1.0', 'unknown'),
-            ('ingest:zero_vis_sum', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 'unknown'),
-            ('ingest:zero_weights_sum', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 'unknown'),
-            ('ingest:zero_flags_sum', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 'unknown'),
+            ('ingest:zero_spec_vis', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 'unknown'),
+            ('ingest:zero_spec_weights', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 'unknown'),
+            ('ingest:zero_spec_flags', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 'unknown'),
             ('ingest:transpose_vis', 'class=katsdpsigproc.transpose.Transpose, ctype=float2, dtype=complex64, shape=(192, 128)', 'unknown'),
             ('ingest:flagger', 'class=katsdpsigproc.rfi.device.FlaggerDevice', 'unknown'),
             ('ingest:flagger:background', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.BackgroundMedianFilterDevice, width=13', 'unknown'),
@@ -351,18 +351,18 @@ class TestIngestOperation(unittest.TestCase):
         fn.end_sum()
 
         expected = self.runHost(vis_in, scale, permutation, cont_factor, channel_range, n_sigma)
-        (expected_vis, expected_weights, expected_flags,
+        (expected_spec_vis, expected_spec_weights, expected_spec_flags,
                 expected_cont_vis, expected_cont_weights, expected_cont_flags) = expected
-        vis = fn.slots['vis_sum'].buffer.get(test_command_queue)
-        weights = fn.slots['weights_sum'].buffer.get(test_command_queue)
-        flags = fn.slots['flags_sum'].buffer.get(test_command_queue)
+        spec_vis = fn.slots['spec_vis'].buffer.get(test_command_queue)
+        spec_weights = fn.slots['spec_weights'].buffer.get(test_command_queue)
+        spec_flags = fn.slots['spec_flags'].buffer.get(test_command_queue)
         cont_vis = fn.slots['cont_vis'].buffer.get(test_command_queue)
         cont_weights = fn.slots['cont_weights'].buffer.get(test_command_queue)
         cont_flags = fn.slots['cont_flags'].buffer.get(test_command_queue)
 
-        np.testing.assert_allclose(expected_vis, vis, rtol=1e-5)
-        np.testing.assert_allclose(expected_weights, weights, rtol=1e-5)
-        np.testing.assert_equal(expected_flags, flags)
+        np.testing.assert_allclose(expected_spec_vis, spec_vis, rtol=1e-5)
+        np.testing.assert_allclose(expected_spec_weights, spec_weights, rtol=1e-5)
+        np.testing.assert_equal(expected_spec_flags, spec_flags)
         np.testing.assert_allclose(expected_cont_vis, cont_vis, rtol=1e-5)
         np.testing.assert_allclose(expected_cont_weights, cont_weights, rtol=1e-5)
         np.testing.assert_equal(expected_cont_flags, cont_flags)
