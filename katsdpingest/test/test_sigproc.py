@@ -316,6 +316,7 @@ class TestIngestOperation(unittest.TestCase):
         cont_weights *= (cont_flags == 0)
         return (vis, weights, flags, cont_vis, cont_weights, cont_flags)
 
+    @device_test
     def testRandom(self):
         """Test with random data against a CPU implementation"""
         channels = 128
