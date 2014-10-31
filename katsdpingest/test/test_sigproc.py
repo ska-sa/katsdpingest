@@ -11,8 +11,10 @@ from katsdpsigproc.test.test_accel import device_test, test_context, test_comman
 
 def reduce_flags(flags, axis):
     """Reduction by logical AND along an axis. This is necessary because
-    `np.bitwise_and.identity` is 1 instead of -1, which causes it to give
-    incorrect results."""
+    `np.bitwise_and.identity` is `incorrect`__.
+
+    .. __: https://github.com/numpy/numpy/issues/5250
+    """
     return np.bitwise_not(
             np.bitwise_or.reduce(np.bitwise_not(flags), axis))
 
