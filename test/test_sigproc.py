@@ -60,13 +60,19 @@ def main():
     command_queue.finish()
 
     vis_in_device = proc.slots['vis_in'].buffer
+    output_names = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
+    output_buffers = [proc.slots[name].buffer for name in output_names]
+    output_arrays = [buf.empty_like() for buf in output_buffers]
+
     dumps = [generate_data(vis_in_device, channels, baselines) for i in range(args.time_avg)]
     start_event = command_queue.enqueue_marker()
     proc.start_sum()
     for dump in dumps:
-        proc.slots['vis_in'].buffer.set(command_queue, dump)
+        proc.slots['vis_in'].buffer.set_async(command_queue, dump)
         proc()
     proc.end_sum()
+    for buf, array in zip(output_buffers, output_arrays):
+        buf.get_async(command_queue, array)
     end_event = command_queue.enqueue_marker()
     print "{0:.3f}ms".format(end_event.time_since(start_event) * 1000.0)
 
