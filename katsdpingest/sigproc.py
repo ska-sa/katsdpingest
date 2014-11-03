@@ -116,6 +116,9 @@ class PrepareTemplate(object):
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
+
+    autotune_version = 1
+
     def __init__(self, context, tuning=None):
         if tuning is None:
             tuning = self.autotune(context)
@@ -128,10 +131,35 @@ class PrepareTemplate(object):
         self.kernel = program.get_kernel('prepare')
 
     @classmethod
-    @tune.autotuner(test={'block': 16, 'vtx': 1, 'vty': 1})
+    @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
     def autotune(cls, context):
-        # TODO: do real autotuning
-        return {'block': 16, 'vtx': 1, 'vty': 1}
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+        channel_range = (128, channels - 128)
+        kept_channels = channel_range[1] - channel_range[0]
+
+        vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
+        vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
+        permutation = accel.DeviceArray(context, (baselines,), np.uint16)
+        weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
+        vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
+        permutation.set(queue, np.arange(baselines).astype(np.uint16))
+        def generate(block, vtx, vty):
+            local_mem = (block * vtx + 1) * (block * vty) * 8
+            if local_mem > 32768:
+                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+            fn = cls(context, {
+                'block': block,
+                'vtx': vtx,
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+            fn.bind(vis_in=vis_in, vis_out=vis_out,
+                    permutation=permutation, weights=weights)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                block=[8, 16, 32],
+                vtx=[1, 2, 3, 4],
+                vty=[1, 2, 3, 4])
 
     def instantiate(self, command_queue, channels, channel_range, baselines):
         return Prepare(self, command_queue, channels, channel_range, baselines)
@@ -245,9 +273,11 @@ class AccumTemplate(object):
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
+    autotune_version = 1
+
     def __init__(self, context, outputs, tuning=None):
         if tuning is None:
-            tuning = self.autotune(context)
+            tuning = self.autotune(context, outputs)
         self.context = context
         self.block = tuning['block']
         self.vtx = tuning['vtx']
@@ -263,10 +293,42 @@ class AccumTemplate(object):
         self.kernel = program.get_kernel('accum')
 
     @classmethod
-    @tune.autotuner(test={'block': 16, 'vtx': 1, 'vty': 1})
-    def autotune(cls, context):
-        # TODO: do real autotuning
-        return {'block': 16, 'vtx': 1, 'vty': 1}
+    @tune.autotuner(test={'block': 8, 'vtx': 2, 'vty': 3})
+    def autotune(cls, context, outputs):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+        channel_range = (128, channels - 128)
+        kept_channels = channel_range[1] - channel_range[0]
+
+        vis_in = accel.DeviceArray(context, (baselines, channels), np.complex64)
+        weights_in = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
+        flags_in = accel.DeviceArray(context, (baselines, channels), np.uint8)
+        out = {}
+        for i in range(outputs):
+            suffix = str(i)
+            out['vis_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.complex64)
+            out['weights_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.float32)
+            out['flags_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.uint8)
+
+        rs = np.random.RandomState(seed=1)
+        vis_in.set(queue, np.ones(vis_in.shape, np.complex64))
+        weights_in.set(queue, np.ones(weights_in.shape, np.float32))
+        flags_in.set(queue, rs.choice([0, 16], size=flags_in.shape, p=[0.95, 0.05]).astype(np.uint8))
+        def generate(block, vtx, vty):
+            local_mem = (block * vtx + 1) * (block * vty) * 13
+            if local_mem > 32768:
+                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+            fn = cls(context, outputs, {
+                'block': block,
+                'vtx': vtx,
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+            fn.bind(vis_in=vis_in, weights_in=weights_in, flags_in=flags_in, **out)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                block=[8, 16, 32],
+                vtx=[1, 2, 3, 4],
+                vty=[1, 2, 3, 4])
 
     def instantiate(self, command_queue, channels, channel_range, baselines):
         return Accum(self, command_queue, channels, channel_range, baselines)
@@ -388,6 +450,8 @@ class PostprocTemplate(object):
 
         - wgsx, wgsy: number of workitems per workgroup in each dimension
     """
+    autotune_version = 1
+
     def __init__(self, context, cont_factor, tuning=None):
         if tuning is None:
             tuning = self.autotune(context, cont_factor)
@@ -407,8 +471,31 @@ class PostprocTemplate(object):
     @classmethod
     @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
     def autotune(cls, context, cont_factor):
-        # TODO: do real autotuning
-        return {'wgsx': 32, 'wgsy': 8}
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = accel.roundup(2048, cont_factor)
+        cont_channels = channels // cont_factor
+
+        vis =     accel.DeviceArray(context, (channels, baselines), np.complex64)
+        weights = accel.DeviceArray(context, (channels, baselines), np.float32)
+        flags =   accel.DeviceArray(context, (channels, baselines), np.uint8)
+        cont_vis =     accel.DeviceArray(context, (cont_channels, baselines), np.complex64)
+        cont_weights = accel.DeviceArray(context, (cont_channels, baselines), np.float32)
+        cont_flags =   accel.DeviceArray(context, (cont_channels, baselines), np.uint8)
+
+        rs = np.random.RandomState(seed=1)
+        vis.set(queue, np.ones(vis.shape, np.complex64))
+        weights.set(queue, rs.uniform(1e-5, 4.0, weights.shape).astype(np.float32))
+        flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
+        def generate(**tuning):
+            fn = cls(context, cont_factor, tuning=tuning).instantiate(
+                    queue, channels, baselines)
+            fn.bind(vis=vis, weights=weights, flags=flags)
+            fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                wgsx=[8, 16, 32],
+                wgsy=[8, 16, 32])
 
     def instantiate(self, context, channels, baselines):
         return Postproc(self, context, channels, baselines)
