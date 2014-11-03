@@ -16,11 +16,6 @@ import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
 from katsdpsigproc import accel, tune, fill, transpose
 
-try:
-    context = accel.create_some_context(False)
-except RuntimeError:
-    context = None
-
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
 
