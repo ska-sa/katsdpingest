@@ -7,7 +7,7 @@ from katsdpingest import sigproc
 from katsdpsigproc import accel, tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
-from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue, force_autotune
+from katsdpsigproc.test.test_accel import device_test, force_autotune
 
 def reduce_flags(flags, axis):
     """Reduction by logical AND along an axis. This is necessary because
@@ -28,7 +28,7 @@ class TestPrepare(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
     @device_test
-    def testPrepare(self):
+    def testPrepare(self, context, queue):
         """Basic test of data preparation"""
         channels = 73
         channel_range = (10, 55)
@@ -40,15 +40,15 @@ class TestPrepare(unittest.TestCase):
         vis_in = rs.random_integers(-1000, 1000, (channels, baselines, 2)).astype(np.int32)
         permutation = rs.permutation(baselines).astype(np.uint16)
 
-        template = sigproc.PrepareTemplate(test_context)
-        prepare = template.instantiate(test_command_queue, channels, channel_range, baselines)
+        template = sigproc.PrepareTemplate(context)
+        prepare = template.instantiate(queue, channels, channel_range, baselines)
         prepare.ensure_all_bound()
-        prepare.slots['vis_in'].buffer.set(test_command_queue, vis_in)
-        prepare.slots['permutation'].buffer.set(test_command_queue, permutation)
+        prepare.slots['vis_in'].buffer.set(queue, vis_in)
+        prepare.slots['permutation'].buffer.set(queue, permutation)
         prepare.set_scale(scale)
         prepare()
-        weights = prepare.slots['weights'].buffer.get(test_command_queue)
-        vis_out = prepare.slots['vis_out'].buffer.get(test_command_queue)
+        weights = prepare.slots['weights'].buffer.get(queue)
+        vis_out = prepare.slots['vis_out'].buffer.get(queue)
 
         self.assertEqual((baselines, channels), vis_out.shape)
         self.assertEqual((baselines, keep_channels), weights.shape)
@@ -67,14 +67,14 @@ class TestPrepare(unittest.TestCase):
 
     @device_test
     @force_autotune
-    def testAutotune(self):
-        sigproc.PrepareTemplate(test_context)
+    def testAutotune(self, context, queue):
+        sigproc.PrepareTemplate(context)
 
 class TestAccum(unittest.TestCase):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
     @device_test
-    def testSmall(self):
+    def testSmall(self, context, queue):
         """Hand-coded test data, to test various cases"""
 
         flag_scale = 2 ** -64
@@ -88,11 +88,11 @@ class TestAccum(unittest.TestCase):
             'flags_out0':   np.array([[1, 9, 0]], dtype=np.uint8).T
         }
 
-        template = sigproc.AccumTemplate(test_context, 1)
-        fn = template.instantiate(test_command_queue, 5, [1, 4], 1)
+        template = sigproc.AccumTemplate(context, 1)
+        fn = template.instantiate(queue, 5, [1, 4], 1)
         fn.ensure_all_bound()
         for name, value in host.iteritems():
-            fn.slots[name].buffer.set(test_command_queue, value)
+            fn.slots[name].buffer.set(queue, value)
         fn()
 
         expected = {
@@ -101,11 +101,11 @@ class TestAccum(unittest.TestCase):
             'flags_out0':   np.array([[0, 8, 0]], dtype=np.uint8).T
         }
         for name, value in expected.iteritems():
-            actual = fn.slots[name].buffer.get(test_command_queue)
+            actual = fn.slots[name].buffer.get(queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
     @device_test
-    def testBig(self):
+    def testBig(self, context, queue):
         """Test with large random data against a simple CPU version"""
         flag_scale = 2 ** -64
         channels = 203
@@ -126,14 +126,14 @@ class TestAccum(unittest.TestCase):
             weights_out.append(rs.uniform(size=(kept_channels, baselines)).astype(np.float32))
             flags_out.append(rs.choice(4, (kept_channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8))
 
-        template = sigproc.AccumTemplate(test_context, outputs)
-        fn = template.instantiate(test_command_queue, channels, channel_range, baselines)
+        template = sigproc.AccumTemplate(context, outputs)
+        fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in), ('flags_in', flags_in)]:
-            fn.slots[name].buffer.set(test_command_queue, value)
+            fn.slots[name].buffer.set(queue, value)
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
             for i in range(outputs):
-                fn.slots[name + str(i)].buffer.set(test_command_queue, value[i])
+                fn.slots[name + str(i)].buffer.set(queue, value[i])
         fn()
 
         # Perform the operation on the host
@@ -148,13 +148,13 @@ class TestAccum(unittest.TestCase):
         # Verify results
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
             for i in range(outputs):
-                actual = fn.slots[name + str(i)].buffer.get(test_command_queue)
+                actual = fn.slots[name + str(i)].buffer.get(queue)
                 np.testing.assert_allclose(value[i], actual)
 
     @device_test
     @force_autotune
-    def testAutotune(self):
-        sigproc.AccumTemplate(test_context, 2)
+    def testAutotune(self, context, queue):
+        sigproc.AccumTemplate(context, 2)
 
 class TestPostproc(unittest.TestCase):
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
@@ -166,7 +166,7 @@ class TestPostproc(unittest.TestCase):
         self.assertRaises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8)
 
     @device_test
-    def testPostproc(self):
+    def testPostproc(self, context, queue):
         """Test with random data against a CPU implementation"""
         channels = 1024
         baselines = 512
@@ -181,12 +181,12 @@ class TestPostproc(unittest.TestCase):
         flags_in[:, 123] = 1
         flags_in[:, 234] = 0
 
-        template = sigproc.PostprocTemplate(test_context, cont_factor)
-        fn = sigproc.Postproc(template, test_command_queue, channels, baselines)
+        template = sigproc.PostprocTemplate(context, cont_factor)
+        fn = sigproc.Postproc(template, queue, channels, baselines)
         fn.ensure_all_bound()
-        fn.slots['vis'].buffer.set(test_command_queue, vis_in)
-        fn.slots['weights'].buffer.set(test_command_queue, weights_in)
-        fn.slots['flags'].buffer.set(test_command_queue, flags_in)
+        fn.slots['vis'].buffer.set(queue, vis_in)
+        fn.slots['weights'].buffer.set(queue, weights_in)
+        fn.slots['flags'].buffer.set(queue, flags_in)
         fn()
 
         # Compute expected spectral values
@@ -201,16 +201,16 @@ class TestPostproc(unittest.TestCase):
         cont_weights *= (cont_flags == 0)
 
         # Verify results
-        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(test_command_queue), rtol=1e-5)
-        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(test_command_queue), rtol=1e-5)
-        np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(test_command_queue), rtol=1e-5)
-        np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(test_command_queue), rtol=1e-5)
-        np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(test_command_queue))
+        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(queue), rtol=1e-5)
+        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(queue), rtol=1e-5)
+        np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(queue), rtol=1e-5)
+        np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(queue), rtol=1e-5)
+        np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(queue))
 
     @device_test
     @force_autotune
-    def testAutotune(self):
-        sigproc.PostprocTemplate(test_context, 16)
+    def testAutotune(self, context, queue):
+        sigproc.PostprocTemplate(context, 16)
 
 class TestIngestOperation(unittest.TestCase):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
@@ -317,7 +317,7 @@ class TestIngestOperation(unittest.TestCase):
         return (vis, weights, flags, cont_vis, cont_weights, cont_flags)
 
     @device_test
-    def testRandom(self):
+    def testRandom(self, context, queue):
         """Test with random data against a CPU implementation"""
         channels = 128
         channel_range = (16, 96)
@@ -334,34 +334,34 @@ class TestIngestOperation(unittest.TestCase):
         permutation = rs.permutation(baselines).astype(np.uint16)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                test_context, width=13)
+                context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
-                test_context, 10240)
+                context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                test_context, n_sigma=n_sigma, transposed=True, flag_value=self.flag_value)
+                context, n_sigma=n_sigma, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(test_context, flagger_template, cont_factor)
-        fn = template.instantiate(test_command_queue, channels, channel_range, baselines)
+        template = sigproc.IngestTemplate(context, flagger_template, cont_factor)
+        fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         fn.set_scale(scale)
-        fn.slots['permutation'].buffer.set(test_command_queue, permutation)
+        fn.slots['permutation'].buffer.set(queue, permutation)
 
         fn.start_sum()
         for i in range(dumps):
-            fn.slots['vis_in'].buffer.set(test_command_queue, vis_in[i])
+            fn.slots['vis_in'].buffer.set(queue, vis_in[i])
             fn()
         fn.end_sum()
 
         expected = self.runHost(vis_in, scale, permutation, cont_factor, channel_range, n_sigma)
         (expected_spec_vis, expected_spec_weights, expected_spec_flags,
                 expected_cont_vis, expected_cont_weights, expected_cont_flags) = expected
-        spec_vis = fn.slots['spec_vis'].buffer.get(test_command_queue)
-        spec_weights = fn.slots['spec_weights'].buffer.get(test_command_queue)
-        spec_flags = fn.slots['spec_flags'].buffer.get(test_command_queue)
-        cont_vis = fn.slots['cont_vis'].buffer.get(test_command_queue)
-        cont_weights = fn.slots['cont_weights'].buffer.get(test_command_queue)
-        cont_flags = fn.slots['cont_flags'].buffer.get(test_command_queue)
+        spec_vis = fn.slots['spec_vis'].buffer.get(queue)
+        spec_weights = fn.slots['spec_weights'].buffer.get(queue)
+        spec_flags = fn.slots['spec_flags'].buffer.get(queue)
+        cont_vis = fn.slots['cont_vis'].buffer.get(queue)
+        cont_weights = fn.slots['cont_weights'].buffer.get(queue)
+        cont_flags = fn.slots['cont_flags'].buffer.get(queue)
 
         np.testing.assert_allclose(expected_spec_vis, spec_vis, rtol=1e-5)
         np.testing.assert_allclose(expected_spec_weights, spec_weights, rtol=1e-5)

@@ -2,15 +2,15 @@
 
 import numpy as np
 from katsdpingest import ingest_threads
-from katsdpsigproc.test.test_accel import device_test, test_context, test_command_queue
+from katsdpsigproc.test.test_accel import device_test
 import unittest
 
 class TestCBFIngest(unittest.TestCase):
     @device_test
-    def test_create_proc(self):
+    def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_threads.CBFIngest._create_proc_template(test_context)
-        proc = template.instantiate(test_command_queue, 1024, (96, 1024 - 96), 544)
+        template = ingest_threads.CBFIngest._create_proc_template(context)
+        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544)
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([
