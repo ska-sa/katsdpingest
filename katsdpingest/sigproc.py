@@ -213,10 +213,10 @@ class Prepare(accel.Operation):
         self.scale = scale
 
     def _run(self):
-        vis_in = self.slots['vis_in'].buffer
-        permutation = self.slots['permutation'].buffer
-        vis_out = self.slots['vis_out'].buffer
-        weights = self.slots['weights'].buffer
+        vis_in = self.buffer('vis_in')
+        permutation = self.buffer('permutation')
+        vis_out = self.buffer('vis_out')
+        weights = self.buffer('weights')
 
         block = self.template.block
         tilex = block * self.template.vtx
@@ -398,7 +398,7 @@ class Accum(accel.Operation):
             label = str(i)
             buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
         buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
-        buffers = [self.slots[x].buffer for x in buffer_names]
+        buffers = [self.buffer(x) for x in buffer_names]
         args = [x.buffer for x in buffers] + [
             np.int32(buffers[0].padded_shape[1]),
             np.int32(buffers[-3].padded_shape[1]),
@@ -554,7 +554,7 @@ class Postproc(accel.Operation):
 
     def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
-        buffers = [self.slots[name].buffer for name in buffer_names]
+        buffers = [self.buffer(name) for name in buffer_names]
         args = [x.buffer for x in buffers] + [np.int32(buffers[0].padded_shape[1])]
         xblocks = accel.divup(self.baselines, self.template.wgsx)
         yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
@@ -695,9 +695,8 @@ class IngestOperation(accel.OperationSequence):
         }
 
         aliases = {
-                'scratch1': ['flagger:deviations_t', 'vis_mid', 'flagger:flags']
+                'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
         }
-        # TODO: aliasing of buffers
 
         super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
 

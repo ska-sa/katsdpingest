@@ -43,12 +43,12 @@ class TestPrepare(unittest.TestCase):
         template = sigproc.PrepareTemplate(context)
         prepare = template.instantiate(queue, channels, channel_range, baselines)
         prepare.ensure_all_bound()
-        prepare.slots['vis_in'].buffer.set(queue, vis_in)
-        prepare.slots['permutation'].buffer.set(queue, permutation)
+        prepare.buffer('vis_in').set(queue, vis_in)
+        prepare.buffer('permutation').set(queue, permutation)
         prepare.set_scale(scale)
         prepare()
-        weights = prepare.slots['weights'].buffer.get(queue)
-        vis_out = prepare.slots['vis_out'].buffer.get(queue)
+        weights = prepare.buffer('weights').get(queue)
+        vis_out = prepare.buffer('vis_out').get(queue)
 
         self.assertEqual((baselines, channels), vis_out.shape)
         self.assertEqual((baselines, keep_channels), weights.shape)
@@ -92,7 +92,7 @@ class TestAccum(unittest.TestCase):
         fn = template.instantiate(queue, 5, [1, 4], 1)
         fn.ensure_all_bound()
         for name, value in host.iteritems():
-            fn.slots[name].buffer.set(queue, value)
+            fn.buffer(name).set(queue, value)
         fn()
 
         expected = {
@@ -101,7 +101,7 @@ class TestAccum(unittest.TestCase):
             'flags_out0':   np.array([[0, 8, 0]], dtype=np.uint8).T
         }
         for name, value in expected.iteritems():
-            actual = fn.slots[name].buffer.get(queue)
+            actual = fn.buffer(name).get(queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
     @device_test
@@ -130,10 +130,10 @@ class TestAccum(unittest.TestCase):
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in), ('flags_in', flags_in)]:
-            fn.slots[name].buffer.set(queue, value)
+            fn.buffer(name).set(queue, value)
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
             for i in range(outputs):
-                fn.slots[name + str(i)].buffer.set(queue, value[i])
+                fn.buffer(name + str(i)).set(queue, value[i])
         fn()
 
         # Perform the operation on the host
@@ -148,7 +148,7 @@ class TestAccum(unittest.TestCase):
         # Verify results
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
             for i in range(outputs):
-                actual = fn.slots[name + str(i)].buffer.get(queue)
+                actual = fn.buffer(name + str(i)).get(queue)
                 np.testing.assert_allclose(value[i], actual, 1e-5)
 
     @device_test
@@ -184,9 +184,9 @@ class TestPostproc(unittest.TestCase):
         template = sigproc.PostprocTemplate(context, cont_factor)
         fn = sigproc.Postproc(template, queue, channels, baselines)
         fn.ensure_all_bound()
-        fn.slots['vis'].buffer.set(queue, vis_in)
-        fn.slots['weights'].buffer.set(queue, weights_in)
-        fn.slots['flags'].buffer.set(queue, flags_in)
+        fn.buffer('vis').set(queue, vis_in)
+        fn.buffer('weights').set(queue, weights_in)
+        fn.buffer('flags').set(queue, flags_in)
         fn()
 
         # Compute expected spectral values
@@ -201,11 +201,11 @@ class TestPostproc(unittest.TestCase):
         cont_weights *= (cont_flags == 0)
 
         # Verify results
-        np.testing.assert_allclose(expected_vis, fn.slots['vis'].buffer.get(queue), rtol=1e-5)
-        np.testing.assert_allclose(expected_weights, fn.slots['weights'].buffer.get(queue), rtol=1e-5)
-        np.testing.assert_allclose(cont_vis, fn.slots['cont_vis'].buffer.get(queue), rtol=1e-5)
-        np.testing.assert_allclose(cont_weights, fn.slots['cont_weights'].buffer.get(queue), rtol=1e-5)
-        np.testing.assert_equal(cont_flags, fn.slots['cont_flags'].buffer.get(queue))
+        np.testing.assert_allclose(expected_vis, fn.buffer('vis').get(queue), rtol=1e-5)
+        np.testing.assert_allclose(expected_weights, fn.buffer('weights').get(queue), rtol=1e-5)
+        np.testing.assert_allclose(cont_vis, fn.buffer('cont_vis').get(queue), rtol=1e-5)
+        np.testing.assert_allclose(cont_weights, fn.buffer('cont_weights').get(queue), rtol=1e-5)
+        np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
 
     @device_test
     @force_autotune
@@ -345,23 +345,23 @@ class TestIngestOperation(unittest.TestCase):
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         fn.set_scale(scale)
-        fn.slots['permutation'].buffer.set(queue, permutation)
+        fn.buffer('permutation').set(queue, permutation)
 
         fn.start_sum()
         for i in range(dumps):
-            fn.slots['vis_in'].buffer.set(queue, vis_in[i])
+            fn.buffer('vis_in').set(queue, vis_in[i])
             fn()
         fn.end_sum()
 
         expected = self.runHost(vis_in, scale, permutation, cont_factor, channel_range, n_sigma)
         (expected_spec_vis, expected_spec_weights, expected_spec_flags,
                 expected_cont_vis, expected_cont_weights, expected_cont_flags) = expected
-        spec_vis = fn.slots['spec_vis'].buffer.get(queue)
-        spec_weights = fn.slots['spec_weights'].buffer.get(queue)
-        spec_flags = fn.slots['spec_flags'].buffer.get(queue)
-        cont_vis = fn.slots['cont_vis'].buffer.get(queue)
-        cont_weights = fn.slots['cont_weights'].buffer.get(queue)
-        cont_flags = fn.slots['cont_flags'].buffer.get(queue)
+        spec_vis = fn.buffer('spec_vis').get(queue)
+        spec_weights = fn.buffer('spec_weights').get(queue)
+        spec_flags = fn.buffer('spec_flags').get(queue)
+        cont_vis = fn.buffer('cont_vis').get(queue)
+        cont_weights = fn.buffer('cont_weights').get(queue)
+        cont_flags = fn.buffer('cont_flags').get(queue)
 
         np.testing.assert_allclose(expected_spec_vis, spec_vis, rtol=1e-5)
         np.testing.assert_allclose(expected_spec_weights, spec_weights, rtol=1e-5)

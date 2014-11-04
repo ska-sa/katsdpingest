@@ -55,20 +55,20 @@ def main():
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
     permutation = np.random.permutation(baselines).astype(np.uint16)
-    proc.slots['permutation'].buffer.set(command_queue, permutation)
+    proc.buffer('permutation').set(command_queue, permutation)
 
     command_queue.finish()
 
-    vis_in_device = proc.slots['vis_in'].buffer
+    vis_in_device = proc.buffer('vis_in')
     output_names = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
-    output_buffers = [proc.slots[name].buffer for name in output_names]
+    output_buffers = [proc.buffer(name) for name in output_names]
     output_arrays = [buf.empty_like() for buf in output_buffers]
 
     dumps = [generate_data(vis_in_device, channels, baselines) for i in range(args.time_avg)]
     start_event = command_queue.enqueue_marker()
     proc.start_sum()
     for dump in dumps:
-        proc.slots['vis_in'].buffer.set_async(command_queue, dump)
+        proc.buffer('vis_in').set_async(command_queue, dump)
         proc()
     proc.end_sum()
     for buf, array in zip(output_buffers, output_arrays):

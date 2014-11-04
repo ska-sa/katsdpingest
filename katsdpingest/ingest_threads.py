@@ -334,7 +334,7 @@ class CBFIngest(threading.Thread):
                 self.proc.set_scale(1.0 / self.cbf_attr['n_accs'].value)
                 self.proc.ensure_all_bound()
                 permutation, self.cbf_attr['bls_ordering'] = self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
-                self.proc.slots['permutation'].buffer.set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
+                self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
 
                 # TODO: configure van_vleck once implemented
                 for description in self.proc.descriptions():
@@ -362,13 +362,13 @@ class CBFIngest(threading.Thread):
             ##### Perform data processing
 
             masked_data = data_item.get_value()[...,self.baseline_mask,:]
-            self.proc.slots['vis_in'].buffer.set(self.command_queue, masked_data)
+            self.proc.buffer('vis_in').set(self.command_queue, masked_data)
             self.start_sum()
             self.proc()
             self.end_sum()
 
-            flags = self.proc.slots['spec_flags'].buffer.get(self.command_queue)
-            vis = self.proc.slots['spec_vis'].buffer.get(self.command_queue)
+            flags = self.proc.buffer('spec_flags').get(self.command_queue)
+            vis = self.proc.buffer('spec_vis').get(self.command_queue)
             # Complex values are written to file as an extra dimension of size 2,
             # rather than as structs
             vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
