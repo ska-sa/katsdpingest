@@ -149,7 +149,7 @@ class TestAccum(unittest.TestCase):
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
             for i in range(outputs):
                 actual = fn.slots[name + str(i)].buffer.get(queue)
-                np.testing.assert_allclose(value[i], actual)
+                np.testing.assert_allclose(value[i], actual, 1e-5)
 
     @device_test
     @force_autotune
