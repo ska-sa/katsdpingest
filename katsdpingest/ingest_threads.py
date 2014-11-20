@@ -208,7 +208,10 @@ class CBFIngest(threading.Thread):
 
     def drop_sdisp_ip(self, ip):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
-        del self.sdisp_ips[ip]
+        try:
+            del self.sdisp_ips[ip]
+        except KeyError:
+            self.logger.error("Attempt to remove non-existant ip %s from the signal display list." % (ip))
 
     def add_sdisp_ip(self, ip, port):
         self.logger.info("Adding %s:%s to signal display list. Starting transport..." % (ip,port))

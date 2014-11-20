@@ -247,6 +247,7 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is not None:
             if not self.sdisp_ips.has_key(ip):
                 return ("fail","The IP address specified (%s) does not exist in the current list of recipients." % (ip))
+            del self.sdisp_ips[ip]
             self.cbf_thread.drop_sdisp_ip(ip)
             return ("ok","The IP address has been dropped as a signal display recipient")
         return ("fail","No active capture thread.")
