@@ -9,7 +9,8 @@
 
 import numpy as np
 import threading
-import spead
+import spead64_40 as spead40
+import spead64_48 as spead
 import time
 import copy
 import katsdpingest.sigproc as sp
@@ -45,7 +46,7 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
-        self.ig = spead.ItemGroup()
+        self.ig = spead40.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
@@ -62,9 +63,9 @@ class CAMIngest(threading.Thread):
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx_md = spead.TransportUDPrx(self.spead_port)
+        rx_md = spead40.TransportUDPrx(self.spead_port)
 
-        for heap in spead.iterheaps(rx_md):
+        for heap in spead40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
 
@@ -82,6 +83,10 @@ class CBFIngest(threading.Thread):
         self.cbf_name = cbf_name
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
+
+        self.collectionproducts=[]
+        self.timeseriesmaskind=[]
+        self.timeseriesmaskstr=''
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -136,6 +141,10 @@ class CBFIngest(threading.Thread):
         if self.sd_frame is not None:
             self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
             self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
+            npercsignals=40
+            self.ig_sd.add_item(name=('sd_timeseries'),id=(0x3504), description="Computed timeseries.", ndarray=(self.sd_frame.dtype,(self.sd_frame.shape[1],self.sd_frame.shape[2])))
+            self.ig_sd.add_item(name=('sd_percspectrum'),id=(0x3505), description="Percentiles of spectrum data.", ndarray=(np.dtype(np.float32),(self.sd_frame.shape[0],npercsignals)))
+            self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.", ndarray=(np.dtype(np.uint8),(self.sd_frame.shape[0],npercsignals)))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
@@ -215,6 +224,115 @@ class CBFIngest(threading.Thread):
             self.sdisp_ips[ip].send_heap(mdata)
              # new connection requires headers...
 
+    def set_timeseries_mask(self,maskstr):
+        print 'setting timeseries mask to ',maskstr
+        self.set_mask(maskstr)
+
+    #data is one timestamps worth of [spectrum,bls] abs data
+    #sorts this collection of data into 0% 100% 25% 75% 50%
+    #return shape is [nchannels,5]
+    def percsort(self,data,flags=None):
+        nchannels,nsignals=data.shape
+        colindex=np.arange(nchannels)
+        isort=np.argsort(data,axis=1)        
+        ilev=(nsignals*25)/100;
+        if (flags is not None):
+            anyflags=np.any(flags,axis=1)
+            flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags]
+        else:
+            flags=np.zeros([nchannels,5],dtype=np.uint8)
+        return [np.c_[data.reshape(-1)[isort[:,0]+colindex*nsignals],
+            data.reshape(-1)[isort[:,-1]+colindex*nsignals],
+            data.reshape(-1)[isort[:,ilev]+colindex*nsignals],
+            data.reshape(-1)[isort[:,-1-ilev]+colindex*nsignals],
+            data.reshape(-1)[isort[:,nsignals/2]+colindex*nsignals]],
+            flags]
+                    
+    def set_mask(self,maskstr=''):
+        spectrum_width=self.sd_frame.shape[0]
+        self.timeseriesmaskstr=maskstr
+        if (spectrum_width<1):
+            self.timeseriesmaskind=[]
+            return
+        spectrum_flagstr=''
+        self.spectrum_flag0=[]
+        self.spectrum_flag1=[]
+        spectrum_flagmask=np.ones([spectrum_width])
+        args=maskstr.split(',')
+        for c in range(len(args)):
+            spectrum_flagstr+=args[c]
+            if (c<len(args)-1):
+                spectrum_flagstr+=","
+            rng=args[c].split('..');
+            if (len(rng)==1):
+                if (args[c]!=''):
+                    chan=int(args[c])
+                    self.spectrum_flag0.append(chan)
+                    self.spectrum_flag1.append(chan+1)
+                    spectrum_flagmask[chan]=0
+            elif (len(rng)==2):
+                if (rng[0]==''):
+                    chan0=0
+                else:
+                    chan0=int(rng[0])
+                if (rng[1]==''):
+                    chan1=spectrum_width-1
+                else:
+                    chan1=int(rng[1])
+                if (chan0<0):
+                    chan0=spectrum_width+chan0
+                    if (chan0<0):
+                        chan0=0;
+                elif (chan0>=spectrum_width):
+                    chan0=spectrum_width-1
+                if (chan1<0):
+                    chan1=spectrum_width+chan1
+                    if (chan1<0):
+                        chan1=0;
+                elif (chan1>=spectrum_width):
+                    chan1=spectrum_width-1;
+                if (chan0>chan1):
+                    tmp=chan0
+                    chan0=chan1
+                    chan1=tmp
+                self.spectrum_flag0.append(chan0)
+                self.spectrum_flag1.append(chan1)
+                spectrum_flagmask[chan0:(chan1+1)]=0
+        self.timeseriesmaskind=np.nonzero(spectrum_flagmask[1:])[0]+1
+        self.spectrum_flagstr=spectrum_flagstr
+
+    #collectionproducts contains product indices of: autohhvv,autohh,autovv,autohv,crosshhvv,crosshh,crossvv,crosshv
+    def set_bls(self,bls_ordering):
+        auto=[]
+        autohh=[]
+        autovv=[]
+        autohv=[]
+        cross=[]
+        crosshh=[]
+        crossvv=[]
+        crosshv=[]
+        for ibls,bls in enumerate(bls_ordering):
+            if (bls[0][:-1]==bls[1][:-1]):#auto
+                if (bls[0][-1]==bls[1][-1]):#autohh or autovv
+                    auto.append(ibls)
+                    if (bls[0][-1]=='h'):
+                        autohh.append(ibls)
+                    else:
+                        autovv.append(ibls)                        
+                else:#autohv or vh 
+                    autohv.append(ibls)
+            else:#cross
+                if (bls[0][-1]==bls[1][-1]):#crosshh or crossvv
+                    cross.append(ibls)
+                    if (bls[0][-1]=='h'):
+                        crosshh.append(ibls)
+                    else:
+                        crossvv.append(ibls)                        
+                else:#crosshv or vh 
+                    crosshv.append(ibls)
+                
+        self.collectionproducts=[auto,autohh,autovv,autohv,cross,crosshh,crossvv,crosshv]
+
     def run(self):
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
@@ -270,8 +388,9 @@ class CBFIngest(threading.Thread):
                 self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
                 continue
 
-            ##### Configure datasets and other items now that we have complete metedata
-
+            ##### Configure datasets and other items now that we have complete metadata
+            self.set_bls(self.cbf_attr['bls_ordering'].value)
+            
             self.baseline_mask = range(self.cbf_attr['n_bls'].value)
              # default mask is to include all known baseline
 
@@ -301,6 +420,9 @@ class CBFIngest(threading.Thread):
             if self.sd_frame is None:
                 self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
                  # initialise the signal display data frame
+
+            if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
+                self.set_mask(self.timeseriesmaskstr)
 
             if sd_slots is None:
                 self.sd_frame.dtype = np.dtype(np.float32)
@@ -350,6 +472,23 @@ class CBFIngest(threading.Thread):
             #### Send signal display information
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
+            #populate new datastructure to superseed sd_data
+            if (1):
+                timeseriesmask=1
+                self.ig_sd['sd_timeseries'] = np.sum(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
+                
+                nchans=self.sd_frame.shape[0]
+                percdata=np.float32(np.nan)*np.zeros([nchans,40],dtype=np.float32)
+                percflags=np.zeros([nchans,40],dtype=np.uint8)
+                for ip,iproducts in enumerate(self.collectionproducts):
+                    if (len(iproducts)>0):
+                        pdata,pflags=self.percsort(np.abs(self.h5_file[cbf_data_dataset][idx].astype(np.float32).view(np.complex64)[:,iproducts,0]),None if (flags is None) else flags[:,iproducts])
+                        percdata[:,ip*5:(ip+1)*5]=pdata
+                        percflags[:,ip*5:(ip+1)*5]=pflags
+                
+                self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
+                self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
+            
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
              # check that this is from cache, not re-read from disk
             self.ig_sd['sd_flags'] = flags

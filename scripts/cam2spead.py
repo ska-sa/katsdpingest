@@ -11,7 +11,7 @@ import os.path
 import numpy as np
 from pkg_resources import resource_filename
 
-import spead
+import spead64_40 as spead
 import katconf
 import katcorelib
 from katsdpingest.cam2spead import Cam2SpeadDeviceServer

@@ -1,6 +1,6 @@
 import logging
 import copy
-import spead
+import spead64_48 as spead
 import time
 import numpy
 

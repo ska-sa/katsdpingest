@@ -5,7 +5,7 @@ import string
 import random
 import katcp
 import katcp.testutils
-import spead
+import spead64_48 as spead
 import time
 import socket
 import ConfigParser
