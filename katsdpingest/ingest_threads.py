@@ -389,8 +389,6 @@ class CBFIngest(threading.Thread):
                 continue
 
             ##### Configure datasets and other items now that we have complete metadata
-            self.set_bls(self.cbf_attr['bls_ordering'].value)
-            
             self.baseline_mask = range(self.cbf_attr['n_bls'].value)
              # default mask is to include all known baseline
 
@@ -420,9 +418,6 @@ class CBFIngest(threading.Thread):
             if self.sd_frame is None:
                 self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
                  # initialise the signal display data frame
-
-            if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
-                self.set_mask(self.timeseriesmaskstr)
 
             if sd_slots is None:
                 self.sd_frame.dtype = np.dtype(np.float32)
@@ -474,7 +469,9 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
             #populate new datastructure to superseed sd_data
             if (1):
-                timeseriesmask=1
+                self.set_bls(self.cbf_attr['bls_ordering'].value)#Note this should ideally only be done if there is a change in bls_ordering!
+                if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
+                    self.set_mask(self.timeseriesmaskstr)
                 self.ig_sd['sd_timeseries'] = np.sum(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
                 
                 nchans=self.sd_frame.shape[0]
