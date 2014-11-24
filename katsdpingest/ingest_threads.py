@@ -9,7 +9,7 @@
 
 import numpy as np
 import threading
-import spead64_40 as spead40
+import spead64_40
 import spead64_48 as spead
 import time
 import copy
@@ -46,7 +46,7 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
-        self.ig = spead40.ItemGroup()
+        self.ig = spead64_40.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
@@ -63,9 +63,9 @@ class CAMIngest(threading.Thread):
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx_md = spead40.TransportUDPrx(self.spead_port)
+        rx_md = spead64_40.TransportUDPrx(self.spead_port)
 
-        for heap in spead40.iterheaps(rx_md):
+        for heap in spead64_40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
 
@@ -226,31 +226,30 @@ class CBFIngest(threading.Thread):
              # new connection requires headers...
 
     def set_timeseries_mask(self,maskstr):
-        print 'setting timeseries mask to ',maskstr
-        self.set_mask(maskstr)
+        self.logger.info("Setting timeseries mask to %s" % (maskstr))
+        self.set_timeseries_mask_internal(maskstr)
 
-    #data is one timestamps worth of [spectrum,bls] abs data
-    #sorts this collection of data into 0% 100% 25% 75% 50%
-    #return shape is [nchannels,5]
     def percsort(self,data,flags=None):
+        """ data is one timestamps worth of [spectrum,bls] abs data
+            sorts this collection of data into 0% 100% 25% 75% 50%
+            return shape is [nchannels,5]
+        """
         nchannels,nsignals=data.shape
-        colindex=np.arange(nchannels)
-        channeloffset=colindex*nsignals
-        isort=np.argsort(data,axis=1)        
-        ilev=(nsignals*25)/100;
-        if (flags is not None):
-            anyflags=np.any(flags,axis=1)
-            flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags]
-        else:
+        if (flags is None):
             flags=np.zeros([nchannels,5],dtype=np.uint8)
-        return [np.c_[data.reshape(-1)[isort[:,0]+channeloffset],
-            data.reshape(-1)[isort[:,-1]+channeloffset],
-            data.reshape(-1)[isort[:,ilev]+channeloffset],
-            data.reshape(-1)[isort[:,-1-ilev]+channeloffset],
-            data.reshape(-1)[isort[:,nsignals/2]+channeloffset]],
-            flags]
+        else:
+            anyflags=np.any(flags,axis=1)#all percentiles of same collection have same flags
+            flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags].astype(np.uint8)
+        return [np.percentile(data,[0,100,25,75,50],axis=1).transpose(),flags]
                     
-    def set_mask(self,maskstr=''):
+    def set_timeseries_mask_internal(self,maskstr=''):
+        """
+        maskstr='500' flags channel 500
+        maskstr='..200' flags the first 200 channels
+        maskstr='-200..' flags the last 200 channels
+        maskstr='300..350' flags channels 300 to 350
+        maskstr='..200,300..350,500,-200' flags the first and last 200 channels, as well as channels 300 to 350, and channel 500
+        """
         spectrum_width=self.sd_frame.shape[0]
         self.timeseriesmaskstr=maskstr
         if (spectrum_width<1):
@@ -292,7 +291,7 @@ class CBFIngest(threading.Thread):
                     if (chan1<0):
                         chan1=0;
                 elif (chan1>=spectrum_width):
-                    chan1=spectrum_width-1;
+                    chan1=spectrum_width-1
                 if (chan0>chan1):
                     tmp=chan0
                     chan0=chan1
@@ -303,8 +302,10 @@ class CBFIngest(threading.Thread):
         self.timeseriesmaskind=np.nonzero(spectrum_flagmask[1:])[0]+1
         self.spectrum_flagstr=spectrum_flagstr
 
-    #collectionproducts contains product indices of: autohhvv,autohh,autovv,autohv,crosshhvv,crosshh,crossvv,crosshv
     def set_bls(self,bls_ordering):
+        """
+        collectionproducts contains product indices of: autohhvv,autohh,autovv,autohv,crosshhvv,crosshh,crossvv,crosshv
+        """
         self.collection_bls_ordering=bls_ordering
         auto=[]
         autohh=[]
@@ -470,25 +471,27 @@ class CBFIngest(threading.Thread):
             #### Send signal display information
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
-            #populate new datastructure to superseed sd_data
-            if (1):
-                if (not np.array_equal(self.collection_bls_ordering,self.cbf_attr['bls_ordering'].value)):
-                    self.set_bls(self.cbf_attr['bls_ordering'].value)
-                if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
-                    self.set_mask(self.timeseriesmaskstr)
-                self.ig_sd['sd_timeseries'] = np.mean(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
-                
-                nchans=self.sd_frame.shape[0]
-                percdata=np.float32(np.nan)*np.zeros([nchans,40],dtype=np.float32)
-                percflags=np.zeros([nchans,40],dtype=np.uint8)
-                for ip,iproducts in enumerate(self.collectionproducts):
-                    if (len(iproducts)>0):
-                        pdata,pflags=self.percsort(np.abs(self.h5_file[cbf_data_dataset][idx].astype(np.float32).view(np.complex64)[:,iproducts,0]),None if (flags is None) else flags[:,iproducts])
-                        percdata[:,ip*5:(ip+1)*5]=pdata
-                        percflags[:,ip*5:(ip+1)*5]=pflags
-                
-                self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
-                self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
+            #populate new datastructure to supersede sd_data
+            if (not np.array_equal(self.collection_bls_ordering,self.cbf_attr['bls_ordering'].value)):
+                self.set_bls(self.cbf_attr['bls_ordering'].value)
+            if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
+                self.set_timeseries_mask_internal(self.timeseriesmaskstr)
+            self.ig_sd['sd_timeseries'] = np.mean(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
+            
+            nchans=self.sd_frame.shape[0]
+            nperccollections=8
+            nperclevels=5
+            npercproducts=nperccollections*nperclevels
+            percdata=np.tile(np.float32(np.nan), [nchans, npercproducts])
+            percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
+            for ip,iproducts in enumerate(self.collectionproducts):
+                if (len(iproducts)>0):
+                    pdata,pflags=self.percsort(np.abs(self.h5_file[cbf_data_dataset][idx].astype(np.float32).view(np.complex64)[:,iproducts,0]),None if (flags is None) else flags[:,iproducts])
+                    percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
+                    percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
+            
+            self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
+            self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
             
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
              # check that this is from cache, not re-read from disk
