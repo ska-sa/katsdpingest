@@ -85,6 +85,7 @@ class CBFIngest(threading.Thread):
         self.cbf_attr = self.cbf_component.attributes
 
         self.collectionproducts=[]
+        self.collection_bls_ordering=None
         self.timeseriesmaskind=[]
         self.timeseriesmaskstr=''
 
@@ -234,6 +235,7 @@ class CBFIngest(threading.Thread):
     def percsort(self,data,flags=None):
         nchannels,nsignals=data.shape
         colindex=np.arange(nchannels)
+        channeloffset=colindex*nsignals
         isort=np.argsort(data,axis=1)        
         ilev=(nsignals*25)/100;
         if (flags is not None):
@@ -241,11 +243,11 @@ class CBFIngest(threading.Thread):
             flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags]
         else:
             flags=np.zeros([nchannels,5],dtype=np.uint8)
-        return [np.c_[data.reshape(-1)[isort[:,0]+colindex*nsignals],
-            data.reshape(-1)[isort[:,-1]+colindex*nsignals],
-            data.reshape(-1)[isort[:,ilev]+colindex*nsignals],
-            data.reshape(-1)[isort[:,-1-ilev]+colindex*nsignals],
-            data.reshape(-1)[isort[:,nsignals/2]+colindex*nsignals]],
+        return [np.c_[data.reshape(-1)[isort[:,0]+channeloffset],
+            data.reshape(-1)[isort[:,-1]+channeloffset],
+            data.reshape(-1)[isort[:,ilev]+channeloffset],
+            data.reshape(-1)[isort[:,-1-ilev]+channeloffset],
+            data.reshape(-1)[isort[:,nsignals/2]+channeloffset]],
             flags]
                     
     def set_mask(self,maskstr=''):
@@ -303,6 +305,7 @@ class CBFIngest(threading.Thread):
 
     #collectionproducts contains product indices of: autohhvv,autohh,autovv,autohv,crosshhvv,crosshh,crossvv,crosshv
     def set_bls(self,bls_ordering):
+        self.collection_bls_ordering=bls_ordering
         auto=[]
         autohh=[]
         autovv=[]
@@ -469,10 +472,11 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
             #populate new datastructure to superseed sd_data
             if (1):
-                self.set_bls(self.cbf_attr['bls_ordering'].value)#Note this should ideally only be done if there is a change in bls_ordering!
+                if (not np.array_equal(self.collection_bls_ordering,self.cbf_attr['bls_ordering'].value)):
+                    self.set_bls(self.cbf_attr['bls_ordering'].value)
                 if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
                     self.set_mask(self.timeseriesmaskstr)
-                self.ig_sd['sd_timeseries'] = np.sum(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
+                self.ig_sd['sd_timeseries'] = np.mean(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
                 
                 nchans=self.sd_frame.shape[0]
                 percdata=np.float32(np.nan)*np.zeros([nchans,40],dtype=np.float32)
