@@ -248,7 +248,7 @@ class CBFIngest(threading.Thread):
         maskstr='..200' flags the first 200 channels
         maskstr='-200..' flags the last 200 channels
         maskstr='300..350' flags channels 300 to 350
-        maskstr='..200,300..350,500,-200' flags the first and last 200 channels, as well as channels 300 to 350, and channel 500
+        maskstr='..200,300..350,500,-200..' flags the first and last 200 channels, as well as channels 300 to 350, and channel 500
         """
         spectrum_width=self.sd_frame.shape[0]
         self.timeseriesmaskstr=maskstr
