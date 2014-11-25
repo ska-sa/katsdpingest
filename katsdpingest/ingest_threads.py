@@ -14,6 +14,7 @@ import spead64_48 as spead
 import time
 import copy
 import katsdpingest.sigproc as sp
+import katsdpdisp.data as sdispdata
 import logging
 import socket
 import struct
@@ -85,9 +86,7 @@ class CBFIngest(threading.Thread):
         self.cbf_attr = self.cbf_component.attributes
 
         self.collectionproducts=[]
-        self.collection_bls_ordering=None
         self.timeseriesmaskind=[]
-        self.timeseriesmaskstr=''
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -227,7 +226,7 @@ class CBFIngest(threading.Thread):
 
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
-        self.set_timeseries_mask_internal(maskstr)
+        self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
 
     def percsort(self,data,flags=None):
         """ data is one timestamps worth of [spectrum,bls] abs data
@@ -242,99 +241,6 @@ class CBFIngest(threading.Thread):
             flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags].astype(np.uint8)
         return [np.percentile(data,[0,100,25,75,50],axis=1).transpose(),flags]
                     
-    def set_timeseries_mask_internal(self,maskstr=''):
-        """
-        maskstr='500' flags channel 500
-        maskstr='..200' flags the first 200 channels
-        maskstr='-200..' flags the last 200 channels
-        maskstr='300..350' flags channels 300 to 350
-        maskstr='..200,300..350,500,-200..' flags the first and last 200 channels, as well as channels 300 to 350, and channel 500
-        """
-        spectrum_width=self.sd_frame.shape[0]
-        self.timeseriesmaskstr=maskstr
-        self.spectrum_flag0=[]
-        self.spectrum_flag1=[]
-        if (spectrum_width<1):
-            self.timeseriesmaskind=[]
-            return
-        spectrum_flagmask=np.ones([spectrum_width])
-        try:
-            args=maskstr.split(',')
-            for c in range(len(args)):
-                rng=args[c].split('..');
-                if (len(rng)==1):
-                    if (args[c]!=''):
-                        chan=int(args[c])
-                        self.spectrum_flag0.append(chan)
-                        self.spectrum_flag1.append(chan+1)
-                        spectrum_flagmask[chan]=0
-                elif (len(rng)==2):
-                    if (rng[0]==''):
-                        chan0=0
-                    else:
-                        chan0=int(rng[0])
-                    if (rng[1]==''):
-                        chan1=spectrum_width-1
-                    else:
-                        chan1=int(rng[1])
-                    if (chan0<0):
-                        chan0=spectrum_width+chan0
-                        if (chan0<0):
-                            chan0=0;
-                    elif (chan0>=spectrum_width):
-                        chan0=spectrum_width-1
-                    if (chan1<0):
-                        chan1=spectrum_width+chan1
-                        if (chan1<0):
-                            chan1=0;
-                    elif (chan1>=spectrum_width):
-                        chan1=spectrum_width-1
-                    if (chan0>chan1):
-                        tmp=chan0
-                        chan0=chan1
-                        chan1=tmp
-                    self.spectrum_flag0.append(chan0)
-                    self.spectrum_flag1.append(chan1)
-                    spectrum_flagmask[chan0:(chan1+1)]=0
-        except Exception, e:
-            pass
-        self.timeseriesmaskind=np.nonzero(spectrum_flagmask[1:])[0]+1 #note channel 0 is timeseries
-
-    def set_bls(self,bls_ordering):
-        """
-        collectionproducts contains product indices of: autohhvv,autohh,autovv,autohv,crosshhvv,crosshh,crossvv,crosshv
-        """
-        self.collection_bls_ordering=bls_ordering
-        auto=[]
-        autohh=[]
-        autovv=[]
-        autohv=[]
-        cross=[]
-        crosshh=[]
-        crossvv=[]
-        crosshv=[]
-        for ibls,bls in enumerate(bls_ordering):
-            if (bls[0][:-1]==bls[1][:-1]):#auto
-                if (bls[0][-1]==bls[1][-1]):#autohh or autovv
-                    auto.append(ibls)
-                    if (bls[0][-1]=='h'):
-                        autohh.append(ibls)
-                    else:
-                        autovv.append(ibls)                        
-                else:#autohv or vh 
-                    autohv.append(ibls)
-            else:#cross
-                if (bls[0][-1]==bls[1][-1]):#crosshh or crossvv
-                    cross.append(ibls)
-                    if (bls[0][-1]=='h'):
-                        crosshh.append(ibls)
-                    else:
-                        crossvv.append(ibls)                        
-                else:#crosshv or vh 
-                    crosshv.append(ibls)
-                
-        self.collectionproducts=[auto,autohh,autovv,autohv,cross,crosshh,crossvv,crosshv]
-
     def run(self):
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
@@ -412,6 +318,9 @@ class CBFIngest(threading.Thread):
 
                 self.van_vleck = sp.VanVleck(np.float32(self.cbf_attr['n_accs'].value), bls_ordering=self.cbf_attr['bls_ordering'].value)
                 self.write_process_log(*self.van_vleck.description())
+
+                self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
+                self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',self.cbf_attr['n_chans'].value)
             else:
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
@@ -470,10 +379,6 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
             #populate new datastructure to supersede sd_data
-            if (not np.array_equal(self.collection_bls_ordering,self.cbf_attr['bls_ordering'].value)):
-                self.set_bls(self.cbf_attr['bls_ordering'].value)
-            if (len(self.timeseriesmaskind)!=self.cbf_attr['n_chans'].value):
-                self.set_timeseries_mask_internal(self.timeseriesmaskstr)
             self.ig_sd['sd_timeseries'] = np.mean(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
             
             nchans=self.sd_frame.shape[0]
