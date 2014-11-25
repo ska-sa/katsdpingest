@@ -731,9 +731,9 @@ class IngestOperation(accel.OperationSequence):
         string describing the parameters, and a version string."""
         def generate(operation, name):
             try:
-                revision = operation.__class__.__module__.__version__
-            except AttributeError:
-                revision = 'unknown'
+                revision = int(operation.__class__.__module__.__version__)
+            except (AttributeError, ValueError):
+                revision = 0
             parameters = dict(operation.parameters())
             parameters['class'] = operation.__class__.__module__ + '.' + operation.__class__.__name__
             yield (

@@ -80,7 +80,7 @@ class CBFIngest(threading.Thread):
         # TODO: these parameters should probably come from somewhere else
         # (particularly cont_factor).
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
-        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=10240)
+        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=32768)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
                 context, n_sigma=11.0, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
@@ -333,7 +333,8 @@ class CBFIngest(threading.Thread):
                         self.command_queue, channels, (0, channels), baselines)
                 self.proc.set_scale(1.0 / self.cbf_attr['n_accs'].value)
                 self.proc.ensure_all_bound()
-                permutation, self.cbf_attr['bls_ordering'] = self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
+                permutation, self.cbf_attr['bls_ordering'].value = \
+                        self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
                 self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
 
                 # TODO: configure van_vleck once implemented
@@ -363,14 +364,19 @@ class CBFIngest(threading.Thread):
 
             masked_data = data_item.get_value()[...,self.baseline_mask,:]
             self.proc.buffer('vis_in').set(self.command_queue, masked_data)
-            self.start_sum()
+            self.proc.start_sum()
             self.proc()
-            self.end_sum()
+            self.proc.end_sum()
 
             flags = self.proc.buffer('spec_flags').get(self.command_queue)
             vis = self.proc.buffer('spec_vis').get(self.command_queue)
             # Complex values are written to file as an extra dimension of size 2,
-            # rather than as structs
+            # rather than as structs. The view() method only works on
+            # contiguous data. Revisit this later to see if either the HDF5
+            # file format can be changed to store complex data (rather than
+            # having a real/imag axis for reals), or one can use
+            # np.lib.stride_tricks to work around the limitation on view().
+            vis = np.ascontiguousarray(vis)
             vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
             self.h5_file[flags_dataset][idx] = flags
             self.h5_file[cbf_data_dataset][idx] = vis
@@ -393,5 +399,8 @@ class CBFIngest(threading.Thread):
         #### Stop received.
 
         self.logger.info("CBF ingest complete at %f" % time.time())
-        self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
+        if self.proc is not None:   # Could be None if no heaps arrived
+            self.logger.debug("\nProcessing Blocks\n=================\n")
+            for description in self.proc.descriptions():
+                self.logger.debug("\t".join([str(x) for x in description]))
         self.status_sensor.set_value("complete")
