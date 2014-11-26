@@ -2,7 +2,7 @@ import numpy as np
 import time
 import h5py
 import os
-import spead
+import spead64_40 as spead
 import logging
 
 ### Model definitions

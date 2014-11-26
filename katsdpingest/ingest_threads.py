@@ -9,10 +9,12 @@
 
 import numpy as np
 import threading
-import spead
+import spead64_40
+import spead64_48 as spead
 import time
 import copy
 import katsdpingest.sigproc as sp
+import katsdpdisp.data as sdispdata
 import logging
 import socket
 import struct
@@ -45,7 +47,7 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
-        self.ig = spead.ItemGroup()
+        self.ig = spead64_40.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
@@ -62,9 +64,9 @@ class CAMIngest(threading.Thread):
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx_md = spead.TransportUDPrx(self.spead_port)
+        rx_md = spead64_40.TransportUDPrx(self.spead_port)
 
-        for heap in spead.iterheaps(rx_md):
+        for heap in spead64_40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
 
@@ -82,6 +84,9 @@ class CBFIngest(threading.Thread):
         self.cbf_name = cbf_name
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
+
+        self.collectionproducts=[]
+        self.timeseriesmaskind=[]
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -136,6 +141,10 @@ class CBFIngest(threading.Thread):
         if self.sd_frame is not None:
             self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
             self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
+            npercsignals=40
+            self.ig_sd.add_item(name=('sd_timeseries'),id=(0x3504), description="Computed timeseries.", ndarray=(self.sd_frame.dtype,(self.sd_frame.shape[1],self.sd_frame.shape[2])))
+            self.ig_sd.add_item(name=('sd_percspectrum'),id=(0x3505), description="Percentiles of spectrum data.", ndarray=(np.dtype(np.float32),(self.sd_frame.shape[0],npercsignals)))
+            self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.", ndarray=(np.dtype(np.uint8),(self.sd_frame.shape[0],npercsignals)))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
@@ -215,6 +224,23 @@ class CBFIngest(threading.Thread):
             self.sdisp_ips[ip].send_heap(mdata)
              # new connection requires headers...
 
+    def set_timeseries_mask(self,maskstr):
+        self.logger.info("Setting timeseries mask to %s" % (maskstr))
+        self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
+
+    def percsort(self,data,flags=None):
+        """ data is one timestamps worth of [spectrum,bls] abs data
+            sorts this collection of data into 0% 100% 25% 75% 50%
+            return shape is [nchannels,5]
+        """
+        nchannels,nsignals=data.shape
+        if (flags is None):
+            flags=np.zeros([nchannels,5],dtype=np.uint8)
+        else:
+            anyflags=np.any(flags,axis=1)#all percentiles of same collection have same flags
+            flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags].astype(np.uint8)
+        return [np.percentile(data,[0,100,25,75,50],axis=1).transpose(),flags]
+                    
     def run(self):
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
@@ -270,8 +296,7 @@ class CBFIngest(threading.Thread):
                 self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
                 continue
 
-            ##### Configure datasets and other items now that we have complete metedata
-
+            ##### Configure datasets and other items now that we have complete metadata
             self.baseline_mask = range(self.cbf_attr['n_bls'].value)
              # default mask is to include all known baseline
 
@@ -293,6 +318,9 @@ class CBFIngest(threading.Thread):
 
                 self.van_vleck = sp.VanVleck(np.float32(self.cbf_attr['n_accs'].value), bls_ordering=self.cbf_attr['bls_ordering'].value)
                 self.write_process_log(*self.van_vleck.description())
+
+                self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
+                self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',self.cbf_attr['n_chans'].value)
             else:
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
@@ -350,6 +378,24 @@ class CBFIngest(threading.Thread):
             #### Send signal display information
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = self.h5_file[cbf_data_dataset][idx]
+            #populate new datastructure to supersede sd_data
+            self.ig_sd['sd_timeseries'] = np.mean(self.h5_file[cbf_data_dataset][idx][self.timeseriesmaskind,:],axis=0)
+            
+            nchans=self.sd_frame.shape[0]
+            nperccollections=8
+            nperclevels=5
+            npercproducts=nperccollections*nperclevels
+            percdata=np.tile(np.float32(np.nan), [nchans, npercproducts])
+            percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
+            for ip,iproducts in enumerate(self.collectionproducts):
+                if (len(iproducts)>0):
+                    pdata,pflags=self.percsort(np.abs(self.h5_file[cbf_data_dataset][idx].astype(np.float32).view(np.complex64)[:,iproducts,0]),None if (flags is None) else flags[:,iproducts])
+                    percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
+                    percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
+            
+            self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
+            self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
+            
              # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
              # check that this is from cache, not re-read from disk
             self.ig_sd['sd_flags'] = flags
