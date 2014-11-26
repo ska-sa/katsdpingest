@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from katsdpingest import telescope_model as tm
 import time
-import spead
+import spead64_40 as spead
 
 class TelescopeModelTestCases(unittest.TestCase):
     """Run a number of test against the telescope model.

@@ -6,7 +6,7 @@ import time
 import Queue
 import copy
 
-import spead
+import spead64_40 as spead
 from katcp import DeviceServer
 from katcp.kattypes import (request, return_reply,
                             Str, Address, Timestamp, Bool)
