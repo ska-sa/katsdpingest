@@ -7,7 +7,7 @@ before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran
 install:
   - "git clone -q --depth 1 git@github.com:ska-sa/PySPEAD"
   - "(cd PySPEAD && python ./setup.py install)"
-  - "git clone -q -b bmerry-graph --depth 1 git@github.com:ska-sa/katsdpsigproc"
+  - "git clone -q --depth 1 git@github.com:ska-sa/katsdpsigproc"
   - "(cd katsdpsigproc && python ./setup.py install)"
   - "pip install -r requirements.txt --use-mirrors"
 # command to run tests
