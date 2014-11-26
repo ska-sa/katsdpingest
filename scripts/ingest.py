@@ -10,7 +10,7 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
-import spead64_40 as spead40
+import spead64_40
 import spead64_48 as spead
 import sys
 import time
@@ -303,7 +303,7 @@ class IngestDeviceServer(DeviceServer):
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead40.Transmitter(spead40.TransportUDPtx('localhost',opts.cam_spead_port))
+            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead_port))
             tx.end()
             time.sleep(1)
 
@@ -348,7 +348,7 @@ if __name__ == '__main__':
     logger.setLevel(logging.INFO)
 
     spead.logger.setLevel(logging.WARNING)
-    spead40.logger.setLevel(logging.WARNING)
+    spead64_40.logger.setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
 
     sp.ProcBlock.logger = logger
