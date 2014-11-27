@@ -2,11 +2,13 @@ language: python
 python:
   - "2.6"
   - "2.7"
-before_install: sudo apt-get install -qq libhdf5-serial-dev
+before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran liblapack-dev
 # command to install dependencies
 install:
   - "git clone -q --depth 1 git@github.com:ska-sa/PySPEAD"
   - "(cd PySPEAD && python ./setup.py install)"
+  - "git clone -q --depth 1 git@github.com:ska-sa/katsdpsigproc"
+  - "(cd katsdpsigproc && python ./setup.py install)"
   - "pip install -r requirements.txt --use-mirrors"
 # command to run tests
 script: nosetests katsdpingest.test.test_telescope_model

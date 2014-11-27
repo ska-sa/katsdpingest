@@ -1,6 +1,8 @@
+# coding: utf-8
 import logging
 import inspect
 import time
+import pkg_resources
 
 import numpy as np
 import scipy.signal as signal
@@ -10,7 +12,9 @@ from katsdpdisp import CorrProdRef
 from .vanvleck import create_correction
 from .antsol import stefcal
 from .__init__ import __version__ as revision
-
+import katsdpsigproc.rfi.host
+import katsdpsigproc.rfi.device
+from katsdpsigproc import accel, tune, fill, transpose
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -27,25 +31,9 @@ class ProcBlock(object):
     avaiable via the history.
 
     Support for both inline modification and production of new data products is provided.
-
-    A flag array is used to refer to values within the currently linked data that should be flagged. The flag array is eventually finalised
-    into a packed int8 array hence the requirement for the flag column to be a multiple of 8. Currently the following bits are specified:
-        0 - reserved
-        1 - predefined static flag list
-        2 - flag based on live CAM information
-        3 - reserved
-        4 - RFI detected in the online system
-        5 - RFI predicted from space based pollutants
-        6 - reserved
-        7 - reserved
-
-    NOTE: Currently np.packbits is used to pack the boolean flag array into an integer value. This means that the flags
-          listed above are in MSB *first* order. e.g.. setting flag 4 (flag[:,:,4]=1) will toggle the 4th bit and produce an
-          integer value of 8 (00001000) once packed.
     """
     current = None
     history = None
-    flags = None
     logger = logging.getLogger("kat.k7capture.sigproc")
      # class attributes for storing references to numpy arrays contaning current and historical data
      # current is purely for convenience as current == history[0]
@@ -53,36 +41,12 @@ class ProcBlock(object):
     def __init__(self, **kwargs):
         self.cpref = CorrProdRef(**kwargs)
         self.expected_dtype = None
-        self.flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
-        self.flag_descriptions = ['reserved - bit 0','predefined static flag list','flag based on live CAM information',
-                                  'reserved - bit 3','RFI detected in the online system','RFI predicted from space based pollutants',
-                                  'reserved - bit 6','reserved - bit 7']
         self._extracted_arguments = self._extract_args(inspect.currentframe(1))
          # extract the arguments from the parent __init__
 
     def _extract_args(self, frame):
         args, _, _, values = inspect.getargvalues(frame)
         return ", ".join(["%s=%s" % (k,values[k]) for k in args if k is not 'self'])
-
-    def finalise_flags(self):
-        """Packs flags into optimal structure and returns them to caller."""
-        if self.flags is None:
-            self.logger.error("No flags yet defined. Using init_flags to setup the basic flag table.")
-        return np.packbits(self.flags).reshape(self.current.shape)
-
-    def init_flags(self, flag_size=8):
-        """Initialise a flag array based on the shape of current.
-
-        Typically this is called after updating the current reference to the current data.
-        Flags are stored in the final axis of the array (with size as given in flag_size).
-        Flag size must be a multiple of 8 to allow packbits to work unambiguously.
-
-        """
-        if flag_size % 8 != 0:
-            self.logger.error("given flag_size (%i) is not a multiple of 8." % flag_size)
-        if self.current is None:
-            self.logger.error("No current data. Unable to create flag table until ProcBlock.current has been initialised.")
-        self.flags = np.zeros(list(self.current.shape) + [flag_size], dtype=np.int8)
 
     def proc(self, *args, **kwargs):
         """Process a single time instance of data."""
@@ -124,26 +88,663 @@ class ProcBlock(object):
 
         return (process, self._extracted_arguments, svn_rev)
 
+class PrepareTemplate(object):
+    """Handles first-stage data processing on a compute device:
 
-class Scale(ProcBlock):
-    """Trivial block to perform data scaling and type conversion.
+    - Conversion to floating point
+    - Scaling
+    - Transposition
+    - Baseline reordering
+
+    When instantiating the template, one specifies a total number of channels,
+    as well as a subrange of that total for which weights will be generated.
+    At present weights are always 1.0, but this may change.
 
     Parameters
     ----------
-    scale_factor : float
-        The scale factor to use.
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
 
+        - block: number of workitems per workgroup in each dimension
+        - vtx, vty: number of elements handled by each workitem, per dimension
     """
-    def __init__(self, scale_factor, *args, **kwargs):
-        super(Scale, self).__init__(*args, **kwargs)
-        self.scale_factor = scale_factor
-        self.expected_dtype = np.int32
 
-    def _proc(self):
-        self.current.dtype = np.float32
-        self.current[:] = (np.float32(self.current.view(np.int32)) / (1.0 * self.scale_factor))[:]
-         # avoid making a new current object. Just replace contents.
-        return None
+    autotune_version = 1
+
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.block = tuning['block']
+        self.vtx = tuning['vtx']
+        self.vty = tuning['vty']
+        program = accel.build(context, 'ingest_kernels/prepare.mako',
+                {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
+                extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('prepare')
+
+    @classmethod
+    @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
+    def autotune(cls, context):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+        channel_range = (128, channels - 128)
+        kept_channels = channel_range[1] - channel_range[0]
+
+        vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
+        vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
+        permutation = accel.DeviceArray(context, (baselines,), np.uint16)
+        weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
+        vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
+        permutation.set(queue, np.arange(baselines).astype(np.uint16))
+        def generate(block, vtx, vty):
+            local_mem = (block * vtx + 1) * (block * vty) * 8
+            if local_mem > 32768:
+                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+            fn = cls(context, {
+                'block': block,
+                'vtx': vtx,
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+            fn.bind(vis_in=vis_in, vis_out=vis_out,
+                    permutation=permutation, weights=weights)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                block=[8, 16, 32],
+                vtx=[1, 2, 3, 4],
+                vty=[1, 2, 3, 4])
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return Prepare(self, command_queue, channels, channel_range, baselines)
+
+class Prepare(accel.Operation):
+    """Concrete instance of :class:`PrepareTemplate`.
+
+    .. rubric:: Slots
+
+    **vis_in** : channels × baselines × 2, int32
+        Input visibilities
+    **permutation** : baselines, uint16
+        Permutation mapping original to new baseline index
+    **vis_out** : baselines × channels, complex64
+        Transformed visibilities
+    **weights** : baselines × kept-channels, float32
+        Weights corresponding to visibilities
+
+    Parameters
+    ----------
+    template : :class:`PrepareTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    channel_range : tuple of two ints
+        Half-open interval of channels that will be written to **weights**
+    baselines : int
+        Number of baselines
+    """
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        super(Prepare, self).__init__(command_queue)
+        tilex = template.block * template.vtx
+        tiley = template.block * template.vty
+        self.template = template
+        self.channels = channels
+        self.channel_range = channel_range
+        self.baselines = baselines
+        self.scale = 1.0
+        padded_channels = accel.Dimension(channels, tiley)
+        padded_baselines = accel.Dimension(baselines, tilex)
+        complex_parts = accel.Dimension(2, exact=True)
+        self.slots['vis_in'] = accel.IOSlot(
+                (padded_channels, padded_baselines, complex_parts), np.int32)
+        # For output we do not need to pad the baselines, because the
+        # permutation requires that we do range checks anyway.
+        self.slots['vis_out'] = accel.IOSlot(
+                (baselines, padded_channels), np.complex64)
+        # Channels need to be range-checked anywhere here, so no padding
+        self.slots['weights'] = accel.IOSlot(
+                (baselines, channel_range[1] - channel_range[0]), np.float32)
+        self.slots['permutation'] = accel.IOSlot((baselines,), np.uint16)
+
+    def set_scale(self, scale):
+        self.scale = scale
+
+    def _run(self):
+        vis_in = self.buffer('vis_in')
+        permutation = self.buffer('permutation')
+        vis_out = self.buffer('vis_out')
+        weights = self.buffer('weights')
+
+        block = self.template.block
+        tilex = block * self.template.vtx
+        tiley = block * self.template.vty
+        xblocks = accel.divup(self.baselines, tilex)
+        yblocks = accel.divup(self.channels, tiley)
+        self.command_queue.enqueue_kernel(
+                self.template.kernel,
+                [
+                    vis_out.buffer,
+                    weights.buffer,
+                    vis_in.buffer,
+                    permutation.buffer,
+                    np.int32(vis_out.padded_shape[1]),
+                    np.int32(weights.padded_shape[1]),
+                    np.int32(vis_in.padded_shape[1]),
+                    np.int32(self.channel_range[0]),
+                    np.int32(self.channel_range[1]),
+                    np.int32(self.baselines),
+                    np.float32(self.scale)
+                ],
+                global_size = (xblocks * block, yblocks * block),
+                local_size = (block, block))
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'channel_range': self.channel_range,
+            'baselines': self.baselines,
+            'scale': self.scale
+        }
+
+class AccumTemplate(object):
+    """Template for weighted visibility accumulation with flags. The
+    inputs are in baseline-major order, while the outputs are in
+    channel-major order. Support is provided for accumulating to multiple
+    output sets.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    outputs : int
+        Number of outputs in which to accumulate
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - block: number of workitems per workgroup in each dimension
+        - vtx, vty: number of elements handled by each workitem, per dimension
+    """
+    autotune_version = 1
+
+    def __init__(self, context, outputs, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context, outputs)
+        self.context = context
+        self.block = tuning['block']
+        self.vtx = tuning['vtx']
+        self.vty = tuning['vty']
+        self.outputs = outputs
+        program = accel.build(context, 'ingest_kernels/accum.mako',
+            {
+                'block': self.block,
+                'vtx': self.vtx,
+                'vty': self.vty,
+                'outputs': self.outputs},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('accum')
+
+    @classmethod
+    @tune.autotuner(test={'block': 8, 'vtx': 2, 'vty': 3})
+    def autotune(cls, context, outputs):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+        channel_range = (128, channels - 128)
+        kept_channels = channel_range[1] - channel_range[0]
+
+        vis_in = accel.DeviceArray(context, (baselines, channels), np.complex64)
+        weights_in = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
+        flags_in = accel.DeviceArray(context, (baselines, channels), np.uint8)
+        out = {}
+        for i in range(outputs):
+            suffix = str(i)
+            out['vis_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.complex64)
+            out['weights_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.float32)
+            out['flags_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.uint8)
+
+        rs = np.random.RandomState(seed=1)
+        vis_in.set(queue, np.ones(vis_in.shape, np.complex64))
+        weights_in.set(queue, np.ones(weights_in.shape, np.float32))
+        flags_in.set(queue, rs.choice([0, 16], size=flags_in.shape, p=[0.95, 0.05]).astype(np.uint8))
+        def generate(block, vtx, vty):
+            local_mem = (block * vtx + 1) * (block * vty) * 13
+            if local_mem > 32768:
+                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+            fn = cls(context, outputs, {
+                'block': block,
+                'vtx': vtx,
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+            fn.bind(vis_in=vis_in, weights_in=weights_in, flags_in=flags_in, **out)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                block=[8, 16, 32],
+                vtx=[1, 2, 3, 4],
+                vty=[1, 2, 3, 4])
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return Accum(self, command_queue, channels, channel_range, baselines)
+
+class Accum(accel.Operation):
+    """Concrete instance of :class:`AccumTemplate`.
+
+    .. rubric:: Slots
+
+    In the outputs, *N* is an index starting from zero.
+
+    **vis_in** : baselines × channels, complex64
+        Input visibilities
+    **weights_in** : baselines × kept-channels, float32
+        Input weights
+    **flags_in** : baselines × channels, uint8
+        Input flags: non-zero values cause downweighting by 2^-64
+    **vis_outN** : kept-channels × baselines, complex64
+        Incremented by weight × visibility
+    **weights_outN** : kept-channels × baselines, float32
+        Incremented by (computed) weight
+    **flags_outN** : kept-channels × baselines, uint8
+        ANDed with the input flags
+
+    Here *kept-channels* indicates the number of channels in `channel_range`.
+
+    Parameters
+    ----------
+    template : :class:`AccumTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    change_range : tuple of two ints
+        Half-open interval of channels that will appear in the output and in **weights_in**
+    baselines : int
+        Number of baselines
+    """
+
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        super(Accum, self).__init__(command_queue)
+        tilex = template.block * template.vtx
+        tiley = template.block * template.vty
+        self.template = template
+        self.channels = channels
+        self.channel_range = channel_range
+        self.baselines = baselines
+        kept_channels = channel_range[1] - channel_range[0]
+        padded_kept_channels = accel.Dimension(kept_channels, tilex)
+        padded_baselines = accel.Dimension(baselines, tiley)
+        padded_channels = accel.Dimension(channels,
+                min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range[0]))
+        self.slots['vis_in'] = accel.IOSlot(
+                (padded_baselines, padded_channels), np.complex64)
+        self.slots['weights_in'] = accel.IOSlot(
+                (padded_baselines, padded_kept_channels), np.float32)
+        self.slots['flags_in'] = accel.IOSlot(
+                (padded_baselines, padded_channels), np.uint8)
+        for i in range(self.template.outputs):
+            label = str(i)
+            self.slots['vis_out' + label] = accel.IOSlot(
+                (padded_kept_channels, padded_baselines), np.complex64)
+            self.slots['weights_out' + label] = accel.IOSlot(
+                (padded_kept_channels, padded_baselines), np.float32)
+            self.slots['flags_out' + label] = accel.IOSlot(
+                (padded_kept_channels, padded_baselines), np.uint8)
+
+    def _run(self):
+        buffer_names = []
+        for i in range(self.template.outputs):
+            label = str(i)
+            buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
+        buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
+        buffers = [self.buffer(x) for x in buffer_names]
+        args = [x.buffer for x in buffers] + [
+            np.int32(buffers[0].padded_shape[1]),
+            np.int32(buffers[-3].padded_shape[1]),
+            np.int32(buffers[-2].padded_shape[1]),
+            np.int32(self.channel_range[0])]
+
+        kept_channels = self.channel_range[1] - self.channel_range[0]
+        block = self.template.block
+        tilex = block * self.template.vtx
+        tiley = block * self.template.vty
+        xblocks = accel.divup(kept_channels, tilex)
+        yblocks = accel.divup(self.baselines, tiley)
+
+        self.command_queue.enqueue_kernel(
+                self.template.kernel,
+                args,
+                global_size = (xblocks * block, yblocks * block),
+                local_size = (block, block))
+
+    def parameters(self):
+        return {
+            'outputs': self.template.outputs,
+            'channels': self.channels,
+            'channel_range': self.channel_range,
+            'baselines': self.baselines
+        }
+
+class PostprocTemplate(object):
+    """Postprocessing performed on each output dump:
+
+    - Accumulated visibility-weight product divided by weight
+    - Weights for flagged outputs set to zero
+    - Computation of continuum visibilities, weights and flags (flags are ANDed)
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - wgsx, wgsy: number of workitems per workgroup in each dimension
+    """
+    autotune_version = 1
+
+    def __init__(self, context, cont_factor, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context, cont_factor)
+        self.context = context
+        self.cont_factor = cont_factor
+        self.wgsx = tuning['wgsx']
+        self.wgsy = tuning['wgsy']
+        program = accel.build(context, 'ingest_kernels/postproc.mako',
+            {
+                'wgsx': self.wgsx,
+                'wgsy': self.wgsy,
+                'cont_factor': cont_factor
+            },
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('postproc')
+
+    @classmethod
+    @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
+    def autotune(cls, context, cont_factor):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = accel.roundup(2048, cont_factor)
+        cont_channels = channels // cont_factor
+
+        vis =     accel.DeviceArray(context, (channels, baselines), np.complex64)
+        weights = accel.DeviceArray(context, (channels, baselines), np.float32)
+        flags =   accel.DeviceArray(context, (channels, baselines), np.uint8)
+        cont_vis =     accel.DeviceArray(context, (cont_channels, baselines), np.complex64)
+        cont_weights = accel.DeviceArray(context, (cont_channels, baselines), np.float32)
+        cont_flags =   accel.DeviceArray(context, (cont_channels, baselines), np.uint8)
+
+        rs = np.random.RandomState(seed=1)
+        vis.set(queue, np.ones(vis.shape, np.complex64))
+        weights.set(queue, rs.uniform(1e-5, 4.0, weights.shape).astype(np.float32))
+        flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
+        def generate(**tuning):
+            fn = cls(context, cont_factor, tuning=tuning).instantiate(
+                    queue, channels, baselines)
+            fn.bind(vis=vis, weights=weights, flags=flags)
+            fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate,
+                wgsx=[8, 16, 32],
+                wgsy=[8, 16, 32])
+
+    def instantiate(self, context, channels, baselines):
+        return Postproc(self, context, channels, baselines)
+
+class Postproc(accel.Operation):
+    """Concrete instance of :class:`PostprocTemplate`.
+
+    .. rubric:: Slots
+
+    **vis** : channels × baselines, complex64
+        Sum of visibility times weight (on input), average visibility (on output)
+    **weights** : channels × baselines, float32
+        Sum of weights; on output, flagged results are set to zero
+    **flags** : channels × baselines, uint8
+        Flags (read-only)
+    **cont_vis** : channels/cont_factor × baselines, complex64
+        Output continuum visibilities
+    **cont_weights** : channels/cont_factor × baselines, float32
+        Output continuum weights
+    **cont_flags** : channels/cont_factor × baselines, uint8
+        Output continuum flags
+
+    Parameters
+    ----------
+    template : :class:`PostprocTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels (must be a multiple of `template.cont_factor`)
+    baselines : int
+        Number of baselines
+
+    Raises
+    ------
+    ValueError
+        If `channels` is not a multiple of `template.cont_factor`
+    """
+    def __init__(self, template, command_queue, channels, baselines):
+        super(Postproc, self).__init__(command_queue)
+        self.template = template
+        self.channels = channels
+        self.baselines = baselines
+
+        if channels % template.cont_factor:
+            raise ValueError('Number of channels must be a multiple of the continuum factor')
+        cont_channels = channels // template.cont_factor
+
+        spectral_dims = (
+            accel.Dimension(channels, template.cont_factor * template.wgsy),
+            accel.Dimension(baselines, template.wgsx))
+        cont_dims = (
+            accel.Dimension(cont_channels, template.wgsy),
+            spectral_dims[1])
+        self.slots['vis'] =     accel.IOSlot(spectral_dims, np.complex64)
+        self.slots['weights'] = accel.IOSlot(spectral_dims, np.float32)
+        self.slots['flags'] =   accel.IOSlot(spectral_dims, np.uint8)
+        self.slots['cont_vis'] =     accel.IOSlot(cont_dims, np.complex64)
+        self.slots['cont_weights'] = accel.IOSlot(cont_dims, np.float32)
+        self.slots['cont_flags'] =   accel.IOSlot(cont_dims, np.uint8)
+
+    def _run(self):
+        buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
+        buffers = [self.buffer(name) for name in buffer_names]
+        args = [x.buffer for x in buffers] + [np.int32(buffers[0].padded_shape[1])]
+        xblocks = accel.divup(self.baselines, self.template.wgsx)
+        yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
+        self.command_queue.enqueue_kernel(
+            self.template.kernel, args,
+            global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
+            local_size=(self.template.wgsx, self.template.wgsy))
+
+    def parameters(self):
+        return {
+            'cont_factor': self.template.cont_factor,
+            'channels': self.channels,
+            'baselines': self.baselines
+        }
+
+class IngestTemplate(object):
+    """Template for the entire on-device ingest processing
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
+        Template for RFI flagging. It must have transposed flag outputs.
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    """
+
+    flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
+    flag_descriptions = [
+            'reserved - bit 0',
+            'predefined static flag list',
+            'flag based on live CAM information',
+            'reserved - bit 3',
+            'RFI detected in the online system',
+            'RFI predicted from space based pollutants',
+            'reserved - bit 6','reserved - bit 7']
+
+    def __init__(self, context, flagger, cont_factor):
+        self.context = context
+        self.prepare = PrepareTemplate(context)
+        # TODO: create a zero-fill template that handles all these cases
+        self.zero_vis_accum = fill.FillTemplate(
+                context, np.complex64, 'float2')
+        self.zero_weights_accum = fill.FillTemplate(
+                context, np.float32, 'float')
+        self.zero_flags_accum = fill.FillTemplate(
+                context, np.uint8, 'unsigned char')
+        self.transpose_vis = transpose.TransposeTemplate(
+                context, np.complex64, 'float2')
+        self.flagger = flagger
+        self.accum = AccumTemplate(context, 1)
+        self.postproc = PostprocTemplate(context, cont_factor)
+
+    def instantiate(self, command_queue, channels, channel_range, baselines):
+        return IngestOperation(self, command_queue, channels, channel_range, baselines)
+
+class IngestOperation(accel.OperationSequence):
+    """Concrete instance of :class:`IngestTemplate`.
+
+    .. rubric:: Input slots
+
+    **vis_in** : channels × baselines × 2, int32
+        Input visibilities from the correlator
+    **permutation** : baselines, uint16
+        Permutation mapping original to new baseline index
+
+    .. rubric:: Output slots
+
+    **spec_vis** : kept-channels × baselines, complex64
+        Spectral visibilities
+    **spec_weights** : kept-channels × baselines, float32
+        Spectral weights
+    **spec_flags** : kept-channels × baselines, uint8
+        Spectral flags
+    **cont_vis** : kept-channels/`cont_factor` × baselines, complex64
+        Continuum visibilities
+    **cont_weights** : kept-channels/`cont_factor` × baselines, float32
+        Continuum weights
+    **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
+        Continuum flags
+
+    .. rubric:: Scratch slots
+
+    These are subject to change and so are not documented at this time.
+    """
+    def __init__(self, template, command_queue, channels, channel_range, baselines):
+        kept_channels = channel_range[1] - channel_range[0]
+        self.template = template
+        self.prepare = template.prepare.instantiate(
+                command_queue, channels, channel_range, baselines)
+        self.zero_spec_vis = template.zero_vis_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.zero_spec_weights = template.zero_weights_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.zero_spec_flags = template.zero_flags_accum.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.zero_spec_flags.set_value(0xff)
+        # TODO: a single transpose+absolute value kernel uses less memory
+        self.transpose_vis = template.transpose_vis.instantiate(
+                command_queue, (baselines, channels))
+        self.flagger = template.flagger.instantiate(
+                command_queue, channels, baselines)
+        self.accum = template.accum.instantiate(
+                command_queue, channels, channel_range, baselines)
+        self.postproc = template.postproc.instantiate(
+                command_queue, kept_channels, baselines)
+
+        # The order of these does not matter, since the actual sequencing is
+        # done by methods in this class.
+        operations = [
+                ('prepare', self.prepare),
+                ('zero_spec_vis', self.zero_spec_vis),
+                ('zero_spec_weights', self.zero_spec_weights),
+                ('zero_spec_flags', self.zero_spec_flags),
+                ('transpose_vis', self.transpose_vis),
+                ('flagger', self.flagger),
+                ('accum', self.accum),
+                ('postproc', self.postproc)
+        ]
+        # TODO: eliminate transposition of flags, which aren't further used
+        assert 'flags_t' in self.flagger.slots
+        compounds = {
+                'vis_in':       ['prepare:vis_in'],
+                'permutation':  ['prepare:permutation'],
+                'vis_t':        ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
+                'weights':      ['prepare:weights', 'accum:weights_in'],
+                'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
+                'deviations':   ['flagger:deviations'],
+                'noise':        ['flagger:noise'],
+                'flags':        ['flagger:flags_t', 'accum:flags_in'],
+                'spec_vis':     ['accum:vis_out0', 'zero_spec_vis:data', 'postproc:vis'],
+                'spec_weights': ['accum:weights_out0', 'zero_spec_weights:data', 'postproc:weights'],
+                'spec_flags':   ['accum:flags_out0', 'zero_spec_flags:data', 'postproc:flags'],
+                'cont_vis':     ['postproc:cont_vis'],
+                'cont_weights': ['postproc:cont_weights'],
+                'cont_flags':   ['postproc:cont_flags']
+        }
+
+        aliases = {
+                'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
+        }
+
+        super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
+
+    def set_scale(self, scale):
+        self.prepare.set_scale(scale)
+
+    def _run(self):
+        """Process a single input dump"""
+        self.prepare()
+        self.transpose_vis()
+        self.flagger()
+        self.accum()
+
+    def start_sum(self, **kwargs):
+        """Reset accumulation buffers for a new output dump"""
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        self.zero_spec_vis()
+        self.zero_spec_weights()
+        self.zero_spec_flags()
+
+    def end_sum(self, **kwargs):
+        """Perform postprocessing for an output dump. This only does
+        on-device processing; it does not transfer the results to the host.
+        """
+        self.postproc()
+
+    def descriptions(self):
+        """Generate descriptions of all the components, for the process log.
+        Each description is a 3-tuple consisting of a component name, a
+        string describing the parameters, and a version string."""
+        def generate(operation, name):
+            try:
+                revision = int(operation.__class__.__module__.__version__)
+            except (AttributeError, ValueError):
+                revision = 0
+            parameters = dict(operation.parameters())
+            parameters['class'] = operation.__class__.__module__ + '.' + operation.__class__.__name__
+            yield (
+                name,
+                ', '.join(['%s=%s' % x for x in sorted(parameters.iteritems())]),
+                revision)
+            if isinstance(operation, accel.OperationSequence):
+                for child_name, child_op in operation.operations.iteritems():
+                    for d in generate(child_op, child_name):
+                        yield (name + ':' + d[0], d[1], d[2])
+        return list(generate(self, 'ingest'))
 
 
 class VanVleckOutOfRangeError(Exception):
@@ -179,113 +780,6 @@ class VanVleck(ProcBlock):
         # Contents of current data are updated in-place
         return None
 
-
-class RFIThreshold2(ProcBlock):
-    """Simple RFI flagging through thresholding.
-
-    Trivial thresholder that looks for n sigma deviations from the average
-    of the supplied frame.
-
-    Parameters
-    ----------
-    n_sigma : float
-       The number of std deviations allowed
-
-    """
-    def __init__(self, axis=0, n_sigma=11.0, spike_width=6, *args, **kwargs):
-        super(RFIThreshold2, self).__init__(*args, **kwargs)
-        self.n_sigma = n_sigma
-        self.spike_width = spike_width
-        self.axis = axis
-        self.expected_dtype = np.complex64
-
-    def _proc(self):
-        self.logger.debug("RFI Threshold: Processing block of shape %s" % str(self.current.shape))
-
-        if self.flags is None:
-            self.init_flags()
-
-        for bl_index in range(self.current.shape[1]):
-            spectral_data = np.abs(self.current[:,bl_index])
-            spectral_data = np.atleast_1d(spectral_data)
-            kernel_size = 2 * max(int(self.spike_width), 0) + 1
-            # Median filter data along the desired axis, with given kernel size
-            kernel = np.ones(spectral_data.ndim, dtype='int32')
-            kernel[self.axis] = kernel_size
-
-            # Medfilt now seems to upcast 32-bit floats to doubles - convert it back to floats...
-            filtered_data = np.asarray(signal.medfilt(spectral_data, kernel), spectral_data.dtype)
-
-            # The deviation is measured relative to the local median in the signal
-            abs_dev = np.abs(spectral_data - filtered_data)
-
-            # Calculate median absolute deviation (MAD)
-            med_abs_dev = np.expand_dims(np.median(abs_dev[abs_dev>0], self.axis), self.axis)
-
-            #med_abs_dev = signal.medfilt(abs_dev, kernel)
-            # Assuming normally distributed deviations, this is a robust estimator of the standard deviation
-            estm_stdev = 1.4826 * med_abs_dev
-
-            # Identify outliers (again based on normal assumption), and replace them with local median
-            #outliers = ( abs_dev > self.n_sigma * estm_stdev)
-            #print outliers
-            # Identify only positve outliers
-            outliers = (spectral_data - filtered_data > self.n_sigma*estm_stdev)
-
-            self.flags[:,bl_index,4] = outliers
-             # set appropriate flag bit for detected RFI
-
-
-class RFIThreshold(ProcBlock):
-    """Simple RFI flagging through thresholding.
-
-    Trivial thresholder that looks for n sigma deviations from the average
-    of the supplied frame.
-
-    Parameters
-    ----------
-    n_sigma : float
-       The number of std deviations allowed
-
-    """
-    def __init__(self,axis=0, *args, **kwargs):
-        super(RFIThreshold, self).__init__(*args, **kwargs)
-        self.axis = axis
-
-    def _proc(self):
-
-        flags = np.zeros(self.current.shape)
-        for bl_index in range(self.current.shape[1]):
-            spectral_data = np.abs(self.current[:,bl_index])
-            spectral_data = np.atleast_1d(spectral_data)
-            kernel = np.ones(spectral_data.ndim, dtype='int32')
-            kernel[self.axis] = 3
-            # Medfilt now seems to upcast 32-bit floats to doubles - convert it back to floats...
-            filtered_data = signal.medfilt(spectral_data, kernel)
-            # The deviation is measured relative to the local median in the signal
-            abs_dev = spectral_data - filtered_data
-            # Identify outliers (again based on normal assumption), and replace them with local median
-            outliers = (abs_dev > np.std(abs_dev)*2.3)
-            flags[:,bl_index] = outliers
-
-        return np.packbits(flags.astype(np.int8))
-
-######################################################################################################
-    #if self.history.shape[0] > 1:
-         # in this case we want to use available historical data rather than just the current frame.
-         # self.history has shape (Ntimestamps, Nchannels, Nbaselines)
-        #    m = np.mean(np.abs(self.history[1:]), axis=0)
-         #   s = np.std(np.abs(self.history[1:]), axis=0)
-             # these array now have shape (Nchannels, Nbaselines)
-    #    else:
-    #        m = np.mean(np.abs(self.current), axis=0)
-    #        s = np.std(np.abs(self.current), axis=0)
-             # these arrays have shape (Nbaselines). i.e. a single point per spectrum
-    #    flags = np.abs(self.current) >= (m + self.n_sigma * s)
-
-        ### End of section to replace
-
-#        return np.packbits(flags.astype(np.int8))
 
 ###################################################################################################################
 
