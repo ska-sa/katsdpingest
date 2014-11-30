@@ -1,9 +1,9 @@
 numpy
 h5py
-spead
+git+https://github.com/ska-sa/PySPEAD
 iniparse
 blinker
 scikits.fitting
 katcp==0.5.2
-katsdpsigproc
+git+ssh://git@github.com/ska-sa/katsdpsigproc
 mock
