@@ -16,6 +16,7 @@ import copy
 import katsdpingest.sigproc as sp
 import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
+from katsdpsigproc import percentile as perc5
 import katsdpdisp.data as sdispdata
 import logging
 import socket
@@ -278,7 +279,15 @@ class CBFIngest(threading.Thread):
         else:
             anyflags=np.any(flags,axis=1)#all percentiles of same collection have same flags
             flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags].astype(np.uint8)
-        return [np.percentile(data,[0,100,25,75,50],axis=1).transpose(),flags]
+        if (nsignals in self.gpu_percentile_instances.keys()):
+            perc=self.gpu_percentile_instances[nsignals]
+            perc.buffer('src').set(self.gpu_queue,data)
+            perc()
+            out = perc.buffer('dest').get(self.gpu_queue)
+            return [out.transpose(),flags]
+        else:
+            out=np.percentile(data,[0,100,25,75,50],axis=1)
+            return [out.transpose(),flags]
                     
     def run(self):
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
@@ -368,6 +377,16 @@ class CBFIngest(threading.Thread):
 
                 self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
                 self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+                self.gpu_percentile_instances = {}
+                if (1):
+                    self.gpu_context = accel.create_some_context(True)
+                    self.gpu_queue = self.gpu_context.create_command_queue(profile=True)
+                    for ip,iproducts in enumerate(self.collectionproducts):
+                        plen=len(iproducts)
+                        if (plen not in self.gpu_percentile_instances.keys()):
+                            template = perc5.Percentile5Template(self.gpu_context, max_columns=plen)
+                            self.gpu_percentile_instances[plen]=template.instantiate(self.gpu_queue, (channels,plen))
+                            self.gpu_percentile_instances[plen].ensure_all_bound()
             else:
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
