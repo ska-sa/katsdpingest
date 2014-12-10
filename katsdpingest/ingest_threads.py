@@ -16,6 +16,7 @@ import copy
 import katsdpingest.sigproc as sp
 import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
+from katsdpsigproc import percentile as perc5
 import katsdpdisp.data as sdispdata
 import logging
 import socket
@@ -272,13 +273,20 @@ class CBFIngest(threading.Thread):
             sorts this collection of data into 0% 100% 25% 75% 50%
             return shape is [nchannels,5]
         """
-        nchannels,nsignals=data.shape
+        nchannels,nsignals = data.shape
         if (flags is None):
-            flags=np.zeros([nchannels,5],dtype=np.uint8)
+            flags = np.zeros([nchannels, 5], dtype=np.uint8)
         else:
-            anyflags=np.any(flags,axis=1)#all percentiles of same collection have same flags
-            flags=np.c_[anyflags,anyflags,anyflags,anyflags,anyflags].astype(np.uint8)
-        return [np.percentile(data,[0,100,25,75,50],axis=1).transpose(),flags]
+            anyflags = np.any(flags,axis=1)#all percentiles of same collection have same flags
+            flags = np.c_[anyflags, anyflags, anyflags, anyflags, anyflags].astype(np.uint8)
+        if (nsignals in self.percentile_instances.keys()):
+            perc = self.percentile_instances[nsignals]
+            perc.buffer('src').set(self.command_queue,data)
+            perc()
+            out = perc.buffer('dest').get(self.command_queue)
+        else:
+            out = np.percentile(data, [0, 100, 25, 75, 50], axis=1)
+        return [out.transpose(), flags]
                     
     def run(self):
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
@@ -368,6 +376,13 @@ class CBFIngest(threading.Thread):
 
                 self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
                 self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+                self.percentile_instances = {}
+                for ip,iproducts in enumerate(self.collectionproducts):
+                    plen = len(iproducts)
+                    if (plen not in self.percentile_instances.keys()):
+                        template = perc5.Percentile5Template(self.context, max_columns=plen)
+                        self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
+                        self.percentile_instances[plen].ensure_all_bound()
             else:
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
