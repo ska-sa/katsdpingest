@@ -4,7 +4,7 @@ python:
   - "2.7"
 before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran liblapack-dev
 # command to install dependencies. pip needs to be updated to make h5py install
-# correctly. The directly changes are to prevent the local setup.cfg from
+# correctly. The directory changes are to prevent the local setup.cfg from
 # affecting the pip installs.
 install:
   - "(cd ~ && pip install -U pip setuptools)"
