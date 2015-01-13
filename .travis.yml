@@ -8,6 +8,6 @@ before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran
 # affecting the pip installs.
 install:
   - "(cd / && pip install -U pip setuptools)"
-  - "(cd / && pip install -r requirements.txt)"
+  - "(cd / && pip install -r $OLDPWD/requirements.txt)"
 # command to run tests
 script: nosetests katsdpingest.test.test_telescope_model
