@@ -9,8 +9,8 @@
 DEVICE_FN void accum_vis(GLOBAL float2 *out, float2 value, float weight)
 {
     float2 sum = *out;
-    sum.x += value.x * weight;
-    sum.y += value.y * weight;
+    sum.x = fma(value.x, weight, sum.x);
+    sum.y = fma(value.y, weight, sum.y);
     *out = sum;
 }
 
