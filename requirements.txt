@@ -1,5 +1,4 @@
 numpy
-h5py
 git+https://github.com/ska-sa/PySPEAD
 iniparse
 blinker
