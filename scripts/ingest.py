@@ -41,6 +41,7 @@ def parse_opts(argv):
     parser.add_option('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%default]')
     parser.add_option('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%default]')
     parser.add_option('--spectral-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
+    parser.add_option('--time-average-dumps', default=1, type=int, help='number of input dumps to average into each output dump. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
@@ -178,6 +179,7 @@ class IngestDeviceServer(DeviceServer):
         self.cbf_thread = CBFIngest(
                 opts.cbf_spead_host, opts.cbf_spead_port,
                 opts.spectral_spead_host, opts.spectral_spead_port, opts.spectral_rate,
+                opts.time_average_dumps,
                 self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
