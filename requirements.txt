@@ -6,4 +6,6 @@ blinker
 scikits.fitting
 katcp==0.5.2
 git+ssh://git@github.com/ska-sa/katsdpsigproc
+git+ssh://git@github.com/ska-sa/katpoint
+git+ssh://git@github.com/ska-sa/katsdpdisp
 mock
