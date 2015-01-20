@@ -91,7 +91,6 @@ class CBFIngest(threading.Thread):
         self._sd_metadata = None
         self.sdisp_ips = {}
         self._sd_count = 0
-        self.center_freq = 0
         self.ig_sd = spead.ItemGroup()
         self.timestamps = []
          # temporary timestamp store
@@ -139,7 +138,7 @@ class CBFIngest(threading.Thread):
             self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
             self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-                            shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
+                            shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.cbf_attr['center_freq'].value)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)))
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.", init_val=self.cbf_attr['bls_ordering'].value)

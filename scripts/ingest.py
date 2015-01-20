@@ -191,23 +191,6 @@ class IngestDeviceServer(DeviceServer):
     def request_enable_van_vleck(self, req):
         """Enable Van Vleck correction of the auto-correlated visibilities."""
 
-    @request(Float())
-    @return_reply(Str())
-    def request_set_center_freq(self, req, center_freq_hz):
-        """Set the center freq for use in the signal displays.
-
-        Parameters
-        ----------
-        center_freq_hz : int
-            The current system center frequency in hz
-        """
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
-        self.cbf_thread.center_freq = center_freq_hz
-        self.cbf_thread.send_sd_metadata()
-        smsg = "SD Metadata resent"
-        logger.info(smsg)
-        return ("ok","set")
-
     @request(Str(), Str())
     @return_reply(Str())
     def request_set_obs_param(self, req, key_string, value_string):

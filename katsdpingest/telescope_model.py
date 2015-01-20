@@ -344,8 +344,7 @@ class CorrelatorBeamformer(TelescopeComponent):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
         self._critical_sensors = ['target']
         self._std_sensors = ['auto_delay']
-        self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
-        self._std_attributes = ['center_freq']
+        self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth','sync_time','int_time','scale_factor_timestamp','center_freq']
         self._build()
 
 class Enviro(TelescopeComponent):
