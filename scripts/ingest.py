@@ -30,7 +30,6 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 # import katconf
 
-
 def parse_opts(argv):
     parser = optparse.OptionParser()
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
@@ -39,6 +38,9 @@ def parse_opts(argv):
     parser.add_option('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on')
     parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
+    parser.add_option('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%default]')
+    parser.add_option('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%default]')
+    parser.add_option('--spectral-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
@@ -173,7 +175,10 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(opts.cbf_spead_host, opts.cbf_spead_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+        self.cbf_thread = CBFIngest(
+                opts.cbf_spead_host, opts.cbf_spead_port,
+                opts.spectral_spead_host, opts.spectral_spead_port, opts.spectral_rate,
+                self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
         self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model, cam_logger)

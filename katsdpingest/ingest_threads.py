@@ -90,11 +90,16 @@ class CBFIngest(threading.Thread):
                 background_template, noise_est_template, threshold_template)
         return sp.IngestTemplate(context, flagger_template, cont_factor=16)
 
-    def __init__(self, spead_host, spead_port, h5_file, my_sensors, model, cbf_name, logger):
+    def __init__(self, cbf_spead_host, cbf_spead_port,
+            spectral_spead_host, spectral_spead_port, spectral_spead_rate,
+            h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.spead_port = spead_port
-        self.spead_host = spead_host
+        self.cbf_spead_port = cbf_spead_port
+        self.cbf_spead_host = cbf_spead_host
+        self.spectral_spead_port = spectral_spead_port
+        self.spectral_spead_host = spectral_spead_host
+        self.spectral_spead_rate = spectral_spead_rate
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -287,26 +292,40 @@ class CBFIngest(threading.Thread):
         else:
             out = np.percentile(data, [0, 100, 25, 75, 50], axis=1)
         return [out.transpose(), flags]
-                    
+
+    def send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
+        ig = spead.ItemGroup()
+        ig.heap_cnt = heap_cnt
+        ig.add_item(name='correlator_data', description="Visibilities",
+                ndarray=vis, init_val=vis)
+        ig.add_item(name='flags', description="Flags for visibilities",
+                ndarray=flags, init_val=flags)
+        ig.add_item(name='timestamp', description="Seconds since sync time",
+                shape=[], fmt=spead.mkfmt(('f', 64)),
+                init_val=ts_rel)
+        tx.send_heap(ig.get_heap())
+
     def run(self):
-        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
-        if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
+        self.logger.debug("Initialising SPEAD transports at %f" % time.time())
+        self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.cbf_spead_host, self.cbf_spead_port))
+        if self.cbf_spead_host[:self.cbf_spead_host.find('.')] in MULTICAST_PREFIXES:
          # if we have a multicast address we need to subscribe to the appropriate groups...
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if self.spead_host.rfind("+") > 0:
-                host_base, host_number = self.spead_host.split("+")
+            if self.cbf_spead_host.rfind("+") > 0:
+                host_base, host_number = self.cbf_spead_host.split("+")
                 hosts = ["{0}.{1}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
             else:
-                hosts = [self.spead_host]
+                hosts = [self.cbf_spead_host]
             for h in hosts:
                 mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx = spead.TransportUDPrx(self.spead_port, pkt_count=1024, buffer_size=51200000)
-        ig = spead.ItemGroup()
+        rx = spead.TransportUDPrx(self.cbf_spead_port, pkt_count=1024, buffer_size=51200000)
+        tx_spectral = spead.Transmitter(spead.TransportUDPtx(
+            self.spectral_spead_host, self.spectral_spead_port, self.spectral_spead_rate))
+        ig_cbf = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
         datasets = {}
@@ -326,14 +345,14 @@ class CBFIngest(threading.Thread):
 
             #### Update the telescope model
 
-            ig.update(heap)
-            self.model.update_from_ig(ig, proxy_path=self.cbf_name)
+            ig_cbf.update(heap)
+            self.model.update_from_ig(ig_cbf, proxy_path=self.cbf_name)
              # any interesting attributes will now end up in the model
              # this means we are only really interested in actual data now
-            if not ig._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
-            if not ig._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
-            data_ts = ig['timestamp']
-            data_item = ig.get_item('xeng_raw')
+            if not ig_cbf._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
+            if not ig_cbf._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
+            data_ts = ig_cbf['timestamp']
+            data_item = ig_cbf.get_item('xeng_raw')
             if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue
              # we have new data...
 
@@ -399,7 +418,8 @@ class CBFIngest(threading.Thread):
                 self.send_sd_metadata()
 
             ##### Generate timestamps
-            current_ts = self.cbf_attr['sync_time'].value + (data_ts / self.cbf_attr['scale_factor_timestamp'].value)
+            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
+            current_ts = self.cbf_attr['sync_time'].value + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
             self.timestamps.append(current_ts)
 
@@ -420,6 +440,7 @@ class CBFIngest(threading.Thread):
             # having a real/imag axis for reals), or one can use
             # np.lib.stride_tricks to work around the limitation on view().
             vis = np.ascontiguousarray(vis)
+            self.send_visibilities(tx_spectral, heap.heap_cnt, vis, flags, current_ts_rel)
             vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
             self.h5_file[flags_dataset][idx] = flags
             self.h5_file[cbf_data_dataset][idx] = vis
