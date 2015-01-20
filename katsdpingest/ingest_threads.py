@@ -293,7 +293,7 @@ class CBFIngest(threading.Thread):
             out = np.percentile(data, [0, 100, 25, 75, 50], axis=1)
         return [out.transpose(), flags]
 
-    def send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
+    def _send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
         ig = spead.ItemGroup()
         ig.heap_cnt = heap_cnt
         ig.add_item(name='correlator_data', description="Visibilities",
@@ -440,7 +440,7 @@ class CBFIngest(threading.Thread):
             # having a real/imag axis for reals), or one can use
             # np.lib.stride_tricks to work around the limitation on view().
             vis = np.ascontiguousarray(vis)
-            self.send_visibilities(tx_spectral, heap.heap_cnt, vis, flags, current_ts_rel)
+            self._send_visibilities(tx_spectral, heap.heap_cnt, vis, flags, current_ts_rel)
             vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
             self.h5_file[flags_dataset][idx] = flags
             self.h5_file[cbf_data_dataset][idx] = vis
@@ -481,6 +481,7 @@ class CBFIngest(threading.Thread):
         #### Stop received.
 
         self.logger.info("CBF ingest complete at %f" % time.time())
+        tx_spectral.end()
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
