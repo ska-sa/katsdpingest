@@ -19,23 +19,51 @@ ENV DRIVER_RUN http://uk.download.nvidia.com/XFree86/Linux-x86_64/346.22/NVIDIA-
 WORKDIR /dev
 ENV TMPDIR /dev
 
-# Install system packages
+# Install system packages. Python packages are mostly installed here, but
+# certain packages are handled by pip:
+# - Not available in Ubuntu 14.04 (universe): pyephem, scikits.fitting, pycuda, katcp, ansicolors
+# - Ubuntu 14.04 version is too old: six
 RUN apt-get -y update && apt-get -y install \
     build-essential software-properties-common wget git-core \
     python python-dev python-pip \
-    libhdf5-serial-dev libblas-dev gfortran liblapack-dev
+    python-appdirs \
+    python-blinker \
+    python-decorator \
+    python-h5py \
+    python-iniparse \
+    python-mako \
+    python-markupsafe \
+    python-mock \
+    python-nose \
+    python-numpy \
+    python-ply \
+    python-py \
+    python-pytools \
+    python-scipy \
+    python-twisted \
+    python-unittest2 \
+    python-zope.interface
 RUN wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit
 RUN wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network
 ENV PATH="$PATH:/usr/local/cuda/bin"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64"
 
-# Install Python dependencies
-RUN pip install -U pip setuptools
+# Install Python dependencies. Versions are explicitly listed and pinned, so
+# that the docker image is reproducible. There were all up-to-date versions
+# at the time of writing i.e. there are no currently known reasons not to
+# update to newer versions.
+RUN pip install --no-deps \
+    ansicolors==1.0.2 \
+    katcp==0.5.5 \
+    pycuda==2014.1 \
+    pyephem==3.7.5.3 \
+    scikits.fitting==0.5.1 \
+    six==1.9.0
 COPY requirements.txt /tmp/install/requirements.txt
-# numpy has to be done first, because scikits.fitting does not declare its dependency
-# pycuda indirectly depends on a newer version of six than Ubuntu provides
-RUN pip install numpy && pip install -r /tmp/install/requirements.txt
-RUN pip install 'six>=1.8.0' pycuda
+# Keep only dependent git repositories; everything else is installed explicitly
+# by this Dockerfile.
+RUN sed -n '/^git/p' /tmp/install/requirements.txt > /tmp/install/requirements-git.txt && \
+    pip install --no-deps -r /tmp/install/requirements-git.txt
 
 # Install the current package
 COPY . /tmp/install/katsdpingest
