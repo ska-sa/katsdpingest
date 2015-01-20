@@ -307,7 +307,7 @@ class CBFIngest(threading.Thread):
                 init_val=ts_rel)
         tx.send_heap(ig.get_heap())
 
-    def append_visibilities(self, vis, flags, ts):
+    def _append_visibilities(self, vis, flags, ts):
         # resize datasets
         h5_cbf = self.h5_file[cbf_data_dataset]
         h5_flags = self.h5_file[flags_dataset]
@@ -328,7 +328,7 @@ class CBFIngest(threading.Thread):
         self.timestamps.append(ts)
         self.h5_file.flush()
 
-    def initialise(self, ig_cbf):
+    def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
         # set up baseline mask
         self.baseline_mask = range(self.cbf_attr['n_bls'].value)
@@ -381,7 +381,7 @@ class CBFIngest(threading.Thread):
         self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
         self.send_sd_metadata()
 
-    def finish_group(self):
+    def _finish_group(self):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         self.proc.end_sum()
         flags = self.proc.buffer('spec_flags').get(self.command_queue)
@@ -392,7 +392,7 @@ class CBFIngest(threading.Thread):
         ts = self.cbf_attr['sync_time'].value + ts_rel
         self._send_visibilities(self.tx_spectral, self.group_start_ts, vis, flags, ts_rel)
         if self.h5_file is not None:
-            self.append_visibilities(vis, flags, ts)
+            self._append_visibilities(vis, flags, ts)
 
         #### Send signal display information
         self.ig_sd['sd_timestamp'] = int(ts * 100)
@@ -484,13 +484,13 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                self.initialise(ig_cbf)
+                self._initialise(ig_cbf)
 
             if data_ts < self.group_start_ts:
                 self.logger.warning("Received heap from the past, ignoring")
                 continue
             if data_ts >= self.group_start_ts + self.group_interval:
-                self.finish_group()
+                self._finish_group()
                 skip_groups = (data_ts - self.group_start_ts) // self.group_interval
                 self.group_start_ts += skip_groups * self.group_interval
 
@@ -515,7 +515,7 @@ class CBFIngest(threading.Thread):
 
         if len(self.group_ts) > 0:
             # Partial group
-            self.finish_group()
+            self._finish_group()
         self.logger.info("CBF ingest complete at %f" % time.time())
         self.tx_spectral.end()
         self.tx_spectral = None
