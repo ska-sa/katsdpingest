@@ -295,7 +295,7 @@ class CBFIngest(threading.Thread):
             out = np.percentile(data, [0, 100, 25, 75, 50], axis=1)
         return [out.transpose(), flags]
 
-    def send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
+    def _send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
         ig = spead.ItemGroup()
         ig.heap_cnt = heap_cnt
         ig.add_item(name='correlator_data', description="Visibilities",
@@ -390,7 +390,7 @@ class CBFIngest(threading.Thread):
 
         ts_rel = np.mean(self.group_ts) / self.cbf_attr['scale_factor_timestamp'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
-        self.send_visibilities(self.tx_spectral, self.group_start_ts, vis, flags, ts_rel)
+        self._send_visibilities(self.tx_spectral, self.group_start_ts, vis, flags, ts_rel)
         if self.h5_file is not None:
             self.append_visibilities(vis, flags, ts)
 
@@ -517,6 +517,8 @@ class CBFIngest(threading.Thread):
             # Partial group
             self.finish_group()
         self.logger.info("CBF ingest complete at %f" % time.time())
+        self.tx_spectral.end()
+        self.tx_spectral = None
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
