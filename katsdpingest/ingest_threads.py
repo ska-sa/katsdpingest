@@ -481,6 +481,7 @@ class CBFIngest(threading.Thread):
         #### Stop received.
 
         self.logger.info("CBF ingest complete at %f" % time.time())
+        tx_spectral.end()
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
