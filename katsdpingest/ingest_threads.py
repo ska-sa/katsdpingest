@@ -17,6 +17,7 @@ import katsdpingest.sigproc as sp
 import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
 from katsdpsigproc import percentile as perc5
+from katsdpsigproc import maskedsum as msum
 import katsdpdisp.data as sdispdata
 import logging
 import socket
@@ -108,6 +109,7 @@ class CBFIngest(threading.Thread):
 
         self.collectionproducts=[]
         self.timeseriesmaskind=[]
+        self.maskedsum_weightedmask=[]
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -271,7 +273,7 @@ class CBFIngest(threading.Thread):
 
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
-        self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
+        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
 
     def percsort(self,data,flags=None):
         """ data is one timestamps worth of [spectrum,bls] abs data
@@ -394,7 +396,9 @@ class CBFIngest(threading.Thread):
                     self.write_process_log(*description)
 
                 self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
-                self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+                self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+                self.maskedsum_instance=msum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines*2))
+                self.maskedsum_instance.ensure_all_bound()                
                 self.percentile_instances = {}
                 for ip,iproducts in enumerate(self.collectionproducts):
                     plen = len(iproducts)
@@ -449,7 +453,15 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_timestamp'] = int(current_ts * 100)
             self.ig_sd['sd_data'] = vis
             #populate new datastructure to supersede sd_data
-            self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
+
+            if (self.maskedsum_instance == None):
+                self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
+            else:
+                self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
+                self.maskedsum_instance.buffer('src').set(self.command_queue,vis.reshape(vis.shape[0],vis.shape[1]*2)) #flatten complex dimension to real, imag columns (alternating)
+                self.maskedsum_instance()
+                out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+                self.ig_sd['sd_timeseries'] = out.reshape(vis.shape[1],2)
 
             nchans=self.sd_frame.shape[0]
             nperccollections=8
