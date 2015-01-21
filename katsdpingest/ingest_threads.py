@@ -397,7 +397,7 @@ class CBFIngest(threading.Thread):
 
                 self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
                 self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
-                self.maskedsum_instance=msum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines*2))
+                self.maskedsum_instance=msum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
                 self.maskedsum_instance.ensure_all_bound()                
                 self.percentile_instances = {}
                 for ip,iproducts in enumerate(self.collectionproducts):
@@ -458,10 +458,13 @@ class CBFIngest(threading.Thread):
                 self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
             else:
                 self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,vis.reshape(vis.shape[0],vis.shape[1]*2)) #flatten complex dimension to real, imag columns (alternating)
+                self.maskedsum_instance.buffer('src').set(self.command_queue,vis[:,:,0])
                 self.maskedsum_instance()
-                out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
-                self.ig_sd['sd_timeseries'] = out.reshape(vis.shape[1],2)
+                real = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+                self.maskedsum_instance.buffer('src').set(self.command_queue,vis[:,:,1])
+                self.maskedsum_instance()
+                imag = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+                self.ig_sd['sd_timeseries'] = np.c_[real,imag]
 
             nchans=self.sd_frame.shape[0]
             nperccollections=8
