@@ -420,6 +420,8 @@ class CBFIngest(threading.Thread):
          # send out RFI flags with the data
         self.send_sd_data(self.ig_sd.get_heap())
 
+        self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
+            self.group_ts, time.time()))
         #### Prepare for the next group
         self.proc.start_sum()
         self.group_ts = []
