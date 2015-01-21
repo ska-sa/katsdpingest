@@ -437,6 +437,7 @@ class CBFIngest(threading.Thread):
 
             flags = self.proc.buffer('spec_flags').get(self.command_queue)
             vis = self.proc.buffer('spec_vis').get(self.command_queue)
+            origvis=vis
             # Complex values are written to file as an extra dimension of size 2,
             # rather than as structs. The view() method only works on
             # contiguous data. Revisit this later to see if either the HDF5
@@ -458,13 +459,10 @@ class CBFIngest(threading.Thread):
                 self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
             else:
                 self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,vis[:,:,0])
+                self.maskedsum_instance.buffer('src').set(self.command_queue,origvis)
                 self.maskedsum_instance()
-                real = self.maskedsum_instance.buffer('dest').get(self.command_queue)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,vis[:,:,1])
-                self.maskedsum_instance()
-                imag = self.maskedsum_instance.buffer('dest').get(self.command_queue)
-                self.ig_sd['sd_timeseries'] = np.c_[real,imag]
+                out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+                self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
 
             nchans=self.sd_frame.shape[0]
             nperccollections=8
