@@ -16,8 +16,8 @@ import copy
 import katsdpingest.sigproc as sp
 import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
-from katsdpsigproc import percentile as perc5
-from katsdpsigproc import maskedsum as msum
+from katsdpsigproc import percentile
+from katsdpsigproc import maskedsum
 import katsdpdisp.data as sdispdata
 import logging
 import socket
@@ -397,13 +397,13 @@ class CBFIngest(threading.Thread):
 
                 self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
                 self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
-                self.maskedsum_instance=msum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
+                self.maskedsum_instance = maskedsum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
                 self.maskedsum_instance.ensure_all_bound()                
                 self.percentile_instances = {}
                 for ip,iproducts in enumerate(self.collectionproducts):
                     plen = len(iproducts)
                     if (plen not in self.percentile_instances.keys()):
-                        template = perc5.Percentile5Template(self.context, max_columns=plen)
+                        template = percentile.Percentile5Template(self.context, max_columns=plen)
                         self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
                         self.percentile_instances[plen].ensure_all_bound()
             else:
@@ -437,7 +437,7 @@ class CBFIngest(threading.Thread):
 
             flags = self.proc.buffer('spec_flags').get(self.command_queue)
             vis = self.proc.buffer('spec_vis').get(self.command_queue)
-            origvis=vis
+            orig_vis = vis
             # Complex values are written to file as an extra dimension of size 2,
             # rather than as structs. The view() method only works on
             # contiguous data. Revisit this later to see if either the HDF5
@@ -455,11 +455,11 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_data'] = vis
             #populate new datastructure to supersede sd_data
 
-            if (self.maskedsum_instance == None):
+            if (self.maskedsum_instance is None):
                 self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
             else:
                 self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,origvis)
+                self.maskedsum_instance.buffer('src').set(self.command_queue,orig_ovis)
                 self.maskedsum_instance()
                 out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
                 self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
