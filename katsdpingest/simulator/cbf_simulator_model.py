@@ -269,6 +269,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.set_test_el(0)
         self.nd = 0
         self.multiplier = 100
+        self._next_timestamp_adc = 1000000   # Arbitrary value
 
     _target_az = AddLockSettersGetters.add()
     _target_el = AddLockSettersGetters.add()
@@ -462,6 +463,11 @@ class K7CorrelatorModel(TestInterfaceModel):
                 data[:,ib,:]=data[:,ib,:]+(((ib*32131+48272)%1432)/1432.0*20.0 +
                 np.random.randn(n_chans*2).reshape(
                     [n_chans,2])*10.0)
+        # n_accs used to be hard-coded as 8, but is now made consistent with
+        # the integration time. To make the final scaled results invariant,
+        # we scale to compensate. This isn't physically accurate (noise doesn't
+        # scale linearly), but the data are pretty random anyway.
+        data = data * (self._spead_model.acc_n_get() / 8.0)
         data = data.astype(np.int32) + self.nd
         return data
 
@@ -481,9 +487,8 @@ class K7CorrelatorModel(TestInterfaceModel):
         with self._data_lock:
             data_ig = self._spead_model.data_ig
             tx = self._spead_model.tx
-            data_ig['timestamp'] = int(
-                (time.time() - self._spead_model.sync_time) *
-                self.config['spead_timestamp_scale_factor'])
+            data_ig['timestamp'] = self._next_timestamp_adc
+            self._next_timestamp_adc += self._spead_model.acc_n_get() * self.config['n_chans'] * 2
             data_ig['xeng_raw'] = self.data
             tx.send_heap(data_ig.get_heap())
 
@@ -492,8 +497,8 @@ class K7CorrelatorModel(TestInterfaceModel):
 
     def set_dump_period(self, dump_period):
         with self._data_lock:
-            self._dump_period = dump_period
             self._spead_model.set_acc_time(dump_period)
+            self._dump_period = self._spead_model.get_acc_time()
 
     def get_dump_period(self):
         return self._dump_period

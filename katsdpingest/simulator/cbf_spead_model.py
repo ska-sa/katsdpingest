@@ -119,7 +119,7 @@ class DBE7SpeadData(object):
         tx=self.tx
         ig=spead.ItemGroup()
 
-        ig.add_item(name="adc_clk",id=0x1007,
+        ig.add_item(name="adc_sample_rate",id=0x1007,
             description="Clock rate of ADC (samples per second).",
             shape=[],fmt=spead.mkfmt(('u',64)),
             init_val=self.config['adc_clk'])
@@ -386,23 +386,18 @@ class DBE7SpeadData(object):
         return self.config._get_ant_mapping_list()[input_n]
 
     def acc_n_get(self):
-        """get dummy value of number of accumulations"""
-        return 8
+        """get number of accumulations per dump"""
+        return self._n_accs
 
     def acc_time_get(self):
-        ## Two lines below is how the DBE really does it. We will hack it
-        # n_accs = self.acc_n_get()
-        # return float(self.config['n_chans'] * n_accs) / self.config['bandwidth']
-        ##
-        return self._acc_time
+        n_accs = self.acc_n_get()
+        return float(self.config['n_chans'] * n_accs) / self.config['bandwidth']
 
     def set_acc_time(self, acc_time):
-        """Set the accumulation time in seconds
-
-        This accumulation time is used to short-circuit the 'real' DBE
-        calculation using the number of integrations, etc.
+        """Set the accumulation time in seconds. The actual integration time
+        will be quantised by setting the number of accumulations.
         """
-        self._acc_time = acc_time
+        self._n_accs = int(round(acc_time * self.config['bandwidth'] / self.config['n_chans']))
 
     def send_stop(self):
         try:
