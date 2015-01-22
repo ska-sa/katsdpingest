@@ -386,7 +386,7 @@ class DBE7SpeadData(object):
         return self.config._get_ant_mapping_list()[input_n]
 
     def acc_n_get(self):
-        """get dummy value of number of accumulations"""
+        """get number of accumulations per dump"""
         return self._n_accs
 
     def acc_time_get(self):
