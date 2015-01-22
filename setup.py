@@ -11,6 +11,7 @@ setup (
     include_package_data = True,
     scripts = [
         "scripts/ingest.py",
+        "scripts/ingest_autotune.py",
         "scripts/cbf_data_simulator.py",
         "scripts/cam2spead.py",
         "scripts/sim_observe.py",

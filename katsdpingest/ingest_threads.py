@@ -79,7 +79,7 @@ class CAMIngest(threading.Thread):
 
 class CBFIngest(threading.Thread):
     @classmethod
-    def _create_proc_template(cls, context):
+    def create_proc_template(cls, context):
         flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
         # TODO: these parameters should probably come from somewhere else
         # (particularly cont_factor).
