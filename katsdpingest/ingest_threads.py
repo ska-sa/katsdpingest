@@ -16,7 +16,8 @@ import copy
 import katsdpingest.sigproc as sp
 import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
-from katsdpsigproc import percentile as perc5
+from katsdpsigproc import percentile
+from katsdpsigproc import maskedsum
 import katsdpdisp.data as sdispdata
 import logging
 import socket
@@ -93,7 +94,7 @@ class CBFIngest(threading.Thread):
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
             continuum_spead_host, continuum_spead_port, continuum_spead_rate,
-            time_average_dumps,
+            output_int_time,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -105,7 +106,7 @@ class CBFIngest(threading.Thread):
         self.continuum_spead_port = continuum_spead_port
         self.continuum_spead_host = continuum_spead_host
         self.continuum_spead_rate = continuum_spead_rate
-        self.time_average_dumps = time_average_dumps
+        self.output_int_time = output_int_time
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -114,6 +115,7 @@ class CBFIngest(threading.Thread):
 
         self.collectionproducts=[]
         self.timeseriesmaskind=[]
+        self.maskedsum_weightedmask=[]
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -277,7 +279,7 @@ class CBFIngest(threading.Thread):
 
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
-        self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
+        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
 
     def percsort(self,data,flags=None):
         """ data is one timestamps worth of [spectrum,bls] abs data
@@ -344,7 +346,7 @@ class CBFIngest(threading.Thread):
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
 
-         # we need to create the raw and timestamp datasets.
+         # we need to create the raw datasets.
         data_item = ig_cbf.get_item('xeng_raw')
         new_shape = list(data_item.shape)
         new_shape[-2] = baselines
@@ -353,6 +355,9 @@ class CBFIngest(threading.Thread):
         self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
         # Configure time averaging
+        self.time_average_dumps = max(1, int(round(self.output_int_time / self.cbf_attr['int_time'].value)))
+        self.output_int_time = self.time_average_dumps * self.cbf_attr['int_time'].value
+        self.logger.info("Averaging {0} input dumps per output dump".format(self.time_average_dumps))
         self.group_interval = 2 * channels * n_accs * self.time_average_dumps
         self.group_start_ts = ig_cbf['timestamp']
         self.group_ts = []
@@ -372,12 +377,14 @@ class CBFIngest(threading.Thread):
             self.write_process_log(*description)
 
         self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
-        self.timeseriesmaskind,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+        self.maskedsum_instance = maskedsum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
+        self.maskedsum_instance.ensure_all_bound()
         self.percentile_instances = {}
         for ip,iproducts in enumerate(self.collectionproducts):
             plen = len(iproducts)
             if (plen not in self.percentile_instances.keys()):
-                template = perc5.Percentile5Template(self.context, max_columns=plen)
+                template = percentile.Percentile5Template(self.context, max_columns=plen)
                 self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
                 self.percentile_instances[plen].ensure_all_bound()
 
@@ -403,10 +410,19 @@ class CBFIngest(threading.Thread):
             self._append_visibilities(spec_vis, spec_flags, ts)
 
         #### Send signal display information
+        spec_vis_float = spec_vis.view(np.float32).reshape(list(spec_vis.shape) + [2])
         self.ig_sd['sd_timestamp'] = int(ts * 100)
-        self.ig_sd['sd_data'] = spec_vis
+        self.ig_sd['sd_data'] = spec_vis_float
         #populate new datastructure to supersede sd_data
-        self.ig_sd['sd_timeseries'] = np.mean(spec_vis[self.timeseriesmaskind,:],axis=0)
+
+        if (self.maskedsum_instance is None):
+            self.ig_sd['sd_timeseries'] = np.mean(spec_vis_float[self.timeseriesmaskind,:],axis=0)
+        else:
+            self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
+            self.maskedsum_instance.buffer('src').set(self.command_queue,spec_vis)
+            self.maskedsum_instance()
+            out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+            self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
 
         nchans=self.sd_frame.shape[0]
         nperccollections=8
@@ -428,6 +444,8 @@ class CBFIngest(threading.Thread):
          # send out RFI flags with the data
         self.send_sd_data(self.ig_sd.get_heap())
 
+        self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
+            self.group_ts, time.time()))
         #### Prepare for the next group
         self.proc.start_sum()
         self.group_ts = []

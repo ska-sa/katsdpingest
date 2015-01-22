@@ -44,7 +44,7 @@ def parse_opts(argv):
     parser.add_option('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%default]')
     parser.add_option('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%default]')
     parser.add_option('--continuum-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%default]')
-    parser.add_option('--time-average-dumps', default=1, type=int, help='number of input dumps to average into each output dump. [default=%default]')
+    parser.add_option('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
@@ -183,7 +183,7 @@ class IngestDeviceServer(DeviceServer):
                 opts.cbf_spead_host, opts.cbf_spead_port,
                 opts.spectral_spead_host, opts.spectral_spead_port, opts.spectral_rate,
                 opts.continuum_spead_host, opts.continuum_spead_port, opts.continuum_rate,
-                opts.time_average_dumps,
+                opts.output_int_time,
                 self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
