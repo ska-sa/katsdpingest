@@ -92,7 +92,7 @@ class CBFIngest(threading.Thread):
 
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
-            time_average_dumps,
+            output_int_time,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -101,7 +101,7 @@ class CBFIngest(threading.Thread):
         self.spectral_spead_port = spectral_spead_port
         self.spectral_spead_host = spectral_spead_host
         self.spectral_spead_rate = spectral_spead_rate
-        self.time_average_dumps = time_average_dumps
+        self.output_int_time = output_int_time
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -349,6 +349,9 @@ class CBFIngest(threading.Thread):
         self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
         # Configure time averaging
+        self.time_average_dumps = max(1, int(round(self.output_int_time / self.cbf_attr['int_time'].value)))
+        self.output_int_time = self.time_average_dumps * self.cbf_attr['int_time'].value
+        self.logger.info("Averaging {0} input dumps per output dump".format(self.time_average_dumps))
         self.group_interval = 2 * channels * n_accs * self.time_average_dumps
         self.group_start_ts = ig_cbf['timestamp']
         self.group_ts = []
