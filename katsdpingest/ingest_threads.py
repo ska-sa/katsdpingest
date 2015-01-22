@@ -79,7 +79,7 @@ class CAMIngest(threading.Thread):
 
 class CBFIngest(threading.Thread):
     @classmethod
-    def create_proc_template(cls, context):
+    def _create_proc_template(cls, context):
         flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
         # TODO: these parameters should probably come from somewhere else
         # (particularly cont_factor).
@@ -459,7 +459,7 @@ class CBFIngest(threading.Thread):
                 self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
             else:
                 self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,orig_ovis)
+                self.maskedsum_instance.buffer('src').set(self.command_queue,orig_vis)
                 self.maskedsum_instance()
                 out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
                 self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
