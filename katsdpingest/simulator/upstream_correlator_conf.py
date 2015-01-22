@@ -280,8 +280,6 @@ class CorrConf:
             raise RuntimeError("adc_type not understood. expecting katadc or iadc.")
 
         self.config['feng_clk'] = self.config['adc_clk'] / self.config['adc_demux']
-        self.config['mcnt_scale_factor'] = self.config['feng_clk']
-        self.config['pcnt_scale_factor'] = self.config['bandwidth'] / self.config['xeng_acc_len']
 
         #get the receiver section:
         self.config['receiver'] = dict()
@@ -301,10 +299,7 @@ class CorrConf:
 
         spead_flavour=self.get_line('receiver','spead_flavour')
         self.config['spead_flavour'] = tuple([int(i) for i in spead_flavour.split(LISTDELIMIT)])
-        if self.config['spead_flavour'][1]<(48-numpy.log2(self.config['n_chans'])):
-            self.config['spead_timestamp_scale_factor']=(self.config['pcnt_scale_factor']/self.config['n_chans'])
-        else:
-            self.config['spead_timestamp_scale_factor']=(int(self.config['pcnt_scale_factor'])<<int(numpy.log2(self.config['n_chans']) - (48-self.config['spead_flavour'][1])))/float(self.config['n_chans'])
+        self.config['spead_timestamp_scale_factor'] = self.config['adc_clk']
 
         #equalisation section:
         self.read_str('equalisation','eq_default')
