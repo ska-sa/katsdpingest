@@ -340,7 +340,7 @@ class CBFIngest(threading.Thread):
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
 
-         # we need to create the raw and timestamp datasets.
+         # we need to create the raw datasets.
         data_item = ig_cbf.get_item('xeng_raw')
         new_shape = list(data_item.shape)
         new_shape[-2] = baselines
