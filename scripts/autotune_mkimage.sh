@@ -1,6 +1,6 @@
 #!/bin/bash
 # Create a derived image from the katsdpingest base image that contains
-# autotuning results. The ska_sa/katsdpsigproc image must be available.
+# autotuning results. The ska_sa/katsdpingest image must be available.
 set -e
 
 if [ $# -ne 1 ]; then
