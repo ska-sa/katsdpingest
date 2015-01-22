@@ -93,6 +93,7 @@ class CBFIngest(threading.Thread):
 
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
+            output_int_time,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -101,6 +102,7 @@ class CBFIngest(threading.Thread):
         self.spectral_spead_port = spectral_spead_port
         self.spectral_spead_host = spectral_spead_host
         self.spectral_spead_rate = spectral_spead_rate
+        self.output_int_time = output_int_time
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -307,6 +309,139 @@ class CBFIngest(threading.Thread):
                 init_val=ts_rel)
         tx.send_heap(ig.get_heap())
 
+    def _append_visibilities(self, vis, flags, ts):
+        # resize datasets
+        h5_cbf = self.h5_file[cbf_data_dataset]
+        h5_flags = self.h5_file[flags_dataset]
+        idx = h5_cbf.shape[0]
+        h5_cbf.resize(idx+1, axis=0)
+        h5_flags.resize(idx+1, axis=0)
+
+        # Complex values are written to file as an extra dimension of size 2,
+        # rather than as structs. The view() method only works on
+        # contiguous data. Revisit this later to see if either the HDF5
+        # file format can be changed to store complex data (rather than
+        # having a real/imag axis for reals), or one can use
+        # np.lib.stride_tricks to work around the limitation on view().
+        vis = np.ascontiguousarray(vis)
+        vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
+        h5_cbf[idx] = vis
+        h5_flags[idx] = flags
+        self.timestamps.append(ts)
+        self.h5_file.flush()
+
+    def _initialise(self, ig_cbf):
+        """Initialise variables on reception of the first usable dump."""
+        # set up baseline mask
+        self.baseline_mask = range(self.cbf_attr['n_bls'].value)
+         # default mask is to include all known baselines
+        if self._script_ants is not None:
+         # we need to calculate a baseline_mask to match the specified script_ants
+            self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+        baselines = len(self.baseline_mask)
+        channels = self.cbf_attr['n_chans'].value
+        n_accs = self.cbf_attr['n_accs'].value
+
+         # we need to create the raw datasets.
+        data_item = ig_cbf.get_item('xeng_raw')
+        new_shape = list(data_item.shape)
+        new_shape[-2] = baselines
+        self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
+        self.h5_file.create_dataset(cbf_data_dataset, [0] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
+        self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
+
+        # Configure time averaging
+        self.time_average_dumps = max(1, int(round(self.output_int_time / self.cbf_attr['int_time'].value)))
+        self.output_int_time = self.time_average_dumps * self.cbf_attr['int_time'].value
+        self.logger.info("Averaging {0} input dumps per output dump".format(self.time_average_dumps))
+        self.group_interval = 2 * channels * n_accs * self.time_average_dumps
+        self.group_start_ts = ig_cbf['timestamp']
+        self.group_ts = []
+
+        # configure the signal processing blocks
+        self.proc = self.proc_template.instantiate(
+                self.command_queue, channels, (0, channels), baselines)
+        self.proc.set_scale(1.0 / n_accs)
+        self.proc.ensure_all_bound()
+        permutation, self.cbf_attr['bls_ordering'].value = \
+                self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
+        self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
+        self.proc.start_sum()
+
+        # TODO: configure van_vleck once implemented
+        for description in self.proc.descriptions():
+            self.write_process_log(*description)
+
+        self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
+        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
+        self.maskedsum_instance = maskedsum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
+        self.maskedsum_instance.ensure_all_bound()
+        self.percentile_instances = {}
+        for ip,iproducts in enumerate(self.collectionproducts):
+            plen = len(iproducts)
+            if (plen not in self.percentile_instances.keys()):
+                template = percentile.Percentile5Template(self.context, max_columns=plen)
+                self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
+                self.percentile_instances[plen].ensure_all_bound()
+
+        # initialise the signal display data frame
+        self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
+        self.send_sd_metadata()
+
+    def _finish_group(self):
+        """Finalise averaging of a group of input dumps and emit an output dump"""
+        self.proc.end_sum()
+        flags = self.proc.buffer('spec_flags').get(self.command_queue)
+        vis = self.proc.buffer('spec_vis').get(self.command_queue)
+        vis = np.ascontiguousarray(vis)
+
+        ts_rel = np.mean(self.group_ts) / self.cbf_attr['scale_factor_timestamp'].value
+        ts = self.cbf_attr['sync_time'].value + ts_rel
+        self._send_visibilities(self.tx_spectral, self.group_start_ts, vis, flags, ts_rel)
+        if self.h5_file is not None:
+            self._append_visibilities(vis, flags, ts)
+
+        #### Send signal display information
+        vis_float = vis.view(np.float32).reshape(list(vis.shape) + [2])
+        self.ig_sd['sd_timestamp'] = int(ts * 100)
+        self.ig_sd['sd_data'] = vis_float
+        #populate new datastructure to supersede sd_data
+
+        if (self.maskedsum_instance is None):
+            self.ig_sd['sd_timeseries'] = np.mean(vis_float[self.timeseriesmaskind,:],axis=0)
+        else:
+            self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
+            self.maskedsum_instance.buffer('src').set(self.command_queue,vis)
+            self.maskedsum_instance()
+            out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
+            self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
+
+        nchans=self.sd_frame.shape[0]
+        nperccollections=8
+        nperclevels=5
+        npercproducts=nperccollections*nperclevels
+        percdata=np.tile(np.float32(np.nan), [nchans, npercproducts])
+        percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
+        for ip,iproducts in enumerate(self.collectionproducts):
+            if (len(iproducts)>0):
+                pdata,pflags=self.percsort(np.abs(vis[:,iproducts]),None if (flags is None) else flags[:,iproducts])
+                percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
+                percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
+
+        self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
+        self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
+
+         # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
+        self.ig_sd['sd_flags'] = flags
+         # send out RFI flags with the data
+        self.send_sd_data(self.ig_sd.get_heap())
+
+        self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
+            self.group_ts, time.time()))
+        #### Prepare for the next group
+        self.proc.start_sum()
+        self.group_ts = []
+
     def run(self):
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.cbf_spead_host, self.cbf_spead_port))
@@ -325,7 +460,7 @@ class CBFIngest(threading.Thread):
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
         rx = spead.TransportUDPrx(self.cbf_spead_port, pkt_count=1024, buffer_size=51200000)
-        tx_spectral = spead.Transmitter(spead.TransportUDPtx(
+        self.tx_spectral = spead.Transmitter(spead.TransportUDPtx(
             self.spectral_spead_host, self.spectral_spead_port, self.spectral_spead_rate))
         ig_cbf = spead.ItemGroup()
         idx = 0
@@ -337,7 +472,6 @@ class CBFIngest(threading.Thread):
         current_ant_activities = {}
         ant_activities_since = {}
          # track the current DBE target and antenna activities via sensor updates
-        sd_slots = None
         sd_timestamp = None
 
         for heap in spead.iterheaps(rx):
@@ -355,7 +489,9 @@ class CBFIngest(threading.Thread):
             if not ig_cbf._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
             data_ts = ig_cbf['timestamp']
             data_item = ig_cbf.get_item('xeng_raw')
-            if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue
+            if not data_item._changed:
+                self.logger.debug("Xeng_raw is unchanged")
+                continue
              # we have new data...
 
              # check to see if our CBF model is valid
@@ -366,135 +502,41 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                # set up baseline mask
-                self.baseline_mask = range(self.cbf_attr['n_bls'].value)
-                 # default mask is to include all known baselines
-                if self._script_ants is not None:
-                 # we need to calculate a baseline_mask to match the specified script_ants
-                    self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+                self._initialise(ig_cbf)
 
-                 # we need to create the raw and timestamp datasets.
-                new_shape = list(data_item.shape)
-                new_shape[-2] = len(self.baseline_mask)
-                self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
-                self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
-                self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
-
-                # configure the signal processing blocks
-                channels = self.cbf_attr['n_chans'].value
-                baselines = len(self.baseline_mask)
-                self.proc = self.proc_template.instantiate(
-                        self.command_queue, channels, (0, channels), baselines)
-                self.proc.set_scale(1.0 / self.cbf_attr['n_accs'].value)
-                self.proc.ensure_all_bound()
-                permutation, self.cbf_attr['bls_ordering'].value = \
-                        self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
-                self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
-
-                # TODO: configure van_vleck once implemented
-                for description in self.proc.descriptions():
-                    self.write_process_log(*description)
-
-                self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
-                self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
-                self.maskedsum_instance = maskedsum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
-                self.maskedsum_instance.ensure_all_bound()                
-                self.percentile_instances = {}
-                for ip,iproducts in enumerate(self.collectionproducts):
-                    plen = len(iproducts)
-                    if (plen not in self.percentile_instances.keys()):
-                        template = percentile.Percentile5Template(self.context, max_columns=plen)
-                        self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
-                        self.percentile_instances[plen].ensure_all_bound()
-            else:
-                 # resize datasets
-                self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
-                self.h5_file[flags_dataset].resize(idx+1, axis=0)
-
-            if self.sd_frame is None:
-                self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
-                 # initialise the signal display data frame
-
-            if sd_slots is None:
-                self.sd_frame.dtype = np.dtype(np.float32)
-                 # make sure we have the right dtype for the sd data
-                sd_slots = np.zeros(self.cbf_attr['n_chans'].value/data_item.shape[0])
-                self.send_sd_metadata()
+            if data_ts < self.group_start_ts:
+                self.logger.warning("Received heap from the past, ignoring")
+                continue
+            if data_ts >= self.group_start_ts + self.group_interval:
+                self._finish_group()
+                skip_groups = (data_ts - self.group_start_ts) // self.group_interval
+                self.group_start_ts += skip_groups * self.group_interval
 
             ##### Generate timestamps
             current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
             current_ts = self.cbf_attr['sync_time'].value + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
-            self.timestamps.append(current_ts)
 
             ##### Perform data processing
-
             masked_data = data_item.get_value()[...,self.baseline_mask,:]
             self.proc.buffer('vis_in').set(self.command_queue, masked_data)
-            self.proc.start_sum()
             self.proc()
-            self.proc.end_sum()
+            self.group_ts.append(data_ts)
 
-            flags = self.proc.buffer('spec_flags').get(self.command_queue)
-            vis = self.proc.buffer('spec_vis').get(self.command_queue)
-            orig_vis = vis
-            # Complex values are written to file as an extra dimension of size 2,
-            # rather than as structs. The view() method only works on
-            # contiguous data. Revisit this later to see if either the HDF5
-            # file format can be changed to store complex data (rather than
-            # having a real/imag axis for reals), or one can use
-            # np.lib.stride_tricks to work around the limitation on view().
-            vis = np.ascontiguousarray(vis)
-            self._send_visibilities(tx_spectral, heap.heap_cnt, vis, flags, current_ts_rel)
-            vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
-            self.h5_file[flags_dataset][idx] = flags
-            self.h5_file[cbf_data_dataset][idx] = vis
-
-            #### Send signal display information
-            self.ig_sd['sd_timestamp'] = int(current_ts * 100)
-            self.ig_sd['sd_data'] = vis
-            #populate new datastructure to supersede sd_data
-
-            if (self.maskedsum_instance is None):
-                self.ig_sd['sd_timeseries'] = np.mean(vis[self.timeseriesmaskind,:],axis=0)
-            else:
-                self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-                self.maskedsum_instance.buffer('src').set(self.command_queue,orig_vis)
-                self.maskedsum_instance()
-                out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
-                self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
-
-            nchans=self.sd_frame.shape[0]
-            nperccollections=8
-            nperclevels=5
-            npercproducts=nperccollections*nperclevels
-            percdata=np.tile(np.float32(np.nan), [nchans, npercproducts])
-            percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
-            for ip,iproducts in enumerate(self.collectionproducts):
-                if (len(iproducts)>0):
-                    pdata,pflags=self.percsort(np.abs(vis.astype(np.float32).view(np.complex64)[:,iproducts,0]),None if (flags is None) else flags[:,iproducts])
-                    percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
-                    percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
-
-            self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
-            self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
-
-             # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
-            self.ig_sd['sd_flags'] = flags
-             # send out RFI flags with the data
-            self.send_sd_data(self.ig_sd.get_heap())
-
-            #### Done with writing this frame
+            #### Done with reading this frame
             idx += 1
-            if self.h5_file is not None: self.h5_file.flush()
             self.pkt_sensor.set_value(idx)
             tt = time.time() - st
             self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
 
         #### Stop received.
 
+        if len(self.group_ts) > 0:
+            # Partial group
+            self._finish_group()
         self.logger.info("CBF ingest complete at %f" % time.time())
-        tx_spectral.end()
+        self.tx_spectral.end()
+        self.tx_spectral = None
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
