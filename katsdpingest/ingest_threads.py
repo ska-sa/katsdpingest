@@ -93,6 +93,7 @@ class CBFIngest(threading.Thread):
 
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
+            continuum_spead_host, continuum_spead_port, continuum_spead_rate,
             output_int_time,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
@@ -102,6 +103,9 @@ class CBFIngest(threading.Thread):
         self.spectral_spead_port = spectral_spead_port
         self.spectral_spead_host = spectral_spead_host
         self.spectral_spead_rate = spectral_spead_rate
+        self.continuum_spead_port = continuum_spead_port
+        self.continuum_spead_host = continuum_spead_host
+        self.continuum_spead_rate = continuum_spead_rate
         self.output_int_time = output_int_time
         self.h5_file = h5_file
         self.model = model
@@ -391,27 +395,31 @@ class CBFIngest(threading.Thread):
     def _finish_group(self):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         self.proc.end_sum()
-        flags = self.proc.buffer('spec_flags').get(self.command_queue)
-        vis = self.proc.buffer('spec_vis').get(self.command_queue)
-        vis = np.ascontiguousarray(vis)
+        spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
+        spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
+        spec_vis = np.ascontiguousarray(spec_vis)
+        cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
+        cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
+        cont_vis = np.ascontiguousarray(cont_vis)
 
         ts_rel = np.mean(self.group_ts) / self.cbf_attr['scale_factor_timestamp'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
-        self._send_visibilities(self.tx_spectral, self.group_start_ts, vis, flags, ts_rel)
+        self._send_visibilities(self.tx_spectral, self.group_start_ts, spec_vis, spec_flags, ts_rel)
+        self._send_visibilities(self.tx_continuum, self.group_start_ts, cont_vis, cont_flags, ts_rel)
         if self.h5_file is not None:
-            self._append_visibilities(vis, flags, ts)
+            self._append_visibilities(spec_vis, spec_flags, ts)
 
         #### Send signal display information
-        vis_float = vis.view(np.float32).reshape(list(vis.shape) + [2])
+        spec_vis_float = spec_vis.view(np.float32).reshape(list(spec_vis.shape) + [2])
         self.ig_sd['sd_timestamp'] = int(ts * 100)
-        self.ig_sd['sd_data'] = vis_float
+        self.ig_sd['sd_data'] = spec_vis_float
         #populate new datastructure to supersede sd_data
 
         if (self.maskedsum_instance is None):
-            self.ig_sd['sd_timeseries'] = np.mean(vis_float[self.timeseriesmaskind,:],axis=0)
+            self.ig_sd['sd_timeseries'] = np.mean(spec_vis_float[self.timeseriesmaskind,:],axis=0)
         else:
             self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-            self.maskedsum_instance.buffer('src').set(self.command_queue,vis)
+            self.maskedsum_instance.buffer('src').set(self.command_queue,spec_vis)
             self.maskedsum_instance()
             out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
             self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
@@ -424,7 +432,7 @@ class CBFIngest(threading.Thread):
         percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
         for ip,iproducts in enumerate(self.collectionproducts):
             if (len(iproducts)>0):
-                pdata,pflags=self.percsort(np.abs(vis[:,iproducts]),None if (flags is None) else flags[:,iproducts])
+                pdata,pflags=self.percsort(np.abs(spec_vis[:,iproducts]),None if (spec_flags is None) else spec_flags[:,iproducts])
                 percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
                 percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
 
@@ -432,7 +440,7 @@ class CBFIngest(threading.Thread):
         self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
 
          # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
-        self.ig_sd['sd_flags'] = flags
+        self.ig_sd['sd_flags'] = spec_flags
          # send out RFI flags with the data
         self.send_sd_data(self.ig_sd.get_heap())
 
@@ -462,6 +470,8 @@ class CBFIngest(threading.Thread):
         rx = spead.TransportUDPrx(self.cbf_spead_port, pkt_count=1024, buffer_size=51200000)
         self.tx_spectral = spead.Transmitter(spead.TransportUDPtx(
             self.spectral_spead_host, self.spectral_spead_port, self.spectral_spead_rate))
+        self.tx_continuum = spead.Transmitter(spead.TransportUDPtx(
+            self.continuum_spead_host, self.continuum_spead_port, self.continuum_spead_rate))
         ig_cbf = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
@@ -537,6 +547,8 @@ class CBFIngest(threading.Thread):
         self.logger.info("CBF ingest complete at %f" % time.time())
         self.tx_spectral.end()
         self.tx_spectral = None
+        self.tx_continuum.end()
+        self.tx_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
