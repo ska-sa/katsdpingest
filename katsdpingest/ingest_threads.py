@@ -79,7 +79,7 @@ class CAMIngest(threading.Thread):
 
 class CBFIngest(threading.Thread):
     @classmethod
-    def _create_proc_template(cls, context):
+    def create_proc_template(cls, context):
         flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
         # TODO: these parameters should probably come from somewhere else
         # (particularly cont_factor).
@@ -137,7 +137,7 @@ class CBFIngest(threading.Thread):
         #### Initialise processing blocks used
         self.context = accel.create_some_context(interactive=False)
         self.command_queue = self.context.create_command_queue()
-        self.proc_template = self._create_proc_template(self.context)
+        self.proc_template = self.create_proc_template(self.context)
         self.proc = None    # Instantiation of the template delayed until data shape is known
         self.flags_description = zip(self.proc_template.flag_names, self.proc_template.flag_descriptions)
          # an array describing the flags produced by the rfi flagger
