@@ -14,7 +14,7 @@ from .antsol import stefcal
 from .__init__ import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
-from katsdpsigproc import accel, tune, fill, transpose
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -87,6 +87,47 @@ class ProcBlock(object):
             svn_rev = int(revision[1:])
 
         return (process, self._extracted_arguments, svn_rev)
+
+class ZeroTemplate(object):
+    """Zeros a set of visibilities, weights and flags
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    """
+    def __init__(self, context):
+        self.context = context
+        self.zero_vis = fill.FillTemplate(
+                context, np.complex64, 'float2')
+        self.zero_weights = fill.FillTemplate(
+                context, np.float32, 'float')
+        self.zero_flags = fill.FillTemplate(
+                context, np.uint8, 'unsigned char')
+
+    def instantiate(self, command_queue, channels, baselines):
+        return Zero(self, command_queue, channels, baselines)
+
+class Zero(accel.OperationSequence):
+    def __init__(self, template, command_queue, channels, baselines):
+        self.zero_vis = template.zero_vis.instantiate(
+                command_queue, (channels, baselines))
+        self.zero_weights = template.zero_weights.instantiate(
+                command_queue, (channels, baselines))
+        self.zero_flags = template.zero_flags.instantiate(
+                command_queue, (channels, baselines))
+        self.zero_flags.set_value(0xff)
+        operations = [
+                ('zero_vis', self.zero_vis),
+                ('zero_weights', self.zero_weights),
+                ('zero_flags', self.zero_flags)
+        ]
+        compounds = {
+                'vis': ['zero_vis:data'],
+                'weights': ['zero_weights:data'],
+                'flags': ['zero_flags:data']
+        }
+        super(Zero, self).__init__(command_queue, operations, compounds)
 
 class PrepareTemplate(object):
     """Handles first-stage data processing on a compute device:
@@ -581,6 +622,13 @@ class IngestTemplate(object):
         Template for RFI flagging. It must have transposed flag outputs.
     cont_factor : int
         Number of spectral channels per continuum channel
+    sd_cont_factor : int
+        Number of spectral channels to average together for signal displays
+    percentile_sizes : list of int
+        Set of number of baselines per percentile calculation. These do not need to exactly
+        match the actual sizes of the ranges passed to the instance. The smaller template
+        that is big enough will be used, so an exact match is best for good performance,
+        and there must be one that is at least big enough.
     """
 
     flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
@@ -593,24 +641,21 @@ class IngestTemplate(object):
             'RFI predicted from space based pollutants',
             'reserved - bit 6','reserved - bit 7']
 
-    def __init__(self, context, flagger, cont_factor):
+    def __init__(self, context, flagger, cont_factor, sd_cont_factor, percentile_sizes):
         self.context = context
         self.prepare = PrepareTemplate(context)
-        # TODO: create a zero-fill template that handles all these cases
-        self.zero_vis_accum = fill.FillTemplate(
-                context, np.complex64, 'float2')
-        self.zero_weights_accum = fill.FillTemplate(
-                context, np.float32, 'float')
-        self.zero_flags_accum = fill.FillTemplate(
-                context, np.uint8, 'unsigned char')
+        self.zero = ZeroTemplate(context)
         self.transpose_vis = transpose.TransposeTemplate(
                 context, np.complex64, 'float2')
         self.flagger = flagger
-        self.accum = AccumTemplate(context, 1)
+        self.accum = AccumTemplate(context, 2)
         self.postproc = PostprocTemplate(context, cont_factor)
+        self.sd_postproc = PostprocTemplate(context, sd_cont_factor)
+        self.timeseries = maskedsum.MaskedSumTemplate(context)
+        self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
 
-    def instantiate(self, command_queue, channels, channel_range, baselines):
-        return IngestOperation(self, command_queue, channels, channel_range, baselines)
+    def instantiate(self, command_queue, channels, channel_range, baselines, percentile_ranges):
+        return IngestOperation(self, command_queue, channels, channel_range, baselines, percentile_ranges)
 
 class IngestOperation(accel.OperationSequence):
     """Concrete instance of :class:`IngestTemplate`.
@@ -621,6 +666,8 @@ class IngestOperation(accel.OperationSequence):
         Input visibilities from the correlator
     **permutation** : baselines, uint16
         Permutation mapping original to new baseline index
+    **timeseries_weights** : kept-channels, float32
+        Per-channel weights for timeseries averaging
 
     .. rubric:: Output slots
 
@@ -636,23 +683,40 @@ class IngestOperation(accel.OperationSequence):
         Continuum weights
     **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
         Continuum flags
+    **sd_spec_vis**, **sd_spec_weights**, **sd_spec_flags**, **sd_cont_vis**, **sd_cont_weights**, **sd_cont_flags**
+        Signal display versions of the above
+    **timeseries** : kept-channels, complex64
+        Weights sum over channels of **sd_spec_vis**
+    **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
+        Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
 
     .. rubric:: Scratch slots
 
     These are subject to change and so are not documented at this time.
+
+    Parameters
+    ----------
+    template : :class:`IngestTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    channel_range : tuple of two ints
+        Half-open interval of channels that will be written to **weights**
+    baselines : int
+        Number of baselines
+    percentile_ranges : list of 2-tuples of ints
+        Column range for each set of baselines (post-permutation) for which
+        percentiles will be computed.
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines):
+    def __init__(self, template, command_queue, channels, channel_range, baselines, percentile_ranges):
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
                 command_queue, channels, channel_range, baselines)
-        self.zero_spec_vis = template.zero_vis_accum.instantiate(
-                command_queue, (kept_channels, baselines))
-        self.zero_spec_weights = template.zero_weights_accum.instantiate(
-                command_queue, (kept_channels, baselines))
-        self.zero_spec_flags = template.zero_flags_accum.instantiate(
-                command_queue, (kept_channels, baselines))
-        self.zero_spec_flags.set_value(0xff)
+        self.zero_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
+        self.zero_sd_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
         self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
@@ -662,19 +726,40 @@ class IngestOperation(accel.OperationSequence):
                 command_queue, channels, channel_range, baselines)
         self.postproc = template.postproc.instantiate(
                 command_queue, kept_channels, baselines)
+        self.sd_postproc = template.sd_postproc.instantiate(
+                command_queue, kept_channels, baselines)
+        self.timeseries = template.timeseries.instantiate(
+                command_queue, (kept_channels, baselines))
+        self.percentiles = []
+        for prange in percentile_ranges:
+            size = prange[1] - prange[0]
+            ptemplate = None
+            # Find the smallest match
+            for t in template.percentiles:
+                if t.max_columns >= size:
+                    if ptemplate is None or t.max_columns < ptemplate.max_columns:
+                        ptemplate = t
+            if ptemplate is None:
+                raise ValueError('Baseline range {0} is too large for any template'.format(prange))
+            self.percentiles.append(
+                ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
 
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
         operations = [
                 ('prepare', self.prepare),
-                ('zero_spec_vis', self.zero_spec_vis),
-                ('zero_spec_weights', self.zero_spec_weights),
-                ('zero_spec_flags', self.zero_spec_flags),
+                ('zero_spec', self.zero_spec),
+                ('zero_sd_spec', self.zero_sd_spec),
                 ('transpose_vis', self.transpose_vis),
                 ('flagger', self.flagger),
                 ('accum', self.accum),
-                ('postproc', self.postproc)
+                ('postproc', self.postproc),
+                ('sd_postproc', self.sd_postproc),
+                ('timeseries', self.timeseries)
         ]
+        for i, op in enumerate(self.percentiles):
+            operations.append(('percentile{0}'.format(i), op))
+
         # TODO: eliminate transposition of flags, which aren't further used
         assert 'flags_t' in self.flagger.slots
         compounds = {
@@ -686,13 +771,25 @@ class IngestOperation(accel.OperationSequence):
                 'deviations':   ['flagger:deviations'],
                 'noise':        ['flagger:noise'],
                 'flags':        ['flagger:flags_t', 'accum:flags_in'],
-                'spec_vis':     ['accum:vis_out0', 'zero_spec_vis:data', 'postproc:vis'],
-                'spec_weights': ['accum:weights_out0', 'zero_spec_weights:data', 'postproc:weights'],
-                'spec_flags':   ['accum:flags_out0', 'zero_spec_flags:data', 'postproc:flags'],
+                'spec_vis':     ['accum:vis_out0', 'zero_spec:vis', 'postproc:vis'],
+                'spec_weights': ['accum:weights_out0', 'zero_spec:weights', 'postproc:weights'],
+                'spec_flags':   ['accum:flags_out0', 'zero_spec:flags', 'postproc:flags'],
                 'cont_vis':     ['postproc:cont_vis'],
                 'cont_weights': ['postproc:cont_weights'],
-                'cont_flags':   ['postproc:cont_flags']
+                'cont_flags':   ['postproc:cont_flags'],
+                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'sd_postproc:vis', 'timeseries:src'],
+                'sd_spec_weights': ['accum:weights_out1', 'zero_sd_spec:weights', 'sd_postproc:weights'],
+                'sd_spec_flags':['accum:flags_out1', 'zero_sd_spec:flags', 'sd_postproc:flags'],
+                'sd_cont_vis':  ['sd_postproc:cont_vis'],
+                'sd_cont_weights': ['sd_postproc:cont_weights'],
+                'sd_cont_flags':['sd_postproc:cont_flags'],
+                'timeseries_weights': ['timeseries:mask'],
+                'timeseries':   ['timeseries:dest']
         }
+        for i in range(len(self.percentiles)):
+            name = 'percentile{0}'.format(i)
+            compounds['sd_spec_vis'].append(name + ':src')
+            compounds[name] = [name + ':dest']
 
         aliases = {
                 'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
@@ -715,15 +812,29 @@ class IngestOperation(accel.OperationSequence):
         self.bind(**kwargs)
         self.ensure_all_bound()
 
-        self.zero_spec_vis()
-        self.zero_spec_weights()
-        self.zero_spec_flags()
+        self.zero_spec()
 
-    def end_sum(self, **kwargs):
+    def end_sum(self):
         """Perform postprocessing for an output dump. This only does
         on-device processing; it does not transfer the results to the host.
         """
         self.postproc()
+
+    def start_sd_sum(self, **kwargs):
+        """Reset accumulation buffers for a new signal display dump"""
+        self.bind(**kwargs)
+        self.ensure_all_bound()
+
+        self.zero_sd_spec()
+
+    def end_sd_sum(self):
+        """Perform postprocessing for a signal display dump. This only does
+        on-device processing; it does not transfer the results to the host.
+        """
+        self.sd_postproc()
+        self.timeseries()
+        for p in self.percentiles:
+            p()
 
     def descriptions(self):
         """Generate descriptions of all the components, for the process log.

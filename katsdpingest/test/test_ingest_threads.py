@@ -10,7 +10,8 @@ class TestCBFIngest(unittest.TestCase):
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
         template = ingest_threads.CBFIngest.create_proc_template(context)
-        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544)
+        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544,
+                [(0, 4), (500, 512)])
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([

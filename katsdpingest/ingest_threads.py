@@ -8,6 +8,7 @@
 # Details on these are provided in the class documentation
 
 import numpy as np
+import numpy.lib.stride_tricks
 import threading
 import spead64_40
 import spead64_48 as spead
@@ -76,6 +77,88 @@ class CAMIngest(threading.Thread):
 
         self.logger.info("CAM ingest thread complete at %f" % time.time())
 
+class _TimeAverage(object):
+    """Manages a collection of dumps that are averaged together at a specific
+    cadence. Note that all timestamps in this case are in raw form i.e., ticks
+    of the ADC clock since the sync time.
+
+    This object never sees dump contents directly, only timestamps. When a
+    timestamp is added that is not part of the current group, :func:`flush`
+    is called, which must be overloaded or set to a callback function.
+
+    Parameters
+    ----------
+    cbf_attr : dict
+        CBF attributes (the critical attributes must be present)
+    int_time : float
+        requested integration time, which will be rounded to a multiple of
+        the CBF integration time
+
+    Attributes
+    ----------
+    interval : int
+        length of each group, in timestamp units
+    ratio : int
+        number of CBF dumps per output dump
+    int_time : float
+        quantised integration time
+    _start_ts : int or NoneType
+        Timestamp of first dump in the current group, or `None` if no dumps have been seen
+    _ts : list of int
+        All timestamps in the current group. Empty only if no dumps have ever been seen
+    """
+    def __init__(self, cbf_attr, int_time):
+        self.ratio = max(1, int(round(int_time / cbf_attr['int_time'].value)))
+        self.int_time = self.ratio * cbf_attr['int_time'].value
+        self.interval = 2 * cbf_attr['n_chans'].value * cbf_attr['n_accs'].value * self.ratio
+        self._start_ts = None
+        self._ts = []
+
+    def add_timestamp(self, timestamp):
+        """Record that a dump with a given timestamp has arrived and is about to
+        be processed. This may call :func:`flush`."""
+
+        if self._start_ts is None:
+            # First time: special case
+            self._start_ts = timestamp
+
+        if timestamp >= self._start_ts + self.interval:
+            self.flush(self._ts)
+            skip_groups = (timestamp - self._start_ts) // self.interval
+            self._ts = []
+            self._start_ts += skip_groups * self.interval
+        self._ts.append(timestamp)
+
+    def flush(self, timestamps):
+        raise NotImplementedError
+
+    def finish(self):
+        """Flush if not empty, and reset to initial state"""
+        if self._ts:
+            self.flush(self._ts)
+        self._start_ts = None
+        self._ts = []
+
+def _split_array(x, dtype):
+    """Return a view of x which has one extra dimension. Each element is x is
+    treated as some number of elements of type `dtype`, whose size must divide
+    into the element size of `x`."""
+    in_dtype = x.dtype
+    out_dtype = np.dtype(dtype)
+    if in_dtype.hasobject or out_dtype.hasobject:
+        raise ValueError('dtypes containing objects are not supported')
+    if in_dtype.itemsize % out_dtype.itemsize != 0:
+        raise ValueError('item size does not evenly divide')
+
+    interface = dict(x.__array_interface__)
+    if interface.get('mask', None) is not None:
+        raise ValueError('masked arrays are not supported')
+    interface['shape'] = x.shape + (in_dtype.itemsize // out_dtype.itemsize,)
+    if interface['strides'] is not None:
+        interface['strides'] = x.strides + (out_dtype.itemsize,)
+    interface['typestr'] = out_dtype.str
+    interface['descr'] = out_dtype.descr
+    return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 class CBFIngest(threading.Thread):
     @classmethod
@@ -89,12 +172,13 @@ class CBFIngest(threading.Thread):
                 context, n_sigma=11.0, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        return sp.IngestTemplate(context, flagger_template, cont_factor=16)
+        return sp.IngestTemplate(context, flagger_template,
+                cont_factor=16, sd_cont_factor=128, percentile_sizes=[8, 12])
 
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
             continuum_spead_host, continuum_spead_port, continuum_spead_rate,
-            output_int_time,
+            output_int_time, sd_int_time,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -107,14 +191,13 @@ class CBFIngest(threading.Thread):
         self.continuum_spead_host = continuum_spead_host
         self.continuum_spead_rate = continuum_spead_rate
         self.output_int_time = output_int_time
+        self.sd_int_time = sd_int_time
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
 
-        self.collectionproducts=[]
-        self.timeseriesmaskind=[]
         self.maskedsum_weightedmask=[]
 
         self._process_log_idx = 0
@@ -279,7 +362,7 @@ class CBFIngest(threading.Thread):
 
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
-        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])
+        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])[1]
 
     def percsort(self,data,flags=None):
         """ data is one timestamps worth of [spectrum,bls] abs data
@@ -322,13 +405,10 @@ class CBFIngest(threading.Thread):
         h5_flags.resize(idx+1, axis=0)
 
         # Complex values are written to file as an extra dimension of size 2,
-        # rather than as structs. The view() method only works on
-        # contiguous data. Revisit this later to see if either the HDF5
+        # rather than as structs. Revisit this later to see if either the HDF5
         # file format can be changed to store complex data (rather than
-        # having a real/imag axis for reals), or one can use
-        # np.lib.stride_tricks to work around the limitation on view().
-        vis = np.ascontiguousarray(vis)
-        vis = vis.view(np.float32).reshape(list(vis.shape) + [2])
+        # having a real/imag axis for reals).
+        vis = _split_array(vis, np.float32)
         h5_cbf[idx] = vis
         h5_flags[idx] = flags
         self.timestamps.append(ts)
@@ -342,6 +422,8 @@ class CBFIngest(threading.Thread):
         if self._script_ants is not None:
          # we need to calculate a baseline_mask to match the specified script_ants
             self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+        permutation, self.cbf_attr['bls_ordering'].value = \
+                self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
         baselines = len(self.baseline_mask)
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
@@ -355,100 +437,104 @@ class CBFIngest(threading.Thread):
         self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
         # Configure time averaging
-        self.time_average_dumps = max(1, int(round(self.output_int_time / self.cbf_attr['int_time'].value)))
-        self.output_int_time = self.time_average_dumps * self.cbf_attr['int_time'].value
-        self.logger.info("Averaging {0} input dumps per output dump".format(self.time_average_dumps))
-        self.group_interval = 2 * channels * n_accs * self.time_average_dumps
-        self.group_start_ts = ig_cbf['timestamp']
-        self.group_ts = []
+        self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
+        self._output_avg.flush = self._flush_output
+        self.logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
+
+        self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
+        self._sd_avg.flush = self._flush_sd
+        self.logger.info("Averaging {0} input dumps per signal display dump".format(self._sd_avg.ratio))
 
         # configure the signal processing blocks
+        collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)[0]
+        percentile_ranges = []
+        for p in collection_products:
+            start = p[0]
+            end = p[-1] + 1
+            if not np.array_equal(np.arange(start, end), p):
+                raise ValueError("percentile baselines are not contiguous: {}".format(p))
+            percentile_ranges.append((start, end))
+        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
+
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, (0, channels), baselines)
+                self.command_queue, channels, (0, channels), baselines, percentile_ranges)
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
-        permutation, self.cbf_attr['bls_ordering'].value = \
-                self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
         self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
         self.proc.start_sum()
+        self.proc.start_sd_sum()
 
         # TODO: configure van_vleck once implemented
         for description in self.proc.descriptions():
             self.write_process_log(*description)
 
-        self.collectionproducts,ignorepercrunavg=sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)
-        self.timeseriesmaskind,self.maskedsum_weightedmask,ignoreflag0,ignoreflag1=sdispdata.parse_timeseries_mask('',channels)
-        self.maskedsum_instance = maskedsum.MaskedSumTemplate(self.context).instantiate(self.command_queue, (channels,baselines))
-        self.maskedsum_instance.ensure_all_bound()
-        self.percentile_instances = {}
-        for ip,iproducts in enumerate(self.collectionproducts):
-            plen = len(iproducts)
-            if (plen not in self.percentile_instances.keys()):
-                template = percentile.Percentile5Template(self.context, max_columns=plen)
-                self.percentile_instances[plen] = template.instantiate(self.command_queue, (channels,plen))
-                self.percentile_instances[plen].ensure_all_bound()
-
         # initialise the signal display data frame
         self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
         self.send_sd_metadata()
 
-    def _finish_group(self):
+    def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         self.proc.end_sum()
         spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
         spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
-        spec_vis = np.ascontiguousarray(spec_vis)
         cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
         cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
-        cont_vis = np.ascontiguousarray(cont_vis)
 
-        ts_rel = np.mean(self.group_ts) / self.cbf_attr['scale_factor_timestamp'].value
+        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
-        self._send_visibilities(self.tx_spectral, self.group_start_ts, spec_vis, spec_flags, ts_rel)
-        self._send_visibilities(self.tx_continuum, self.group_start_ts, cont_vis, cont_flags, ts_rel)
+        self._send_visibilities(self.tx_spectral, timestamps[0], spec_vis, spec_flags, ts_rel)
+        self._send_visibilities(self.tx_continuum, timestamps[0], cont_vis, cont_flags, ts_rel)
         if self.h5_file is not None:
             self._append_visibilities(spec_vis, spec_flags, ts)
 
-        #### Send signal display information
-        spec_vis_float = spec_vis.view(np.float32).reshape(list(spec_vis.shape) + [2])
-        self.ig_sd['sd_timestamp'] = int(ts * 100)
-        self.ig_sd['sd_data'] = spec_vis_float
-        #populate new datastructure to supersede sd_data
-
-        if (self.maskedsum_instance is None):
-            self.ig_sd['sd_timeseries'] = np.mean(spec_vis_float[self.timeseriesmaskind,:],axis=0)
-        else:
-            self.maskedsum_instance.buffer('mask').set(self.command_queue,self.maskedsum_weightedmask)
-            self.maskedsum_instance.buffer('src').set(self.command_queue,spec_vis)
-            self.maskedsum_instance()
-            out = self.maskedsum_instance.buffer('dest').get(self.command_queue)
-            self.ig_sd['sd_timeseries'] = np.c_[out.real,out.imag]
-
-        nchans=self.sd_frame.shape[0]
-        nperccollections=8
-        nperclevels=5
-        npercproducts=nperccollections*nperclevels
-        percdata=np.tile(np.float32(np.nan), [nchans, npercproducts])
-        percflags=np.zeros([nchans,npercproducts],dtype=np.uint8)
-        for ip,iproducts in enumerate(self.collectionproducts):
-            if (len(iproducts)>0):
-                pdata,pflags=self.percsort(np.abs(spec_vis[:,iproducts]),None if (spec_flags is None) else spec_flags[:,iproducts])
-                percdata[:,ip*nperclevels:(ip+1)*nperclevels]=pdata
-                percflags[:,ip*nperclevels:(ip+1)*nperclevels]=pflags
-
-        self.ig_sd['sd_percspectrum'] = percdata.astype(np.float32)
-        self.ig_sd['sd_percspectrumflags'] = percflags.astype(np.uint8)
-
-         # send out a copy of the data we are writing to disk. In the future this will need to be rate limited to some extent
-        self.ig_sd['sd_flags'] = spec_flags
-         # send out RFI flags with the data
-        self.send_sd_data(self.ig_sd.get_heap())
-
         self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
-            self.group_ts, time.time()))
+            timestamps, time.time()))
         #### Prepare for the next group
         self.proc.start_sum()
-        self.group_ts = []
+
+    def _flush_sd(self, timestamps):
+        """Finalise averaging of a group of dumps for signal display, and send
+        signal display data to the signal display server"""
+
+        # TODO: this currently gets done every time because it wouldn't be thread-safe
+        # to poke the value directly in response to the katcp command. Once the code
+        # is redesigned to be single-threaded, push the value directly
+        self.proc.buffer('timeseries_weights').set(self.command_queue, self.maskedsum_weightedmask)
+
+        self.proc.end_sd_sum()
+        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
+        ts = self.cbf_attr['sync_time'].value + ts_rel
+        spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
+        spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
+        timeseries = self.proc.buffer('timeseries').get(self.command_queue)
+        percentiles = []
+        for i in range(len(self.proc.percentiles)):
+            percentiles.append(self.proc.buffer('percentile{0}'.format(i)).get(self.command_queue))
+
+        # TODO: move this to the GPU, and possibly just send a flag per channel
+        # instead of duplicating the information multiple times.
+        flags = []
+        nperclevels = 5
+        for p in self.proc.percentiles:
+            start, end = p.column_range
+            perc_flags = np.any(spec_flags[:, start:end], axis=1).astype(np.uint8) #all percentiles of same collection have same flags
+            for i in range(nperclevels):
+                flags.append(perc_flags)
+
+        #populate new datastructure to supersede sd_data etc
+        self.ig_sd['sd_timestamp'] = int(ts * 100)
+        self.ig_sd['sd_data'] = _split_array(spec_vis, np.float32)
+        self.ig_sd['sd_flags'] = spec_flags
+        self.ig_sd['sd_timeseries'] = _split_array(timeseries, np.float32)
+        self.ig_sd['sd_percspectrum'] = np.vstack(percentiles).transpose()
+        self.ig_sd['sd_percspectrumflags'] = np.vstack(flags).transpose()
+
+         # In the future this will need to be rate limited to some extent
+        self.send_sd_data(self.ig_sd.get_heap())
+        self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
+            timestamps, time.time()))
+        #### Prepare for the next group
+        self.proc.start_sd_sum()
 
     def run(self):
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
@@ -475,6 +561,7 @@ class CBFIngest(threading.Thread):
         ig_cbf = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
+        prev_ts = 0
         datasets = {}
         datasets_index = {}
         current_dbe_target = ''
@@ -502,6 +589,10 @@ class CBFIngest(threading.Thread):
             if not data_item._changed:
                 self.logger.debug("Xeng_raw is unchanged")
                 continue
+            if data_ts <= prev_ts:
+                self.logger.warning("Data timestamps have gone backwards, dropping heap")
+                continue
+            prev_ts = data_ts
              # we have new data...
 
              # check to see if our CBF model is valid
@@ -514,13 +605,8 @@ class CBFIngest(threading.Thread):
             if idx == 0:
                 self._initialise(ig_cbf)
 
-            if data_ts < self.group_start_ts:
-                self.logger.warning("Received heap from the past, ignoring")
-                continue
-            if data_ts >= self.group_start_ts + self.group_interval:
-                self._finish_group()
-                skip_groups = (data_ts - self.group_start_ts) // self.group_interval
-                self.group_start_ts += skip_groups * self.group_interval
+            self._output_avg.add_timestamp(data_ts)
+            self._sd_avg.add_timestamp(data_ts)
 
             ##### Generate timestamps
             current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
@@ -531,7 +617,6 @@ class CBFIngest(threading.Thread):
             masked_data = data_item.get_value()[...,self.baseline_mask,:]
             self.proc.buffer('vis_in').set(self.command_queue, masked_data)
             self.proc()
-            self.group_ts.append(data_ts)
 
             #### Done with reading this frame
             idx += 1
@@ -541,9 +626,8 @@ class CBFIngest(threading.Thread):
 
         #### Stop received.
 
-        if len(self.group_ts) > 0:
-            # Partial group
-            self._finish_group()
+        self._output_avg.finish()
+        self._sd_avg.finish()
         self.logger.info("CBF ingest complete at %f" % time.time())
         self.tx_spectral.end()
         self.tx_spectral = None
