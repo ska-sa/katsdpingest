@@ -1,6 +1,6 @@
+# coding: utf-8
 """Test for the sigproc module."""
 
-import unittest
 import mock
 import numpy as np
 from katsdpingest import sigproc
@@ -8,6 +8,7 @@ from katsdpsigproc import accel, tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
+from nose.tools import *
 
 def reduce_flags(flags, axis):
     """Reduction by logical AND along an axis. This is necessary because
@@ -24,7 +25,7 @@ def reduceat_flags(flags, indices, axis):
     return np.bitwise_not(
             np.bitwise_or.reduceat(np.bitwise_not(flags), indices, axis))
 
-class TestPrepare(unittest.TestCase):
+class TestPrepare(object):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
     @device_test
@@ -50,8 +51,8 @@ class TestPrepare(unittest.TestCase):
         weights = prepare.buffer('weights').get(queue)
         vis_out = prepare.buffer('vis_out').get(queue)
 
-        self.assertEqual((baselines, channels), vis_out.shape)
-        self.assertEqual((baselines, keep_channels), weights.shape)
+        assert_equal((baselines, channels), vis_out.shape)
+        assert_equal((baselines, keep_channels), weights.shape)
         expected_vis = np.zeros_like(vis_out)
         expected_weights = np.zeros_like(weights)
         for i in range(channels):
@@ -70,7 +71,7 @@ class TestPrepare(unittest.TestCase):
     def testAutotune(self, context, queue):
         sigproc.PrepareTemplate(context)
 
-class TestAccum(unittest.TestCase):
+class TestAccum(object):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
     @device_test
@@ -156,17 +157,17 @@ class TestAccum(unittest.TestCase):
     def testAutotune(self, context, queue):
         sigproc.AccumTemplate(context, 2)
 
-class TestPostproc(unittest.TestCase):
+class TestPostproc(object):
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
 
     def test_bad_cont_factor(self):
         """Test with a continuum factor that does not divide into the channel count"""
         template = mock.sentinel.template
         template.cont_factor = 8
-        self.assertRaises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8)
+        assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8)
 
     @device_test
-    def testPostproc(self, context, queue):
+    def test_postproc(self, context, queue):
         """Test with random data against a CPU implementation"""
         channels = 1024
         baselines = 512
@@ -209,15 +210,15 @@ class TestPostproc(unittest.TestCase):
 
     @device_test
     @force_autotune
-    def testAutotune(self, context, queue):
+    def test_autotune(self, context, queue):
         sigproc.PostprocTemplate(context, 16)
 
-class TestIngestOperation(unittest.TestCase):
+class TestIngestOperation(object):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
 
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)
-    def testDescriptions(self, *args):
+    def test_descriptions(self, *args):
         channels = 128
         channel_range = (16, 96)
         baselines = 192
@@ -232,27 +233,42 @@ class TestIngestOperation(unittest.TestCase):
                 context, n_sigma=11.0, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, 16)
-        fn = template.instantiate(command_queue, channels, channel_range, baselines)
+        template = sigproc.IngestTemplate(context, flagger_template, 8, 16, [8, 12])
+        fn = template.instantiate(command_queue, channels, channel_range, baselines,
+                [(0, 8), (10, 22)])
 
         expected = [
-            ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 'unknown'),
-            ('ingest:prepare', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, scale=1.0', 'unknown'),
-            ('ingest:zero_spec_vis', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 'unknown'),
-            ('ingest:zero_spec_weights', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 'unknown'),
-            ('ingest:zero_spec_flags', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 'unknown'),
-            ('ingest:transpose_vis', 'class=katsdpsigproc.transpose.Transpose, ctype=float2, dtype=complex64, shape=(192, 128)', 'unknown'),
-            ('ingest:flagger', 'class=katsdpsigproc.rfi.device.FlaggerDevice', 'unknown'),
-            ('ingest:flagger:background', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.BackgroundMedianFilterDevice, width=13', 'unknown'),
-            ('ingest:flagger:transpose_deviations', 'class=katsdpsigproc.transpose.Transpose, ctype=float, dtype=float32, shape=(128, 192)', 'unknown'),
-            ('ingest:flagger:noise_est', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.NoiseEstMADTDevice, max_channels=10240', 'unknown'),
-            ('ingest:flagger:threshold', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.ThresholdSimpleDevice, flag_value=16, n_sigma=11.0, transposed=True', 'unknown'), ('ingest:flagger:transpose_flags', 'class=katsdpsigproc.transpose.Transpose, ctype=unsigned char, dtype=uint8, shape=(192, 128)', 'unknown'), ('ingest:accum', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Accum, outputs=1', 'unknown'), ('ingest:postproc', 'baselines=192, channels=80, class=katsdpingest.sigproc.Postproc, cont_factor=16', 'unknown')
+            ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 0),
+            ('ingest:prepare', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, scale=1.0', 0),
+            ('ingest:zero_spec', 'class=katsdpingest.sigproc.Zero', 0),
+            ('ingest:zero_spec:zero_vis', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 0),
+            ('ingest:zero_spec:zero_weights', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 0),
+            ('ingest:zero_spec:zero_flags', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 0),
+            ('ingest:zero_sd_spec', 'class=katsdpingest.sigproc.Zero', 0),
+            ('ingest:zero_sd_spec:zero_vis', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 0),
+            ('ingest:zero_sd_spec:zero_weights', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 0),
+            ('ingest:zero_sd_spec:zero_flags', 'class=katsdpsigproc.fill.Fill, ctype=unsigned char, dtype=uint8, shape=(80, 192), value=255', 0),
+            ('ingest:transpose_vis', 'class=katsdpsigproc.transpose.Transpose, ctype=float2, dtype=complex64, shape=(192, 128)', 0),
+            ('ingest:flagger', 'class=katsdpsigproc.rfi.device.FlaggerDevice', 0),
+            ('ingest:flagger:background', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.BackgroundMedianFilterDevice, width=13', 0),
+            ('ingest:flagger:transpose_deviations', 'class=katsdpsigproc.transpose.Transpose, ctype=float, dtype=float32, shape=(128, 192)', 0),
+            ('ingest:flagger:noise_est', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.NoiseEstMADTDevice, max_channels=10240', 0),
+            ('ingest:flagger:threshold', 'baselines=192, channels=128, class=katsdpsigproc.rfi.device.ThresholdSimpleDevice, flag_value=16, n_sigma=11.0, transposed=True', 0),
+            ('ingest:flagger:transpose_flags', 'class=katsdpsigproc.transpose.Transpose, ctype=unsigned char, dtype=uint8, shape=(192, 128)', 0),
+            ('ingest:accum', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Accum, outputs=2', 0),
+            ('ingest:postproc', 'baselines=192, channels=80, class=katsdpingest.sigproc.Postproc, cont_factor=8', 0),
+            ('ingest:sd_postproc', 'baselines=192, channels=80, class=katsdpingest.sigproc.Postproc, cont_factor=16', 0),
+            ('ingest:timeseries', 'class=katsdpsigproc.maskedsum.MaskedSum, shape=(80, 192)', 0),
+            ('ingest:percentile0', 'class=katsdpsigproc.percentile.Percentile5, column_range=(0, 8), is_amplitude=False, max_columns=8, shape=(80, 192)', 0),
+            ('ingest:percentile1', 'class=katsdpsigproc.percentile.Percentile5, column_range=(10, 22), is_amplitude=False, max_columns=12, shape=(80, 192)', 0)
         ]
-        self.assertEqual(expected, fn.descriptions())
+        assert_equal(expected, fn.descriptions())
 
-    def runHost(self, vis, scale, permutation, cont_factor, channel_range, n_sigma):
-        """Simple CPU implementation. All inputs and outputs are
-        channel-major.
+    def run_host_basic(self, vis, scale, permutation, cont_factor, channel_range, n_sigma):
+        """Simple CPU implementation. All inputs and outputs are channel-major.
+        There is no support for separate cadences for main and signal display
+        products; instead, call the function twice with different time slices.
+        No signal display calculations are performed.
 
         Parameters
         ----------
@@ -264,13 +280,17 @@ class TestIngestOperation(unittest.TestCase):
             Maps input baseline numbers to output numbers
         cont_factor : int
             Number of spectral channels per continuum channel
+        channel_range: 2-tuple of int
+            Range of channels to retain in the output
         n_sigma : float
             Significance level for flagger
 
         Returns
         -------
-        tuple
-            (spec vis, spec weights, spec flags, cont vis, cont weights, cont flags)
+        dictionary, with the following keys:
+
+            - spec_vis, spec_weights, spec_flags
+            - cont_vis, cont_weights, cont_flags
         """
         background = rfi_host.BackgroundMedianFilterHost(width=13)
         noise_est = rfi_host.NoiseEstMADHost()
@@ -314,17 +334,87 @@ class TestIngestOperation(unittest.TestCase):
         weights *= (flags == 0)
         cont_vis /= cont_weights
         cont_weights *= (cont_flags == 0)
-        return (vis, weights, flags, cont_vis, cont_weights, cont_flags)
+        return {
+            'spec_vis': vis,
+            'spec_weights': weights,
+            'spec_flags': flags,
+            'cont_vis': cont_vis,
+            'cont_weights': cont_weights,
+            'cont_flags': cont_flags
+        }
+
+    def run_host(self, vis, n_vis, n_sd_vis, scale, permutation,
+            cont_factor, sd_cont_factor, channel_range,
+            n_sigma, timeseries_weights, percentile_ranges):
+        """Simple CPU implementation. All inputs and outputs are channel-major.
+        There is no support for separate cadences for main and signal display
+        products; instead, call the function twice with different time slices.
+
+        Parameters
+        ----------
+        vis : array-like
+            Input dump visibilities (first axis being time)
+        n_vis : int
+            number of dumps to use for main calculations
+        n_sd_vis : int
+            number of dumps to use for signal display calculations
+        scale : float
+            Scale factor for integral visibilities
+        permutation : sequence
+            Maps input baseline numbers to output numbers
+        cont_factor : int
+            Number of spectral channels per continuum channel
+        sd_cont_factor : int
+            Number of spectral channels per continuum channel, for signal displays
+        channel_range: 2-tuple of int
+            Range of channels to retain in the output
+        n_sigma : float
+            Significance level for flagger
+        timeseries_weights : 1D array of float
+            Weights for masked timeseries averaging
+        percentile_ranges : list of 2-tuples of int
+            Range of baselines (after permutation) for each percentile product
+
+        Returns
+        -------
+        dictionary, with the following keys:
+
+            - spec_vis, spec_weights, spec_flags
+            - cont_vis, cont_weights, cont_flags
+            - sd_spec_vis, sd_spec_weights, sd_spec_flags
+            - sd_cont_vis, sd_cont_weights, sd_cont_flags
+            - timeseries
+            - percentileN (where N is a non-negative integer)
+        """
+        expected = self.run_host_basic(vis[:n_vis], scale, permutation, cont_factor, channel_range, n_sigma)
+        sd_expected = self.run_host_basic(vis[:n_sd_vis], scale, permutation, sd_cont_factor, channel_range, n_sigma)
+        for (name, value) in sd_expected.iteritems():
+            expected['sd_' + name] = value
+
+        # Time series
+        expected['timeseries'] = np.sum(expected['sd_spec_vis'] * timeseries_weights[..., np.newaxis], axis=0)
+
+        # Percentiles
+        percentiles = []
+        for i, (start, end) in enumerate(percentile_ranges):
+            expected['percentile{0}'.format(i)] = np.percentile(
+                    np.abs(expected['sd_spec_vis'][..., start:end]), [0, 100, 25, 75, 50], axis=1, interpolation='lower')
+
+        return expected
 
     @device_test
-    def testRandom(self, context, queue):
+    def test_random(self, context, queue):
         """Test with random data against a CPU implementation"""
         channels = 128
         channel_range = (16, 96)
+        kept_channels = channel_range[1] - channel_range[0]
         baselines = 192
         cont_factor = 4
+        sd_cont_factor = 8
         scale = 1.0 / 64
         dumps = 4
+        sd_dumps = 3   # Must currently be <= dumps, but could easily be fixed
+        percentile_ranges = [(0, 10), (32, 40), (180, 192)]
         # Use a very low significance so that there will still be about 50%
         # flags after averaging
         n_sigma = -1.0
@@ -332,6 +422,8 @@ class TestIngestOperation(unittest.TestCase):
         rs = np.random.RandomState(seed=1)
         vis_in = rs.random_integers(-1000, 1000, (dumps, channels, baselines, 2)).astype(np.int32)
         permutation = rs.permutation(baselines).astype(np.uint16)
+        timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
+        timeseries_weights /= np.sum(timeseries_weights)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
                 context, width=13)
@@ -341,31 +433,42 @@ class TestIngestOperation(unittest.TestCase):
                 context, n_sigma=n_sigma, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, cont_factor)
-        fn = template.instantiate(queue, channels, channel_range, baselines)
+        template = sigproc.IngestTemplate(context, flagger_template, cont_factor, sd_cont_factor, [8, 12])
+        fn = template.instantiate(queue, channels, channel_range, baselines, percentile_ranges)
         fn.ensure_all_bound()
         fn.set_scale(scale)
         fn.buffer('permutation').set(queue, permutation)
+        fn.buffer('timeseries_weights').set(queue, timeseries_weights)
 
+        data_keys = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
+        sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
+                'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
+                'timeseries']
+        for i in range(len(percentile_ranges)):
+            sd_keys.append('percentile{0}'.format(i))
+
+        actual = {}
         fn.start_sum()
-        for i in range(dumps):
+        fn.start_sd_sum()
+        for i in range(max(dumps, sd_dumps)):
             fn.buffer('vis_in').set(queue, vis_in[i])
             fn()
-        fn.end_sum()
+            if i + 1 == dumps:
+                fn.end_sum()
+                for name in data_keys:
+                    actual[name] = fn.buffer(name).get(queue)
+            if i + 1 == sd_dumps:
+                fn.end_sd_sum()
+                for name in sd_keys:
+                    actual[name] = fn.buffer(name).get(queue)
 
-        expected = self.runHost(vis_in, scale, permutation, cont_factor, channel_range, n_sigma)
-        (expected_spec_vis, expected_spec_weights, expected_spec_flags,
-                expected_cont_vis, expected_cont_weights, expected_cont_flags) = expected
-        spec_vis = fn.buffer('spec_vis').get(queue)
-        spec_weights = fn.buffer('spec_weights').get(queue)
-        spec_flags = fn.buffer('spec_flags').get(queue)
-        cont_vis = fn.buffer('cont_vis').get(queue)
-        cont_weights = fn.buffer('cont_weights').get(queue)
-        cont_flags = fn.buffer('cont_flags').get(queue)
+        expected = self.run_host(vis_in, dumps, sd_dumps, scale, permutation,
+                cont_factor, sd_cont_factor, channel_range, n_sigma,
+                timeseries_weights, percentile_ranges)
 
-        np.testing.assert_allclose(expected_spec_vis, spec_vis, rtol=1e-5)
-        np.testing.assert_allclose(expected_spec_weights, spec_weights, rtol=1e-5)
-        np.testing.assert_equal(expected_spec_flags, spec_flags)
-        np.testing.assert_allclose(expected_cont_vis, cont_vis, rtol=1e-5)
-        np.testing.assert_allclose(expected_cont_weights, cont_weights, rtol=1e-5)
-        np.testing.assert_equal(expected_cont_flags, cont_flags)
+        for name in data_keys + sd_keys:
+            err_msg = '{0} is not equal'.format(name)
+            if expected[name].dtype in (np.dtype(np.float32), np.dtype(np.complex64)):
+                np.testing.assert_allclose(expected[name], actual[name], rtol=1e-5, err_msg=err_msg)
+            else:
+                np.testing.assert_equal(expected[name], actual[name], err_msg=err_msg)
