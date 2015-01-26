@@ -626,8 +626,9 @@ class CBFIngest(threading.Thread):
 
         #### Stop received.
 
-        self._output_avg.finish()
-        self._sd_avg.finish()
+        if self._output_avg is not None:  # Could be None if no heaps arrived
+            self._output_avg.finish()
+            self._sd_avg.finish()
         self.logger.info("CBF ingest complete at %f" % time.time())
         self.tx_spectral.end()
         self.tx_spectral = None
