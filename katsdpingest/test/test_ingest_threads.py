@@ -58,6 +58,19 @@ class TestTimeAverage(object):
         assert_is(None, avg._start_ts)
         assert_equal([], avg._ts)
 
+def test_split_array():
+    """Test _split_array"""
+    c64 = (np.random.uniform(size=(4, 7)) + 1j * np.random.uniform(size=(4,7))).astype(np.complex64)
+    # Create a view which is discontiguous
+    src = c64[:3, :5].T
+    actual = ingest_threads._split_array(src, np.float32)
+    expected = np.zeros((5, 3, 2), np.float32)
+    for i in range(5):
+        for j in range(3):
+            expected[i, j, 0] = src[i, j].real
+            expected[i, j, 1] = src[i, j].imag
+    np.testing.assert_equal(actual, expected)
+
 class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
