@@ -364,26 +364,6 @@ class CBFIngest(threading.Thread):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])[1]
 
-    def percsort(self,data,flags=None):
-        """ data is one timestamps worth of [spectrum,bls] abs data
-            sorts this collection of data into 0% 100% 25% 75% 50%
-            return shape is [nchannels,5]
-        """
-        nchannels,nsignals = data.shape
-        if (flags is None):
-            flags = np.zeros([nchannels, 5], dtype=np.uint8)
-        else:
-            anyflags = np.any(flags,axis=1)#all percentiles of same collection have same flags
-            flags = np.c_[anyflags, anyflags, anyflags, anyflags, anyflags].astype(np.uint8)
-        if (nsignals in self.percentile_instances.keys()):
-            perc = self.percentile_instances[nsignals]
-            perc.buffer('src').set(self.command_queue,data)
-            perc()
-            out = perc.buffer('dest').get(self.command_queue)
-        else:
-            out = np.percentile(data, [0, 100, 25, 75, 50], axis=1)
-        return [out.transpose(), flags]
-
     def _send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
         ig = spead.ItemGroup()
         ig.heap_cnt = heap_cnt
