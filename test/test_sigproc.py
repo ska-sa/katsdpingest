@@ -17,7 +17,7 @@ def create_flagger(context, args):
     background = rfi.BackgroundMedianFilterDeviceTemplate(
             context, args.width)
     noise_est = rfi.NoiseEstMADTDeviceTemplate(
-            context, args.channels)
+            context, args.channels + args.border)
     threshold = rfi.ThresholdSumDeviceTemplate(
             context, args.sigmas)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
