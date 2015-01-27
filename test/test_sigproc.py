@@ -17,26 +17,52 @@ def create_flagger(context, args):
     background = rfi.BackgroundMedianFilterDeviceTemplate(
             context, args.width)
     noise_est = rfi.NoiseEstMADTDeviceTemplate(
-            context, 10240)
+            context, args.channels + args.border)
     threshold = rfi.ThresholdSumDeviceTemplate(
             context, args.sigmas)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
 
+def create_percentile_ranges(antennas):
+    n_cross = antennas * (antennas - 1) // 2
+    sections = [
+            antennas,          # autohh
+            antennas,          # autovv
+            2 * antennas,      # autohv (each appears as hv and vh
+            n_cross,           # crosshh
+            n_cross,           # crossvv
+            2 * n_cross        # crosshv
+    ]
+    cuts = np.cumsum([0] + sections)
+    return [
+            (cuts[0], cuts[2]),  # autohhvv
+            (cuts[0], cuts[1]),  # autohh
+            (cuts[1], cuts[2]),  # autovv
+            (cuts[2], cuts[3]),  # autohv
+            (cuts[3], cuts[5]),  # crosshhvv
+            (cuts[3], cuts[4]),  # crosshh
+            (cuts[4], cuts[5]),  # crossvv
+            (cuts[5], cuts[6])   # crosshv
+    ]
+
 def create_template(context, args):
-    return sp.IngestTemplate(context, create_flagger(context, args), args.freq_avg)
+    percentile_ranges = create_percentile_ranges(args.antennas)
+    percentile_sizes = list(set([x[1] - x[0] for x in percentile_ranges]))
+    return sp.IngestTemplate(context, create_flagger(context, args),
+            args.freq_avg, args.sd_freq_avg, percentile_sizes)
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument_group('Data selection')
-    parser.add_argument('--antennas', '-a', type=int, default=7)
-    parser.add_argument('--channels', '-c', type=int, default=1024)
+    parser.add_argument('--antennas', '-a', type=int, help='number of antennas', default=7)
+    parser.add_argument('--channels', '-c', type=int, help='number of frequency channels', default=1024)
     parser.add_argument('--border', '-B', type=int, default=0, help='extra overlap channels')
-    parser.add_argument('--baselines', '-b', type=int, help='(overrides --antennas)')
 
     parser.add_argument_group('Parameters')
     parser.add_argument('--time-avg', '-T', type=int, default=4, help='number of input dumps per output dump')
     parser.add_argument('--freq-avg', '-F', type=int, default=16, help='number of input channels per continuum channel')
+    parser.add_argument('--sd-time-avg', type=int, default=4, help='number of input dumps per signal display dump')
+    parser.add_argument('--sd-freq-avg', type=int, default=128, help='number of input channels for signal display channel')
     parser.add_argument('--width', '-w', type=int, help='median filter kernel size (must be odd)', default=13)
     parser.add_argument('--sigmas', type=float, help='threshold for detecting RFI', default=11.0)
     parser.add_argument('--repeat', '-r', type=int, default=1, help='number of times to run')
@@ -45,15 +71,13 @@ def main():
     args = parser.parse_args()
     channels = args.channels + args.border
     channel_range = (args.border // 2, args.channels + args.border // 2)
-    if args.baselines is not None:
-        baselines = args.baselines
-    else:
-        baselines = args.antennas * (args.antennas + 1) * 2
+    baselines = args.antennas * (args.antennas + 1) * 2
 
     context = accel.create_some_context(True)
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
-    proc = template.instantiate(command_queue, channels, channel_range, baselines)
+    proc = template.instantiate(command_queue, channels, channel_range, baselines,
+            create_percentile_ranges(args.antennas))
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
     permutation = np.random.permutation(baselines).astype(np.uint16)
