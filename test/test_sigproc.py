@@ -65,7 +65,7 @@ def main():
     parser.add_argument('--sd-freq-avg', type=int, default=128, help='number of input channels for signal display channel')
     parser.add_argument('--width', '-w', type=int, help='median filter kernel size (must be odd)', default=13)
     parser.add_argument('--sigmas', type=float, help='threshold for detecting RFI', default=11.0)
-    parser.add_argument('--repeat', '-r', type=int, default=1, help='number of times to run')
+    parser.add_argument('--repeat', '-r', type=int, default=8, help='number of dumps to process')
     parser.add_argument('--no-transfer', '-N', action='store_true', help='skip data transfers')
 
     args = parser.parse_args()
@@ -89,26 +89,38 @@ def main():
     output_names = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
     output_buffers = [proc.buffer(name) for name in output_names]
     output_arrays = [buf.empty_like() for buf in output_buffers]
+    sd_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_cont_weights', 'timeseries']
+    for i in range(5):
+        sd_names.append('percentile{0}'.format(i))
+    sd_buffers = [proc.buffer(name) for name in sd_names]
+    sd_arrays = [buf.empty_like() for buf in sd_buffers]
 
-    dumps = [generate_data(vis_in_device, channels, baselines) for i in range(args.time_avg)]
+    dumps = [generate_data(vis_in_device, channels, baselines) for i in range(max(args.sd_time_avg, args.time_avg))]
     # Push data before we start timing, to ensure everything is allocated
     for dump in dumps:
         proc.buffer('vis_in').set(command_queue, dump)
 
     start_event = command_queue.enqueue_marker()
+    proc.start_sum()
     for pass_ in range(args.repeat):
-        proc.start_sum()
-        for dump in dumps:
-            if not args.no_transfer:
-                proc.buffer('vis_in').set_async(command_queue, dump)
-            proc()
-        proc.end_sum()
         if not args.no_transfer:
-            for buf, array in zip(output_buffers, output_arrays):
-                buf.get_async(command_queue, array)
+            proc.buffer('vis_in').set_async(command_queue, dumps[pass_ % len(dumps)])
+        proc()
+        if (pass_ + 1) % args.time_avg == 0:
+            proc.end_sum()
+            if not args.no_transfer:
+                for buf, array in zip(output_buffers, output_arrays):
+                    buf.get_async(command_queue, array)
+            proc.start_sum()
+        if (pass_ + 1) % args.sd_time_avg == 0:
+            proc.end_sd_sum()
+            if not args.no_transfer:
+                for buf, array in zip(sd_buffers, sd_arrays):
+                    buf.get_async(command_queue, array)
+            proc.start_sd_sum()
     end_event = command_queue.enqueue_marker()
     elapsed_ms = end_event.time_since(start_event) * 1000.0
-    dump_ms = elapsed_ms / (len(dumps) * args.repeat)
+    dump_ms = elapsed_ms / args.repeat
     print "{0:.3f}ms ({1:.3f}ms per dump)".format(elapsed_ms, dump_ms)
 
 if __name__ == '__main__':
