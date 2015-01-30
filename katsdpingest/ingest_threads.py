@@ -488,18 +488,15 @@ class CBFIngest(threading.Thread):
         spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
         timeseries = self.proc.buffer('timeseries').get(self.command_queue)
         percentiles = []
+        percentiles_flags = []
         for i in range(len(self.proc.percentiles)):
-            percentiles.append(self.proc.buffer('percentile{0}'.format(i)).get(self.command_queue))
-
-        # TODO: move this to the GPU, and possibly just send a flag per channel
-        # instead of duplicating the information multiple times.
-        flags = []
-        nperclevels = 5
-        for p in self.proc.percentiles:
-            start, end = p.column_range
-            perc_flags = np.any(spec_flags[:, start:end], axis=1).astype(np.uint8) #all percentiles of same collection have same flags
-            for i in range(nperclevels):
-                flags.append(perc_flags)
+            name = 'percentile{0}'.format(i)
+            p = self.proc.buffer(name).get(self.command_queue)
+            pflags = self.proc.buffer(name + '_flags').get(self.command_queue)
+            percentiles.append(p)
+            # Signal display server wants flags duplicated to broadcast with
+            # the percentiles
+            percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
 
         #populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'] = int(ts * 100)
@@ -507,7 +504,7 @@ class CBFIngest(threading.Thread):
         self.ig_sd['sd_flags'] = spec_flags
         self.ig_sd['sd_timeseries'] = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'] = np.vstack(percentiles).transpose()
-        self.ig_sd['sd_percspectrumflags'] = np.vstack(flags).transpose()
+        self.ig_sd['sd_percspectrumflags'] = np.vstack(percentiles_flags).transpose()
 
          # In the future this will need to be rate limited to some extent
         self.send_sd_data(self.ig_sd.get_heap())
@@ -549,7 +546,8 @@ class CBFIngest(threading.Thread):
         current_ant_activities = {}
         ant_activities_since = {}
          # track the current DBE target and antenna activities via sensor updates
-        sd_timestamp = None
+        self._output_avg = None
+        self._sd_avg = None
 
         for heap in spead.iterheaps(rx):
             st = time.time()

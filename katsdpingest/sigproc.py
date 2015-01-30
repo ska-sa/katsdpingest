@@ -14,7 +14,7 @@ from .antsol import stefcal
 from .__init__ import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
-from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -653,6 +653,7 @@ class IngestTemplate(object):
         self.sd_postproc = PostprocTemplate(context, sd_cont_factor)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
         self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
+        self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
 
     def instantiate(self, command_queue, channels, channel_range, baselines, percentile_ranges):
         return IngestOperation(self, command_queue, channels, channel_range, baselines, percentile_ranges)
@@ -689,6 +690,8 @@ class IngestOperation(accel.OperationSequence):
         Weights sum over channels of **sd_spec_vis**
     **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
         Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
+    **percentileN**_flags : kept-channels, uint8 (where *N* is 0, 1, ...)
+        For each channel, the bitwise OR of the flags from the corresponding set of baselines in **percentileN**
 
     .. rubric:: Scratch slots
 
@@ -731,6 +734,7 @@ class IngestOperation(accel.OperationSequence):
         self.timeseries = template.timeseries.instantiate(
                 command_queue, (kept_channels, baselines))
         self.percentiles = []
+        self.percentiles_flags = []
         for prange in percentile_ranges:
             size = prange[1] - prange[0]
             ptemplate = None
@@ -743,6 +747,8 @@ class IngestOperation(accel.OperationSequence):
                 raise ValueError('Baseline range {0} is too large for any template'.format(prange))
             self.percentiles.append(
                 ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
+            self.percentiles_flags.append(
+                template.percentiles_flags.instantiate(command_queue, (kept_channels, baselines), prange))
 
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
@@ -757,8 +763,10 @@ class IngestOperation(accel.OperationSequence):
                 ('sd_postproc', self.sd_postproc),
                 ('timeseries', self.timeseries)
         ]
-        for i, op in enumerate(self.percentiles):
-            operations.append(('percentile{0}'.format(i), op))
+        for i in range(len(self.percentiles)):
+            name = 'percentile{0}'.format(i)
+            operations.append((name, self.percentiles[i]))
+            operations.append((name + '_flags', self.percentiles_flags[i]))
 
         # TODO: eliminate transposition of flags, which aren't further used
         assert 'flags_t' in self.flagger.slots
@@ -789,7 +797,9 @@ class IngestOperation(accel.OperationSequence):
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
             compounds['sd_spec_vis'].append(name + ':src')
+            compounds['sd_spec_flags'].append(name + '_flags:src')
             compounds[name] = [name + ':dest']
+            compounds[name + '_flags'] = [name + '_flags:dest']
 
         aliases = {
                 'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
@@ -833,8 +843,9 @@ class IngestOperation(accel.OperationSequence):
         """
         self.sd_postproc()
         self.timeseries()
-        for p in self.percentiles:
+        for p, f in zip(self.percentiles, self.percentiles_flags):
             p()
+            f()
 
     def descriptions(self):
         """Generate descriptions of all the components, for the process log.
