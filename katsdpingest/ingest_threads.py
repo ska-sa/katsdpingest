@@ -347,6 +347,9 @@ class CBFIngest(threading.Thread):
         if self.h5_file is not None:
             self.write_timestamps()
         self.h5_file = None
+        # Break circular references
+        self._output_avg = None
+        self._sd_avg = None
 
     def drop_sdisp_ip(self, ip):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
