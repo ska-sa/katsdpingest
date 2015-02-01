@@ -484,8 +484,8 @@ class CBFIngest(threading.Thread):
         self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
-        spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
-        spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
+        cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
+        cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
         timeseries = self.proc.buffer('timeseries').get(self.command_queue)
         percentiles = []
         percentiles_flags = []
@@ -500,8 +500,8 @@ class CBFIngest(threading.Thread):
 
         #populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'] = int(ts * 100)
-        self.ig_sd['sd_data'] = _split_array(spec_vis, np.float32)
-        self.ig_sd['sd_flags'] = spec_flags
+        self.ig_sd['sd_data'] = _split_array(cont_vis, np.float32)
+        self.ig_sd['sd_flags'] = cont_flags
         self.ig_sd['sd_timeseries'] = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'] = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'] = np.vstack(percentiles_flags).transpose()
