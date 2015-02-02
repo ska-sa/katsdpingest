@@ -163,8 +163,7 @@ class TestPostproc(object):
     def test_bad_cont_factor(self):
         """Test with a continuum factor that does not divide into the channel count"""
         template = mock.sentinel.template
-        template.cont_factor = 8
-        assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8)
+        assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8, 8)
 
     @device_test
     def test_postproc(self, context, queue):
@@ -182,8 +181,8 @@ class TestPostproc(object):
         flags_in[:, 123] = 1
         flags_in[:, 234] = 0
 
-        template = sigproc.PostprocTemplate(context, cont_factor)
-        fn = sigproc.Postproc(template, queue, channels, baselines)
+        template = sigproc.PostprocTemplate(context)
+        fn = sigproc.Postproc(template, queue, channels, baselines, cont_factor)
         fn.ensure_all_bound()
         fn.buffer('vis').set(queue, vis_in)
         fn.buffer('weights').set(queue, weights_in)
@@ -211,7 +210,7 @@ class TestPostproc(object):
     @device_test
     @force_autotune
     def test_autotune(self, context, queue):
-        sigproc.PostprocTemplate(context, 16)
+        sigproc.PostprocTemplate(context)
 
 class TestIngestOperation(object):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
@@ -233,9 +232,9 @@ class TestIngestOperation(object):
                 context, n_sigma=11.0, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, 8, 16, [8, 12])
+        template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
         fn = template.instantiate(command_queue, channels, channel_range, baselines,
-                [(0, 8), (10, 22)])
+                8, 16, [(0, 8), (10, 22)])
 
         expected = [
             ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 0),
@@ -433,8 +432,8 @@ class TestIngestOperation(object):
                 context, n_sigma=n_sigma, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, cont_factor, sd_cont_factor, [8, 12])
-        fn = template.instantiate(queue, channels, channel_range, baselines, percentile_ranges)
+        template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
+        fn = template.instantiate(queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges)
         fn.ensure_all_bound()
         fn.set_scale(scale)
         fn.buffer('permutation').set(queue, permutation)

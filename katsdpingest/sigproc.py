@@ -478,38 +478,35 @@ class PostprocTemplate(object):
     ----------
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context for which kernels will be compiled
-    cont_factor : int
-        Number of spectral channels per continuum channel
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - wgsx, wgsy: number of workitems per workgroup in each dimension
     """
-    autotune_version = 1
+    autotune_version = 2
 
-    def __init__(self, context, cont_factor, tuning=None):
+    def __init__(self, context, tuning=None):
         if tuning is None:
-            tuning = self.autotune(context, cont_factor)
+            tuning = self.autotune(context)
         self.context = context
-        self.cont_factor = cont_factor
         self.wgsx = tuning['wgsx']
         self.wgsy = tuning['wgsy']
         program = accel.build(context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,
                 'wgsy': self.wgsy,
-                'cont_factor': cont_factor
             },
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('postproc')
 
     @classmethod
     @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
-    def autotune(cls, context, cont_factor):
+    def autotune(cls, context):
         queue = context.create_tuning_command_queue()
         baselines = 1024
-        channels = accel.roundup(2048, cont_factor)
+        channels = 2048
+        cont_factor = 16
         cont_channels = channels // cont_factor
 
         vis =     accel.DeviceArray(context, (channels, baselines), np.complex64)
@@ -524,8 +521,8 @@ class PostprocTemplate(object):
         weights.set(queue, rs.uniform(1e-5, 4.0, weights.shape).astype(np.float32))
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
         def generate(**tuning):
-            fn = cls(context, cont_factor, tuning=tuning).instantiate(
-                    queue, channels, baselines)
+            fn = cls(context, tuning=tuning).instantiate(
+                    queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
             return tune.make_measure(queue, fn)
@@ -533,8 +530,8 @@ class PostprocTemplate(object):
                 wgsx=[8, 16, 32],
                 wgsy=[8, 16, 32])
 
-    def instantiate(self, context, channels, baselines):
-        return Postproc(self, context, channels, baselines)
+    def instantiate(self, context, channels, baselines, cont_factor):
+        return Postproc(self, context, channels, baselines, cont_factor)
 
 class Postproc(accel.Operation):
     """Concrete instance of :class:`PostprocTemplate`.
@@ -564,24 +561,27 @@ class Postproc(accel.Operation):
         Number of channels (must be a multiple of `template.cont_factor`)
     baselines : int
         Number of baselines
+    cont_factor : int
+        Number of spectral channels per continuum channel
 
     Raises
     ------
     ValueError
         If `channels` is not a multiple of `template.cont_factor`
     """
-    def __init__(self, template, command_queue, channels, baselines):
+    def __init__(self, template, command_queue, channels, baselines, cont_factor):
         super(Postproc, self).__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
+        self.cont_factor = cont_factor
 
-        if channels % template.cont_factor:
+        if channels % cont_factor:
             raise ValueError('Number of channels must be a multiple of the continuum factor')
-        cont_channels = channels // template.cont_factor
+        cont_channels = channels // cont_factor
 
         spectral_dims = (
-            accel.Dimension(channels, template.cont_factor * template.wgsy),
+            accel.Dimension(channels, cont_factor * template.wgsy),
             accel.Dimension(baselines, template.wgsx))
         cont_dims = (
             accel.Dimension(cont_channels, template.wgsy),
@@ -596,9 +596,11 @@ class Postproc(accel.Operation):
     def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
         buffers = [self.buffer(name) for name in buffer_names]
-        args = [x.buffer for x in buffers] + [np.int32(buffers[0].padded_shape[1])]
+        args = [x.buffer for x in buffers] + [
+            np.int32(self.cont_factor),
+            np.int32(buffers[0].padded_shape[1])]
         xblocks = accel.divup(self.baselines, self.template.wgsx)
-        yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
+        yblocks = accel.divup(self.channels, self.template.wgsy * self.cont_factor)
         self.command_queue.enqueue_kernel(
             self.template.kernel, args,
             global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
@@ -606,7 +608,7 @@ class Postproc(accel.Operation):
 
     def parameters(self):
         return {
-            'cont_factor': self.template.cont_factor,
+            'cont_factor': self.cont_factor,
             'channels': self.channels,
             'baselines': self.baselines
         }
@@ -620,10 +622,6 @@ class IngestTemplate(object):
         Context for which kernels will be compiled
     flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
         Template for RFI flagging. It must have transposed flag outputs.
-    cont_factor : int
-        Number of spectral channels per continuum channel
-    sd_cont_factor : int
-        Number of spectral channels to average together for signal displays
     percentile_sizes : list of int
         Set of number of baselines per percentile calculation. These do not need to exactly
         match the actual sizes of the ranges passed to the instance. The smaller template
@@ -641,7 +639,7 @@ class IngestTemplate(object):
             'RFI predicted from space based pollutants',
             'reserved - bit 6','reserved - bit 7']
 
-    def __init__(self, context, flagger, cont_factor, sd_cont_factor, percentile_sizes):
+    def __init__(self, context, flagger, percentile_sizes):
         self.context = context
         self.prepare = PrepareTemplate(context)
         self.zero = ZeroTemplate(context)
@@ -649,13 +647,12 @@ class IngestTemplate(object):
                 context, np.complex64, 'float2')
         self.flagger = flagger
         self.accum = AccumTemplate(context, 2)
-        self.postproc = PostprocTemplate(context, cont_factor)
-        self.sd_postproc = PostprocTemplate(context, sd_cont_factor)
+        self.postproc = PostprocTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
         self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
 
-    def instantiate(self, command_queue, channels, channel_range, baselines, percentile_ranges):
-        return IngestOperation(self, command_queue, channels, channel_range, baselines, percentile_ranges)
+    def instantiate(self, command_queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges):
+        return IngestOperation(self, command_queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges)
 
 class IngestOperation(accel.OperationSequence):
     """Concrete instance of :class:`IngestTemplate`.
@@ -706,11 +703,16 @@ class IngestOperation(accel.OperationSequence):
         Half-open interval of channels that will be written to **weights**
     baselines : int
         Number of baselines
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    sd_cont_factor : int
+        Number of spectral channels to average together for signal displays
     percentile_ranges : list of 2-tuples of ints
         Column range for each set of baselines (post-permutation) for which
         percentiles will be computed.
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines, percentile_ranges):
+    def __init__(self, template, command_queue, channels, channel_range, baselines,
+            cont_factor, sd_cont_factor, percentile_ranges):
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
@@ -725,9 +727,9 @@ class IngestOperation(accel.OperationSequence):
         self.accum = template.accum.instantiate(
                 command_queue, channels, channel_range, baselines)
         self.postproc = template.postproc.instantiate(
-                command_queue, kept_channels, baselines)
-        self.sd_postproc = template.sd_postproc.instantiate(
-                command_queue, kept_channels, baselines)
+                command_queue, kept_channels, baselines, cont_factor)
+        self.sd_postproc = template.postproc.instantiate(
+                command_queue, kept_channels, baselines, sd_cont_factor)
         self.timeseries = template.timeseries.instantiate(
                 command_queue, (kept_channels, baselines))
         self.percentiles = []
