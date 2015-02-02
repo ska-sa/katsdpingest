@@ -260,8 +260,11 @@ class TestIngestOperation(object):
             ('ingest:sd_postproc', 'baselines=192, channels=80, class=katsdpingest.sigproc.Postproc, cont_factor=16', 0),
             ('ingest:timeseries', 'class=katsdpsigproc.maskedsum.MaskedSum, shape=(80, 192)', 0),
             ('ingest:percentile0', 'class=katsdpsigproc.percentile.Percentile5, column_range=(0, 8), is_amplitude=False, max_columns=8, shape=(80, 192)', 0),
-            ('ingest:percentile1', 'class=katsdpsigproc.percentile.Percentile5, column_range=(10, 22), is_amplitude=False, max_columns=12, shape=(80, 192)', 0)
+            ('ingest:percentile0_flags', "class=katsdpsigproc.reduce.HReduce, column_range=(0, 8), ctype=unsigned char, dtype=<type 'numpy.uint8'>, extra_code=, identity=0, op=a | b, shape=(80, 192)", 0),
+            ('ingest:percentile1', 'class=katsdpsigproc.percentile.Percentile5, column_range=(10, 22), is_amplitude=False, max_columns=12, shape=(80, 192)', 0),
+            ('ingest:percentile1_flags', "class=katsdpsigproc.reduce.HReduce, column_range=(10, 22), ctype=unsigned char, dtype=<type 'numpy.uint8'>, extra_code=, identity=0, op=a | b, shape=(80, 192)", 0)
         ]
+        self.maxDiff = None
         assert_equal(expected, fn.descriptions())
 
     def run_host_basic(self, vis, scale, permutation, cont_factor, channel_range, n_sigma):
@@ -399,6 +402,8 @@ class TestIngestOperation(object):
         for i, (start, end) in enumerate(percentile_ranges):
             expected['percentile{0}'.format(i)] = np.percentile(
                     np.abs(expected['sd_spec_vis'][..., start:end]), [0, 100, 25, 75, 50], axis=1, interpolation='lower')
+            expected['percentile{0}_flags'.format(i)] = np.bitwise_or.reduce(
+                    expected['sd_spec_flags'][..., start:end], axis=1)
 
         return expected
 
@@ -446,6 +451,7 @@ class TestIngestOperation(object):
                 'timeseries']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
+            sd_keys.append('percentile{0}_flags'.format(i))
 
         actual = {}
         fn.start_sum()
