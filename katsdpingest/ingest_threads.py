@@ -173,7 +173,7 @@ class CBFIngest(threading.Thread):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         return sp.IngestTemplate(context, flagger_template,
-                cont_factor=16, sd_cont_factor=128, percentile_sizes=[8, 12])
+                percentile_sizes=[8, 12])
 
     def __init__(self, cbf_spead_host, cbf_spead_port,
             spectral_spead_host, spectral_spead_port, spectral_spead_rate,
@@ -439,8 +439,10 @@ class CBFIngest(threading.Thread):
             percentile_ranges.append((start, end))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
 
+        # TODO: cont_factor should come from command line argument
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, (0, channels), baselines, percentile_ranges)
+                self.command_queue, channels, (0, channels), baselines,
+                16, 128, percentile_ranges)
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
