@@ -23,6 +23,7 @@ from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
+from katsdpsigproc import accel
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
@@ -40,12 +41,16 @@ def parse_opts(argv):
     parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%default]')
     parser.add_option('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%default]')
-    parser.add_option('--spectral-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
+    parser.add_option('--spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
     parser.add_option('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%default]')
     parser.add_option('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%default]')
-    parser.add_option('--continuum-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%default]')
+    parser.add_option('--continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%default]')
     parser.add_option('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%default]')
     parser.add_option('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%default]')
+    parser.add_option('--antennas', default=2, type=int, help='number of antennas. [default=%default]')
+    parser.add_option('--channels', default=32768, type=int, help='number of channels. [default=%default]')
+    parser.add_option('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%default]')
+    parser.add_option('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
@@ -62,7 +67,7 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
 
-    def __init__(self, logger, sdisp_ips, sdisp_port, *args, **kwargs):
+    def __init__(self, logger, sdisp_ips, sdisp_port, antennas, channels, *args, **kwargs):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
@@ -80,6 +85,10 @@ class IngestDeviceServer(DeviceServer):
         for ip in sdisp_ips.split(","):
             self.sdisp_ips[ip] = sdisp_port
          # add additional user specified ip
+        # compile the device code
+        context = accel.create_some_context(interactive=False)
+        self.proc_template = CBFIngest.create_proc_template(context, antennas, channels)
+
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
@@ -180,11 +189,7 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(
-                opts.cbf_spead_host, opts.cbf_spead_port,
-                opts.spectral_spead_host, opts.spectral_spead_port, opts.spectral_rate,
-                opts.continuum_spead_host, opts.continuum_spead_port, opts.continuum_rate,
-                opts.output_int_time, opts.sd_int_time,
+        self.cbf_thread = CBFIngest(opts, self.proc_template,
                 self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
@@ -375,7 +380,8 @@ if __name__ == '__main__':
     cam_logger.info("CAM ingest logging started")
 
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
+    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.antennas, opts.channels,
+            opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     logger.info("Started k7_capture server.")
