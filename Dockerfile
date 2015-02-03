@@ -2,6 +2,9 @@ FROM ubuntu:14.04
 
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
+# Suppress debconf warnings
+ENV DEBIAN_FRONTEND noninteractive
+
 # Set up access to github private repositories
 COPY conf/id_rsa /root/.ssh/
 RUN echo "Host *\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
@@ -12,12 +15,6 @@ ENV CUDA_RUN_FILE cuda_6.5.19_linux_64.run
 ENV CUDA_RUN http://developer.download.nvidia.com/compute/cuda/6_5/rel/installers/cuda_6.5.19_linux_64.run
 ENV DRIVER_RUN_FILE NVIDIA-Linux-x86_64-346.22.run
 ENV DRIVER_RUN http://uk.download.nvidia.com/XFree86/Linux-x86_64/346.22/NVIDIA-Linux-x86_64-346.22.run
-
-# Work in a tmpfs, to avoid bloating the image. Note that the contents
-# disappear between RUN steps, so each step must completely use the files
-# it needs.
-WORKDIR /dev
-ENV TMPDIR /dev
 
 # Install system packages. Python packages are mostly installed here, but
 # certain packages are handled by pip:
@@ -43,8 +40,8 @@ RUN apt-get -y update && apt-get -y install \
     python-twisted \
     python-unittest2 \
     python-zope.interface
-RUN wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit
-RUN wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network
+RUN wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit && rm -- $CUDA_RUN_FILE
+RUN wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network && rm -- $DRIVER_RUN_FILE
 ENV PATH="$PATH:/usr/local/cuda/bin"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64"
 
@@ -73,5 +70,4 @@ RUN python ./setup.py install
 # Run ingest as a non-root user
 RUN adduser --system ingest
 WORKDIR /home/ingest
-ENV TMPDIR /tmp
 USER ingest
