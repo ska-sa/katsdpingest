@@ -76,7 +76,7 @@ class TestCBFIngest(unittest.TestCase):
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
         template = ingest_threads.CBFIngest.create_proc_template(context, 8, 4096)
-        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544, 480,
+        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544, 512,
                 16, 64, [(0, 4), (500, 512)])
 
     def test_tune_next(self):
