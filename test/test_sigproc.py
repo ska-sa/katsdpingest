@@ -47,8 +47,7 @@ def create_percentile_ranges(antennas):
 def create_template(context, args):
     percentile_ranges = create_percentile_ranges(args.antennas)
     percentile_sizes = list(set([x[1] - x[0] for x in percentile_ranges]))
-    return sp.IngestTemplate(context, create_flagger(context, args),
-            args.freq_avg, args.sd_freq_avg, percentile_sizes)
+    return sp.IngestTemplate(context, create_flagger(context, args), percentile_sizes)
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -77,7 +76,7 @@ def main():
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
     proc = template.instantiate(command_queue, channels, channel_range, baselines,
-            create_percentile_ranges(args.antennas))
+            args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.antennas))
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
     permutation = np.random.permutation(baselines).astype(np.uint16)
