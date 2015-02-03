@@ -85,6 +85,12 @@ class TestCBFIngest(unittest.TestCase):
         assert_equal(8, ingest_threads.CBFIngest._tune_next(8, [2, 4, 8, 16]))
         assert_equal(21, ingest_threads.CBFIngest._tune_next(21, [2, 4, 8, 16]))
 
+    def test_tune_next_antennas(self):
+        assert_equal(2, ingest_threads.CBFIngest._tune_next_antennas(0))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(5))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(8))
+        assert_equal(32, ingest_threads.CBFIngest._tune_next_antennas(21))
+
     def test_baseline_permutation(self):
         orig_ordering = np.array([
             ['m000v', 'm000v'],

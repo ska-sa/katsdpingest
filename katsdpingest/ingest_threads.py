@@ -162,7 +162,9 @@ def _split_array(x, dtype):
 
 class CBFIngest(threading.Thread):
     # To avoid excessive autotuning, the following parameters are quantised up
-    # to the next element of these lists when generating templates
+    # to the next element of these lists when generating templates. These
+    # lists are also used by ingest_autotune.py for pre-tuning standard
+    # configurations.
     tune_antennas = [2, 4, 8, 16]
     tune_channels = [4096, 32768]
 
@@ -178,9 +180,17 @@ class CBFIngest(threading.Thread):
             return value
 
     @classmethod
+    def _tune_next_antennas(cls, value):
+        """Round `value` up to the next power of 2 (excluding 1)."""
+        out = 2
+        while out < value:
+            out *= 2
+        return out
+
+    @classmethod
     def create_proc_template(cls, context, antennas, channels):
         # Quantise to reduce number of options to autotune
-        max_antennas = cls._tune_next(antennas, cls.tune_antennas)
+        max_antennas = cls._tune_next_antennas(antennas)
         max_channels = cls._tune_next(channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
