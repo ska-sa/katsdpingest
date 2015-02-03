@@ -161,37 +161,68 @@ def _split_array(x, dtype):
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 class CBFIngest(threading.Thread):
+    # To avoid excessive autotuning, the following parameters are quantised up
+    # to the next element of these lists when generating templates. These
+    # lists are also used by ingest_autotune.py for pre-tuning standard
+    # configurations.
+    tune_antennas = [2, 4, 8, 16]
+    tune_channels = [4096, 32768]
+
     @classmethod
-    def create_proc_template(cls, context):
+    def _tune_next(cls, value, predef):
+        """Return the smallest value in `predef` greater than or equal to
+        `value`, or `value` if it is larger than the largest element of
+        `predef`."""
+        valid = [x for x in predef if x >= value]
+        if valid:
+            return min(valid)
+        else:
+            return value
+
+    @classmethod
+    def _tune_next_antennas(cls, value):
+        """Round `value` up to the next power of 2 (excluding 1)."""
+        out = 2
+        while out < value:
+            out *= 2
+        return out
+
+    @classmethod
+    def create_proc_template(cls, context, antennas, channels):
+        # Quantise to reduce number of options to autotune
+        max_antennas = cls._tune_next_antennas(antennas)
+        max_channels = cls._tune_next(channels, cls.tune_channels)
+
         flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
-        # TODO: these parameters should probably come from somewhere else
-        # (particularly cont_factor).
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
-        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=32768)
+        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
                 context, n_sigma=11.0, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        return sp.IngestTemplate(context, flagger_template,
-                percentile_sizes=[8, 12])
+        n_cross = max_antennas * (max_antennas - 1) // 2
+        percentile_sizes = [
+                max_antennas, 2 * max_antennas,
+                n_cross, 2 * n_cross]
+        return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
 
-    def __init__(self, cbf_spead_host, cbf_spead_port,
-            spectral_spead_host, spectral_spead_port, spectral_spead_rate,
-            continuum_spead_host, continuum_spead_port, continuum_spead_rate,
-            output_int_time, sd_int_time,
+    def __init__(self, opts, proc_template,
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.cbf_spead_port = cbf_spead_port
-        self.cbf_spead_host = cbf_spead_host
-        self.spectral_spead_port = spectral_spead_port
-        self.spectral_spead_host = spectral_spead_host
-        self.spectral_spead_rate = spectral_spead_rate
-        self.continuum_spead_port = continuum_spead_port
-        self.continuum_spead_host = continuum_spead_host
-        self.continuum_spead_rate = continuum_spead_rate
-        self.output_int_time = output_int_time
-        self.sd_int_time = sd_int_time
+        self.cbf_spead_port = opts.cbf_spead_port
+        self.cbf_spead_host = opts.cbf_spead_host
+        self.spectral_spead_port = opts.spectral_spead_port
+        self.spectral_spead_host = opts.spectral_spead_host
+        self.spectral_spead_rate = opts.spectral_spead_rate
+        self.continuum_spead_port = opts.continuum_spead_port
+        self.continuum_spead_host = opts.continuum_spead_host
+        self.continuum_spead_rate = opts.continuum_spead_rate
+        self.output_int_time = opts.output_int_time
+        self.sd_int_time = opts.sd_int_time
+        self.cont_factor = opts.continuum_factor
+        self.sd_cont_factor = opts.sd_continuum_factor
+        self.proc_template = proc_template
         self.h5_file = h5_file
         self.model = model
         self.cbf_name = cbf_name
@@ -218,10 +249,8 @@ class CBFIngest(threading.Thread):
         self._script_ants = None
          # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
-        self.context = accel.create_some_context(interactive=False)
-        self.command_queue = self.context.create_command_queue()
-        self.proc_template = self.create_proc_template(self.context)
-        self.proc = None    # Instantiation of the template delayed until data shape is known
+        self.command_queue = proc_template.context.create_command_queue()
+        self.proc = None    # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.flags_description = zip(self.proc_template.flag_names, self.proc_template.flag_descriptions)
          # an array describing the flags produced by the rfi flagger
         self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
@@ -439,10 +468,9 @@ class CBFIngest(threading.Thread):
             percentile_ranges.append((start, end))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
 
-        # TODO: cont_factor should come from command line argument
         self.proc = self.proc_template.instantiate(
                 self.command_queue, channels, (0, channels), baselines,
-                16, 128, percentile_ranges)
+                self.cont_factor, self.sd_cont_factor, percentile_ranges)
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))

@@ -75,9 +75,21 @@ class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_threads.CBFIngest.create_proc_template(context)
+        template = ingest_threads.CBFIngest.create_proc_template(context, 8, 4096)
         proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544,
                 16, 64, [(0, 4), (500, 512)])
+
+    def test_tune_next(self):
+        assert_equal(2, ingest_threads.CBFIngest._tune_next(0, [2, 4, 8, 16]))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next(5, [2, 4, 8, 16]))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next(8, [2, 4, 8, 16]))
+        assert_equal(21, ingest_threads.CBFIngest._tune_next(21, [2, 4, 8, 16]))
+
+    def test_tune_next_antennas(self):
+        assert_equal(2, ingest_threads.CBFIngest._tune_next_antennas(0))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(5))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(8))
+        assert_equal(32, ingest_threads.CBFIngest._tune_next_antennas(21))
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([
