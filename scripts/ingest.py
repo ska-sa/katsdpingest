@@ -30,6 +30,14 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 # import katconf
 
+def comma_list(type_):
+    """Return a function which splits a string on commas and converts each element to
+    `type_`."""
+
+    def convert(arg):
+        return [type_(x) for x in arg.split(',')]
+    return convert
+
 def parse_opts():
     parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -48,6 +56,7 @@ def parse_opts():
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
     parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
     parser.add_argument('--antennas', default=2, type=int, help='number of antennas (prior to masking). [default=%(default)s]')
+    parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
     parser.add_argument('--channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
@@ -380,7 +389,8 @@ if __name__ == '__main__':
     cam_logger.info("CAM ingest logging started")
 
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.antennas, opts.channels,
+    antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
+    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, antennas, opts.channels,
             opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()

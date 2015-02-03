@@ -8,7 +8,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
     GLOBAL float2 * RESTRICT vis_out,
     GLOBAL float * RESTRICT weights,
     const GLOBAL int2 * RESTRICT vis_in,
-    const GLOBAL unsigned short * RESTRICT permutation,
+    const GLOBAL short * RESTRICT permutation,
     int vis_out_stride,
     int weights_stride,
     int vis_in_stride,
@@ -45,12 +45,15 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
         if (${r} < baselines)
         {
             int baseline = permutation[${r}];
-            float2 vis = values.arr[${lr}][${lc}];
-            vis_out[baseline * vis_out_stride + ${c}] = vis;
-            if (${c} >= channel_start && ${c} < channel_end)
+            if (baseline >= 0)
             {
-                int weight_addr = baseline * weights_stride + ${c} - channel_start;
-                weights[weight_addr] = 1.0f;
+                float2 vis = values.arr[${lr}][${lc}];
+                vis_out[baseline * vis_out_stride + ${c}] = vis;
+                if (${c} >= channel_start && ${c} < channel_end)
+                {
+                    int weight_addr = baseline * weights_stride + ${c} - channel_start;
+                    weights[weight_addr] = 1.0f;
+                }
             }
         }
     </%transpose:transpose_store>
