@@ -3,15 +3,13 @@ cache:
   directories:
     - $HOME/.ccache
 python:
-  - "2.6"
   - "2.7"
 before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran liblapack-dev ccache
 # command to install dependencies. pip needs to be updated to make h5py install
 # correctly. The directory changes are to prevent the local setup.cfg from
-# affecting the pip installs. ordereddict is needed only for Python 2.6.
+# affecting the pip installs.
 install:
   - "(cd ~ && pip install -U pip setuptools)"
-  - "(cd ~ && pip install ordereddict)"
   - "(cd ~ && export PATH=/usr/lib/ccache:$PATH && travis_wait pip install -r $OLDPWD/requirements.txt)"
 # command to run tests
 # The simulator tests depend on private svn repositories that are not available to Travis
