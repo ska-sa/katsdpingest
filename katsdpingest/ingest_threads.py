@@ -234,7 +234,10 @@ class CBFIngest(threading.Thread):
         self.sd_int_time = opts.sd_int_time
         self.cont_factor = opts.continuum_factor
         self.sd_cont_factor = opts.sd_continuum_factor
-        self.antenna_mask = set(opts.antenna_mask)
+        if opts.antenna_mask is not None:
+            self.antenna_mask = set(opts.antenna_mask)
+        else:
+            self.antenna_mask = None
         self.proc_template = proc_template
         self.h5_file = h5_file
         self.model = model
