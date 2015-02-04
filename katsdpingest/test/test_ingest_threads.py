@@ -75,9 +75,21 @@ class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_threads.CBFIngest.create_proc_template(context)
-        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544,
+        template = ingest_threads.CBFIngest.create_proc_template(context, 8, 4096)
+        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544, 512,
                 16, 64, [(0, 4), (500, 512)])
+
+    def test_tune_next(self):
+        assert_equal(2, ingest_threads.CBFIngest._tune_next(0, [2, 4, 8, 16]))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next(5, [2, 4, 8, 16]))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next(8, [2, 4, 8, 16]))
+        assert_equal(21, ingest_threads.CBFIngest._tune_next(21, [2, 4, 8, 16]))
+
+    def test_tune_next_antennas(self):
+        assert_equal(2, ingest_threads.CBFIngest._tune_next_antennas(0))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(5))
+        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(8))
+        assert_equal(32, ingest_threads.CBFIngest._tune_next_antennas(21))
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([
@@ -110,3 +122,28 @@ class TestCBFIngest(unittest.TestCase):
         permutation, new_ordering = ingest_threads.CBFIngest.baseline_permutation(orig_ordering)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], permutation)
+
+    def test_baseline_permutation_masked(self):
+        orig_ordering = np.array([
+            ['m000v', 'm000v'],
+            ['m000h', 'm000v'],
+            ['m000h', 'm000h'],
+            ['m000v', 'm000h'],
+            ['m000v', 'm001v'],
+            ['m000v', 'm001h'],
+            ['m000h', 'm001v'],
+            ['m000h', 'm001h'],
+            ['m001h', 'm001v'],
+            ['m001v', 'm001h'],
+            ['m001h', 'm001h'],
+            ['m001v', 'm001v']])
+        expected_ordering = np.array([
+            ['m001h', 'm001h'],
+            ['m001v', 'm001v'],
+            ['m001h', 'm001v'],
+            ['m001v', 'm001h']])
+        antenna_mask = set(['m001'])
+
+        permutation, new_ordering = ingest_threads.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
+        np.testing.assert_equal(expected_ordering, new_ordering)
+        np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], permutation)

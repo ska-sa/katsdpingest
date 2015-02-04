@@ -29,20 +29,22 @@ class TestPrepare(object):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
     @device_test
-    def testPrepare(self, context, queue):
+    def test_prepare(self, context, queue):
         """Basic test of data preparation"""
         channels = 73
         channel_range = (10, 55)
         keep_channels = channel_range[1] - channel_range[0]
-        baselines = 91
+        in_baselines = 99
+        out_baselines = 91
         scale = 3.625
 
         rs = np.random.RandomState(seed=1)
-        vis_in = rs.random_integers(-1000, 1000, (channels, baselines, 2)).astype(np.int32)
-        permutation = rs.permutation(baselines).astype(np.uint16)
+        vis_in = rs.random_integers(-1000, 1000, (channels, in_baselines, 2)).astype(np.int32)
+        permutation = rs.permutation(in_baselines).astype(np.int16)
+        permutation[permutation >= out_baselines] = -1
 
         template = sigproc.PrepareTemplate(context)
-        prepare = template.instantiate(queue, channels, channel_range, baselines)
+        prepare = template.instantiate(queue, channels, channel_range, in_baselines, out_baselines)
         prepare.ensure_all_bound()
         prepare.buffer('vis_in').set(queue, vis_in)
         prepare.buffer('permutation').set(queue, permutation)
@@ -51,31 +53,32 @@ class TestPrepare(object):
         weights = prepare.buffer('weights').get(queue)
         vis_out = prepare.buffer('vis_out').get(queue)
 
-        assert_equal((baselines, channels), vis_out.shape)
-        assert_equal((baselines, keep_channels), weights.shape)
+        assert_equal((out_baselines, channels), vis_out.shape)
+        assert_equal((out_baselines, keep_channels), weights.shape)
         expected_vis = np.zeros_like(vis_out)
         expected_weights = np.zeros_like(weights)
         for i in range(channels):
-            for j in range(baselines):
+            for j in range(in_baselines):
                 value = (vis_in[i, j, 0] + 1j * vis_in[i, j, 1]) * scale
                 row = permutation[j]
-                expected_vis[row, i] = value
-                if i >= channel_range[0] and i < channel_range[1]:
-                    col = i - channel_range[0]
-                    expected_weights[row, col] = 1.0
+                if row >= 0:
+                    expected_vis[row, i] = value
+                    if i >= channel_range[0] and i < channel_range[1]:
+                        col = i - channel_range[0]
+                        expected_weights[row, col] = 1.0
         np.testing.assert_equal(expected_vis, vis_out)
         np.testing.assert_equal(expected_weights, weights)
 
     @device_test
     @force_autotune
-    def testAutotune(self, context, queue):
+    def test_autotune(self, context, queue):
         sigproc.PrepareTemplate(context)
 
 class TestAccum(object):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
     @device_test
-    def testSmall(self, context, queue):
+    def test_small(self, context, queue):
         """Hand-coded test data, to test various cases"""
 
         flag_scale = 2 ** -64
@@ -106,7 +109,7 @@ class TestAccum(object):
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
     @device_test
-    def testBig(self, context, queue):
+    def test_big(self, context, queue):
         """Test with large random data against a simple CPU version"""
         flag_scale = 2 ** -64
         channels = 203
@@ -154,7 +157,7 @@ class TestAccum(object):
 
     @device_test
     @force_autotune
-    def testAutotune(self, context, queue):
+    def test_autotune(self, context, queue):
         sigproc.AccumTemplate(context, 2)
 
 class TestPostproc(object):
@@ -220,6 +223,7 @@ class TestIngestOperation(object):
     def test_descriptions(self, *args):
         channels = 128
         channel_range = (16, 96)
+        cbf_baselines = 220
         baselines = 192
 
         context = mock.Mock()
@@ -233,12 +237,12 @@ class TestIngestOperation(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
-        fn = template.instantiate(command_queue, channels, channel_range, baselines,
+        fn = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
                 8, 16, [(0, 8), (10, 22)])
 
         expected = [
             ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 0),
-            ('ingest:prepare', 'baselines=192, channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, scale=1.0', 0),
+            ('ingest:prepare', 'channel_range=(16, 96), channels=128, class=katsdpingest.sigproc.Prepare, in_baselines=220, out_baselines=192, scale=1.0', 0),
             ('ingest:zero_spec', 'class=katsdpingest.sigproc.Zero', 0),
             ('ingest:zero_spec:zero_vis', 'class=katsdpsigproc.fill.Fill, ctype=float2, dtype=complex64, shape=(80, 192), value=0j', 0),
             ('ingest:zero_spec:zero_weights', 'class=katsdpsigproc.fill.Fill, ctype=float, dtype=float32, shape=(80, 192), value=0.0', 0),
@@ -279,7 +283,7 @@ class TestIngestOperation(object):
         scale : float
             Scale factor for integral visibilities
         permutation : sequence
-            Maps input baseline numbers to output numbers
+            Maps input baseline numbers to output numbers (with -1 indicating discard)
         cont_factor : int
             Number of spectral channels per continuum channel
         channel_range: 2-tuple of int
@@ -303,8 +307,12 @@ class TestIngestOperation(object):
         # Scaling, and combine real and imaginary elements
         vis = vis[..., 0] * scale + vis[..., 1] * (1j * scale)
         # Baseline permutation
-        vis_tmp = vis.copy()
-        vis[..., permutation] = vis_tmp
+        new_baselines = np.sum(np.asarray(permutation) != -1)
+        new_vis = np.empty(vis.shape[:-1] + (new_baselines,), np.complex64)
+        for old_idx, new_idx in enumerate(permutation):
+            if new_idx != -1:
+                new_vis[..., new_idx] = vis[..., old_idx]
+        vis = new_vis
         # Compute weights (currently just unity)
         weights = np.ones(vis.shape, dtype=np.float32)
         # Compute flags
@@ -363,7 +371,7 @@ class TestIngestOperation(object):
         scale : float
             Scale factor for integral visibilities
         permutation : sequence
-            Maps input baseline numbers to output numbers
+            Maps input baseline numbers to output numbers (with -1 indicating discard)
         cont_factor : int
             Number of spectral channels per continuum channel
         sd_cont_factor : int
@@ -412,6 +420,7 @@ class TestIngestOperation(object):
         channels = 128
         channel_range = (16, 96)
         kept_channels = channel_range[1] - channel_range[0]
+        cbf_baselines = 220
         baselines = 192
         cont_factor = 4
         sd_cont_factor = 8
@@ -424,8 +433,9 @@ class TestIngestOperation(object):
         n_sigma = -1.0
 
         rs = np.random.RandomState(seed=1)
-        vis_in = rs.random_integers(-1000, 1000, (dumps, channels, baselines, 2)).astype(np.int32)
-        permutation = rs.permutation(baselines).astype(np.uint16)
+        vis_in = rs.random_integers(-1000, 1000, (dumps, channels, cbf_baselines, 2)).astype(np.int32)
+        permutation = rs.permutation(cbf_baselines).astype(np.int16)
+        permutation[permutation >= baselines] = -1
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
 
@@ -438,7 +448,7 @@ class TestIngestOperation(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
-        fn = template.instantiate(queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges)
+        fn = template.instantiate(queue, channels, channel_range, cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges)
         fn.ensure_all_bound()
         fn.set_scale(scale)
         fn.buffer('permutation').set(queue, permutation)
