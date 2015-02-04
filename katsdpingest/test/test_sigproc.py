@@ -233,12 +233,13 @@ class TestIngestOperation(object):
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
                 context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, n_sigma=11.0, transposed=True, flag_value=self.flag_value)
+                context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
         fn = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
-                8, 16, [(0, 8), (10, 22)])
+                8, 16, [(0, 8), (10, 22)],
+                threshold_args={'n_sigma': 11.0})
 
         expected = [
             ('ingest', 'class=katsdpingest.sigproc.IngestOperation', 0),
@@ -444,11 +445,13 @@ class TestIngestOperation(object):
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
                 context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, n_sigma=n_sigma, transposed=True, flag_value=self.flag_value)
+                context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
-        fn = template.instantiate(queue, channels, channel_range, cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges)
+        fn = template.instantiate(queue, channels, channel_range, cbf_baselines, baselines,
+                cont_factor, sd_cont_factor, percentile_ranges,
+                threshold_args={'n_sigma': n_sigma})
         fn.ensure_all_bound()
         fn.set_scale(scale)
         fn.buffer('permutation').set(queue, permutation)

@@ -18,8 +18,7 @@ def create_flagger(context, args):
             context, args.width)
     noise_est = rfi.NoiseEstMADTDeviceTemplate(
             context, args.channels + args.border)
-    threshold = rfi.ThresholdSumDeviceTemplate(
-            context, args.sigmas)
+    threshold = rfi.ThresholdSumDeviceTemplate(context)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
 
 def create_percentile_ranges(antennas):
@@ -81,7 +80,8 @@ def main():
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
     proc = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
-            args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.antennas))
+            args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.antennas),
+            threshold_args={'n_sigma': args.sigmas})
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
     permutation = np.random.permutation(baselines).astype(np.int16)
