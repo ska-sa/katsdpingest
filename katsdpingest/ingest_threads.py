@@ -189,6 +189,18 @@ class CBFIngest(threading.Thread):
 
     @classmethod
     def create_proc_template(cls, context, antennas, channels):
+        """Create a processing template. This is a potentially slow operation,
+        since it invokes autotuning.
+
+        Parameters
+        ----------
+        context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+            Context in which to compile device code
+        antennas : int
+            Number of antennas, *after* any masking
+        channels : int
+            Number of channels, *prior* to any clipping
+        """
         # Quantise to reduce number of options to autotune
         max_antennas = cls._tune_next_antennas(antennas)
         max_channels = cls._tune_next(channels, cls.tune_channels)
@@ -222,6 +234,7 @@ class CBFIngest(threading.Thread):
         self.sd_int_time = opts.sd_int_time
         self.cont_factor = opts.continuum_factor
         self.sd_cont_factor = opts.sd_continuum_factor
+        self.antenna_mask = set(opts.antenna_mask)
         self.proc_template = proc_template
         self.h5_file = h5_file
         self.model = model
@@ -244,9 +257,6 @@ class CBFIngest(threading.Thread):
         self.timestamps = []
          # temporary timestamp store
         self.sd_frame = None
-        self.baseline_mask = None
-         # by default record all baselines
-        self._script_ants = None
          # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
         self.command_queue = proc_template.context.create_command_queue()
@@ -294,22 +304,8 @@ class CBFIngest(threading.Thread):
                             shape=[], fmt=spead.mkfmt(('u',spead.ADDRSIZE)), init_val=self.cbf_attr['n_chans'].value)
         return copy.deepcopy(self.ig_sd.get_heap())
 
-    def set_baseline_mask(self, bls_ordering):
-        """Uses the _script_ants variable to set a baseline mask.
-        This only works if script_ants has been set by an external process between capture_done and capture_start."""
-        new_bls = bls_ordering
-        if self._script_ants is not None:
-            logger.info("Using script-ants (%s) as a custom baseline mask..." % self._script_ants)
-            ants = self._script_ants.replace(" ","").split(",")
-            if len(ants) > 0:
-                b = bls_ordering.tolist()
-                self.baseline_mask = [b.index(pair) for pair in b if pair[0][:-1] in ants and pair[1][:-1] in ants]
-                new_bls = np.array([b[idx] for idx in self.baseline_mask])
-                 # we need to recalculate the bls ordering as well...
-        return new_bls
-
     @classmethod
-    def baseline_permutation(cls, bls_ordering):
+    def baseline_permutation(cls, bls_ordering, antenna_mask=None):
         """Construct a permutation to place the baselines into the desired
         order for internal processing.
 
@@ -317,22 +313,40 @@ class CBFIngest(threading.Thread):
         ----------
         bls_ordering : list of pairs of strings
             Names of inputs in current ordering
+        antenna_mask : set of strings, optional
+            Antennas to retain in the permutation (without polarisation suffix)
 
         Returns
         -------
-        (list, list)
-            The permutation giving the reordering and the new ordering
+        permutation : list
+            The permutation specifying the reordering. Element *i* indicates
+            the position in the new order corresponding to element *i* of
+            the original order, or -1 if the baseline was masked out.
+        new_ordering : ndarray
+            Replacement ordering, in the same format as `bls_ordering`
         """
+        def keep(baseline):
+            if antenna_mask:
+                input1, input2 = baseline
+                return input1[:-1] in antenna_mask and input2[:-1] in antenna_mask
+            else:
+                return True
+
         def key(item):
-            ant1, ant2 = item[1]
-            pol1 = ant1[-1]
-            pol2 = ant2[-1]
-            return (ant1[:-1] != ant2[:-1], pol1 != pol2, pol1, pol2)
-        reordered = sorted(enumerate(bls_ordering), key=key)
-        permutation = [x[0] for x in reordered]
-        # permutation contains the mapping from new position to original
-        # position, but we need the inverse. np.argsort inverts a permutation
-        permutation = np.argsort(permutation)
+            input1, input2 = item[1]
+            pol1 = input1[-1]
+            pol2 = input2[-1]
+            return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
+
+        # Eliminate baselines not covered by antenna_mask
+        filtered = [x for x in enumerate(bls_ordering) if keep(x[1])]
+        # Sort what's left
+        reordered = sorted(filtered, key=key)
+        # reordered contains the mapping from new position to original
+        # position, but we need the inverse.
+        permutation = [-1] * len(bls_ordering)
+        for i in range(len(reordered)):
+            permutation[reordered[i][0]] = i
         return permutation, np.array([x[1] for x in reordered])
 
     def send_sd_metadata(self):
@@ -428,15 +442,11 @@ class CBFIngest(threading.Thread):
 
     def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
-        # set up baseline mask
-        self.baseline_mask = range(self.cbf_attr['n_bls'].value)
-         # default mask is to include all known baselines
-        if self._script_ants is not None:
-         # we need to calculate a baseline_mask to match the specified script_ants
-            self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+        cbf_baselines = len(self.cbf_attr['bls_ordering'].value)
+        # Configure the masking and reordering of baselines
         permutation, self.cbf_attr['bls_ordering'].value = \
-                self.baseline_permutation(self.cbf_attr['bls_ordering'].value)
-        baselines = len(self.baseline_mask)
+                self.baseline_permutation(self.cbf_attr['bls_ordering'].value, self.antenna_mask)
+        baselines = len(self.cbf_attr['bls_ordering'].value)
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
 
@@ -469,11 +479,11 @@ class CBFIngest(threading.Thread):
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
 
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, (0, channels), baselines,
+                self.command_queue, channels, (0, channels), cbf_baselines, baselines,
                 self.cont_factor, self.sd_cont_factor, percentile_ranges)
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
-        self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.uint16))
+        self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
 
@@ -482,7 +492,7 @@ class CBFIngest(threading.Thread):
             self.write_process_log(*description)
 
         # initialise the signal display data frame
-        self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
+        self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,baselines,2),dtype=np.float32)
         self.send_sd_metadata()
 
     def _flush_output(self, timestamps):
@@ -625,8 +635,7 @@ class CBFIngest(threading.Thread):
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
             ##### Perform data processing
-            masked_data = data_item.get_value()[...,self.baseline_mask,:]
-            self.proc.buffer('vis_in').set(self.command_queue, masked_data)
+            self.proc.buffer('vis_in').set(self.command_queue, data_item.get_value())
             self.proc()
 
             #### Done with reading this frame

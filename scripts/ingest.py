@@ -12,9 +12,8 @@
 
 import spead64_40
 import spead64_48 as spead
-import sys
 import time
-import optparse
+import argparse
 import Queue
 import logging
 
@@ -31,33 +30,43 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 # import katconf
 
-def parse_opts(argv):
-    parser = optparse.OptionParser()
-    parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
-    parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
-    parser.add_option('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on')
-    parser.add_option('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
-    parser.add_option('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on')
-    parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
-    parser.add_option('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%default]')
-    parser.add_option('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%default]')
-    parser.add_option('--spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
-    parser.add_option('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%default]')
-    parser.add_option('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%default]')
-    parser.add_option('--continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%default]')
-    parser.add_option('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%default]')
-    parser.add_option('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%default]')
-    parser.add_option('--antennas', default=2, type=int, help='number of antennas. [default=%default]')
-    parser.add_option('--channels', default=32768, type=int, help='number of channels. [default=%default]')
-    parser.add_option('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%default]')
-    parser.add_option('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%default]')
-    parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
-    parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
-    parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
-    parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
+def comma_list(type_):
+    """Return a function which splits a string on commas and converts each element to
+    `type_`."""
+
+    def convert(arg):
+        return [type_(x) for x in arg.split(',')]
+    return convert
+
+def parse_opts():
+    parser = argparse.ArgumentParser(
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%(default)s]')
+    parser.add_argument('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%(default)s]')
+    parser.add_argument('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on. [default=%(default)s]')
+    parser.add_argument('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%(default)s]')
+    parser.add_argument('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on. [default=%(default)s]')
+    parser.add_argument('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%(default)s]')
+    parser.add_argument('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%(default)s]')
+    parser.add_argument('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%(default)s]')
+    parser.add_argument('--spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%(default)s]')
+    parser.add_argument('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%(default)s]')
+    parser.add_argument('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%(default)s]')
+    parser.add_argument('--continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%(default)s]')
+    parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
+    parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
+    parser.add_argument('--antennas', default=2, type=int, help='number of antennas (prior to masking). [default=%(default)s]')
+    parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
+    parser.add_argument('--channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
+    parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
+    parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
+    parser.add_argument('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%(default)s]')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
+    parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
+    parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
                       help='level to use for basic logging or name of logging configuration file; '
                            'default is /log/log.<SITENAME>.conf')
-    return parser.parse_args(argv)
+    return parser.parse_args()
 
 
 class IngestDeviceServer(DeviceServer):
@@ -354,7 +363,7 @@ class IngestDeviceServer(DeviceServer):
 
 
 if __name__ == '__main__':
-    opts, args = parse_opts(sys.argv)
+    opts = parse_opts()
 
     # Setup configuration source
     #katconf.set_config(katconf.environ(opts.sysconfig))
@@ -380,7 +389,8 @@ if __name__ == '__main__':
     cam_logger.info("CAM ingest logging started")
 
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.antennas, opts.channels,
+    antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
+    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, antennas, opts.channels,
             opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()

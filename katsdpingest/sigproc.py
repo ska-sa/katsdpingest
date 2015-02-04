@@ -177,10 +177,10 @@ class PrepareTemplate(object):
 
         vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
         vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
-        permutation = accel.DeviceArray(context, (baselines,), np.uint16)
+        permutation = accel.DeviceArray(context, (baselines,), np.int16)
         weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
         vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
-        permutation.set(queue, np.arange(baselines).astype(np.uint16))
+        permutation.set(queue, np.arange(baselines).astype(np.int16))
         def generate(block, vtx, vty):
             local_mem = (block * vtx + 1) * (block * vty) * 8
             if local_mem > 32768:
@@ -188,7 +188,7 @@ class PrepareTemplate(object):
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
-                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines, baselines)
             fn.bind(vis_in=vis_in, vis_out=vis_out,
                     permutation=permutation, weights=weights)
             return tune.make_measure(queue, fn)
@@ -197,21 +197,21 @@ class PrepareTemplate(object):
                 vtx=[1, 2, 3, 4],
                 vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, channel_range, baselines):
-        return Prepare(self, command_queue, channels, channel_range, baselines)
+    def instantiate(self, command_queue, channels, channel_range, in_baselines, out_baselines):
+        return Prepare(self, command_queue, channels, channel_range, in_baselines, out_baselines)
 
 class Prepare(accel.Operation):
     """Concrete instance of :class:`PrepareTemplate`.
 
     .. rubric:: Slots
 
-    **vis_in** : channels × baselines × 2, int32
+    **vis_in** : channels × in_baselines × 2, int32
         Input visibilities
-    **permutation** : baselines, uint16
-        Permutation mapping original to new baseline index
-    **vis_out** : baselines × channels, complex64
+    **permutation** : in_baselines, int16
+        Permutation mapping original to new baseline index, or -1 to discard
+    **vis_out** : out_baselines × channels, complex64
         Transformed visibilities
-    **weights** : baselines × kept-channels, float32
+    **weights** : out_baselines × kept-channels, float32
         Weights corresponding to visibilities
 
     Parameters
@@ -224,31 +224,36 @@ class Prepare(accel.Operation):
         Number of channels
     channel_range : tuple of two ints
         Half-open interval of channels that will be written to **weights**
-    baselines : int
-        Number of baselines
+    in_baselines : int
+        Number of baselines in the input
+    out_baselines : int
+        Number of baselines in the output
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines):
+    def __init__(self, template, command_queue, channels, channel_range, in_baselines, out_baselines):
+        if in_baselines < out_baselines:
+            raise ValueError('Baselines can only be discarded, not amplified')
         super(Prepare, self).__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
         self.channels = channels
         self.channel_range = channel_range
-        self.baselines = baselines
+        self.in_baselines = in_baselines
+        self.out_baselines = out_baselines
         self.scale = 1.0
         padded_channels = accel.Dimension(channels, tiley)
-        padded_baselines = accel.Dimension(baselines, tilex)
+        padded_in_baselines = accel.Dimension(in_baselines, tilex)
         complex_parts = accel.Dimension(2, exact=True)
         self.slots['vis_in'] = accel.IOSlot(
-                (padded_channels, padded_baselines, complex_parts), np.int32)
+                (padded_channels, padded_in_baselines, complex_parts), np.int32)
         # For output we do not need to pad the baselines, because the
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
-                (baselines, padded_channels), np.complex64)
+                (out_baselines, padded_channels), np.complex64)
         # Channels need to be range-checked anywhere here, so no padding
         self.slots['weights'] = accel.IOSlot(
-                (baselines, channel_range[1] - channel_range[0]), np.float32)
-        self.slots['permutation'] = accel.IOSlot((baselines,), np.uint16)
+                (out_baselines, channel_range[1] - channel_range[0]), np.float32)
+        self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
 
     def set_scale(self, scale):
         self.scale = scale
@@ -262,7 +267,7 @@ class Prepare(accel.Operation):
         block = self.template.block
         tilex = block * self.template.vtx
         tiley = block * self.template.vty
-        xblocks = accel.divup(self.baselines, tilex)
+        xblocks = accel.divup(self.in_baselines, tilex)
         yblocks = accel.divup(self.channels, tiley)
         self.command_queue.enqueue_kernel(
                 self.template.kernel,
@@ -276,7 +281,7 @@ class Prepare(accel.Operation):
                     np.int32(vis_in.padded_shape[1]),
                     np.int32(self.channel_range[0]),
                     np.int32(self.channel_range[1]),
-                    np.int32(self.baselines),
+                    np.int32(self.in_baselines),
                     np.float32(self.scale)
                 ],
                 global_size = (xblocks * block, yblocks * block),
@@ -286,7 +291,8 @@ class Prepare(accel.Operation):
         return {
             'channels': self.channels,
             'channel_range': self.channel_range,
-            'baselines': self.baselines,
+            'in_baselines': self.in_baselines,
+            'out_baselines': self.out_baselines,
             'scale': self.scale
         }
 
@@ -652,8 +658,10 @@ class IngestTemplate(object):
         self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
 
-    def instantiate(self, command_queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges):
-        return IngestOperation(self, command_queue, channels, channel_range, baselines, cont_factor, sd_cont_factor, percentile_ranges)
+    def instantiate(self, command_queue, channels, channel_range,
+            cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges):
+        return IngestOperation(self, command_queue, channels, channel_range,
+                cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges)
 
 class IngestOperation(accel.OperationSequence):
     """Concrete instance of :class:`IngestTemplate`.
@@ -662,7 +670,7 @@ class IngestOperation(accel.OperationSequence):
 
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
-    **permutation** : baselines, uint16
+    **permutation** : baselines, int16
         Permutation mapping original to new baseline index
     **timeseries_weights** : kept-channels, float32
         Per-channel weights for timeseries averaging
@@ -704,8 +712,10 @@ class IngestOperation(accel.OperationSequence):
         Number of channels
     channel_range : tuple of two ints
         Half-open interval of channels that will be written to **weights**
+    cbf_baselines : int
+        Number of baselines received from CBF
     baselines : int
-        Number of baselines
+        Number of baselines, after antenna masking
     cont_factor : int
         Number of spectral channels per continuum channel
     sd_cont_factor : int
@@ -714,12 +724,13 @@ class IngestOperation(accel.OperationSequence):
         Column range for each set of baselines (post-permutation) for which
         percentiles will be computed.
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines,
+    def __init__(self, template, command_queue, channels, channel_range,
+            cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges):
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
-                command_queue, channels, channel_range, baselines)
+                command_queue, channels, channel_range, cbf_baselines, baselines)
         self.zero_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         self.zero_sd_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
