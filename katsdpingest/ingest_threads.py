@@ -160,6 +160,36 @@ def _split_array(x, dtype):
     interface['descr'] = out_dtype.descr
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
+def _slot_shape(x, split_dtype=None):
+    """Return the dtype and shape of an array as a tuple that can be passed to
+    :func:`spead.ItemGroup.add_item`.
+
+    Parameters
+    ----------
+    x : object
+        Array or array-like object with `shape` and `dtype` attributes
+    split_dtype : numpy dtype, optional
+        If `split_dtype` is specified, it considers the result of passing an array
+        shaped like `x` to :func:`_split_array`.
+
+    Returns
+    -------
+    dtype : numpy dtype
+        Data type
+    shape : tuple
+        Data shape
+    """
+    dtype = np.dtype(x.dtype)
+    shape = tuple(x.shape)
+    if split_dtype is not None:
+        new_dtype = np.dtype(split_dtype)
+        if dtype.itemsize % new_dtype.itemsize != 0:
+            raise ValueError('item size does not evenly divide')
+        ratio = dtype.itemsize // new_dtype.itemsize
+        shape = shape + (ratio,)
+        dtype = new_dtype
+    return dtype, shape
+
 class CBFIngest(threading.Thread):
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -234,6 +264,7 @@ class CBFIngest(threading.Thread):
         self.sd_int_time = opts.sd_int_time
         self.cont_factor = opts.continuum_factor
         self.sd_cont_factor = opts.sd_continuum_factor
+        self.channels = opts.channels
         if opts.antenna_mask is not None:
             self.antenna_mask = set(opts.antenna_mask)
         else:
@@ -259,8 +290,6 @@ class CBFIngest(threading.Thread):
         self.ig_sd = spead.ItemGroup()
         self.timestamps = []
          # temporary timestamp store
-        self.sd_frame = None
-         # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = None    # Instantiation of the template delayed until data shape is known (TODO: can do it here)
@@ -289,13 +318,28 @@ class CBFIngest(threading.Thread):
         """Update the itemgroup for the signal display metadata to include any changes since last sent..."""
         self.ig_sd = spead.ItemGroup()
          # we need to clear the descriptor so as not to accidently send a signal display frame twice...
-        if self.sd_frame is not None:
-            self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.", ndarray=(self.sd_frame.dtype,self.sd_frame.shape))
-            self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.", ndarray=(np.dtype(np.uint8), self.sd_frame.shape[:-1]))
-            npercsignals=40
-            self.ig_sd.add_item(name=('sd_timeseries'),id=(0x3504), description="Computed timeseries.", ndarray=(self.sd_frame.dtype,(self.sd_frame.shape[1],self.sd_frame.shape[2])))
-            self.ig_sd.add_item(name=('sd_percspectrum'),id=(0x3505), description="Percentiles of spectrum data.", ndarray=(np.dtype(np.float32),(self.sd_frame.shape[0],npercsignals)))
-            self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.", ndarray=(np.dtype(np.uint8),(self.sd_frame.shape[0],npercsignals)))
+        self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.",
+            ndarray=_slot_shape(self.proc.buffer('sd_spec_vis'), np.float32))
+        self.ig_sd.add_item(name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
+            ndarray=_slot_shape(self.proc.buffer('sd_cont_vis'), np.float32))
+        self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.",
+            ndarray=_slot_shape(self.proc.buffer('sd_spec_flags')))
+        self.ig_sd.add_item(name=('sd_blmxflags'),id=(0x3508), description="Reduced data flags for baseline matrix.",
+            ndarray=_slot_shape(self.proc.buffer('sd_cont_flags')))
+        self.ig_sd.add_item(name=('sd_timeseries'),id=(0x3504), description="Computed timeseries.",
+            ndarray=_slot_shape(self.proc.buffer('timeseries'), np.float32))
+        n_perc_signals = 0
+        perc_idx = 0
+        while True:
+            try:
+                n_perc_signals += self.proc.buffer('percentile{0}'.format(perc_idx)).shape[0]
+                perc_idx += 1
+            except KeyError:
+                break
+        self.ig_sd.add_item(name=('sd_percspectrum'),id=(0x3505), description="Percentiles of spectrum data.",
+            ndarray=(np.dtype(np.float32),(self.proc.buffer('percentile0').shape[1],n_perc_signals)))
+        self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.",
+            ndarray=(np.dtype(np.uint8),(self.proc.buffer('percentile0').shape[1],n_perc_signals)))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
                             shape=[],fmt=spead.mkfmt(('f',64)), init_val=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
@@ -411,7 +455,7 @@ class CBFIngest(threading.Thread):
 
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
-        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(maskstr,self.sd_frame.shape[0])[1]
+        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(maskstr,self.channels)[1]
 
     def _send_visibilities(self, tx, heap_cnt, vis, flags, ts_rel):
         ig = spead.ItemGroup()
@@ -495,8 +539,7 @@ class CBFIngest(threading.Thread):
         for description in self.proc.descriptions():
             self.write_process_log(*description)
 
-        # initialise the signal display data frame
-        self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,baselines,2),dtype=np.float32)
+        # initialise the signal display metadata
         self.send_sd_metadata()
 
     def _flush_output(self, timestamps):
@@ -531,6 +574,8 @@ class CBFIngest(threading.Thread):
         self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
+        cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
+        cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
         spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
         spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
         timeseries = self.proc.buffer('timeseries').get(self.command_queue)
@@ -549,6 +594,8 @@ class CBFIngest(threading.Thread):
         self.ig_sd['sd_timestamp'] = int(ts * 100)
         self.ig_sd['sd_data'] = _split_array(spec_vis, np.float32)
         self.ig_sd['sd_flags'] = spec_flags
+        self.ig_sd['sd_blmxdata'] = _split_array(cont_vis, np.float32)
+        self.ig_sd['sd_blmxflags'] = cont_flags
         self.ig_sd['sd_timeseries'] = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'] = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'] = np.vstack(percentiles_flags).transpose()
