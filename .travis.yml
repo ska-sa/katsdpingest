@@ -3,7 +3,6 @@ cache:
   directories:
     - $HOME/.ccache
 python:
-  - "2.6"
   - "2.7"
 before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran liblapack-dev ccache
 # command to install dependencies. pip needs to be updated to make h5py install
@@ -13,4 +12,5 @@ install:
   - "(cd ~ && pip install -U pip setuptools)"
   - "(cd ~ && export PATH=/usr/lib/ccache:$PATH && travis_wait pip install -r $OLDPWD/requirements.txt)"
 # command to run tests
-script: nosetests katsdpingest.test.test_telescope_model
+# The simulator tests depend on private svn repositories that are not available to Travis
+script: nosetests -v -e simulator

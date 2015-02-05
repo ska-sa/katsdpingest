@@ -239,7 +239,7 @@ class CBFIngest(threading.Thread):
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, n_sigma=11.0, transposed=True, flag_value=flag_value)
+                context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         n_cross = max_antennas * (max_antennas - 1) // 2
@@ -527,7 +527,8 @@ class CBFIngest(threading.Thread):
 
         self.proc = self.proc_template.instantiate(
                 self.command_queue, channels, (0, channels), cbf_baselines, baselines,
-                self.cont_factor, self.sd_cont_factor, percentile_ranges)
+                self.cont_factor, self.sd_cont_factor, percentile_ranges,
+                threshold_args={'n_sigma': 11.0})
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.int16))

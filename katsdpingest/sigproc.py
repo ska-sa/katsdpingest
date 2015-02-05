@@ -659,9 +659,11 @@ class IngestTemplate(object):
         self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
 
     def instantiate(self, command_queue, channels, channel_range,
-            cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges):
+            cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
+            background_args={}, noise_est_args={}, threshold_args={}):
         return IngestOperation(self, command_queue, channels, channel_range,
-                cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges)
+                cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
+                background_args, noise_est_args, threshold_args)
 
 class IngestOperation(accel.OperationSequence):
     """Concrete instance of :class:`IngestTemplate`.
@@ -723,10 +725,17 @@ class IngestOperation(accel.OperationSequence):
     percentile_ranges : list of 2-tuples of ints
         Column range for each set of baselines (post-permutation) for which
         percentiles will be computed.
+    background_args : dict, optional
+        Extra keyword arguments to pass to the background instantiation
+    noise_est_args : dict, optional
+        Extra keyword arguments to pass to the noise estimation instantiation
+    threshold_args : dict, optional
+        Extra keyword arguments to pass to the threshold instantiation
     """
     def __init__(self, template, command_queue, channels, channel_range,
             cbf_baselines, baselines,
-            cont_factor, sd_cont_factor, percentile_ranges):
+            cont_factor, sd_cont_factor, percentile_ranges,
+            background_args={}, noise_est_args={}, threshold_args={}):
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
@@ -737,7 +746,7 @@ class IngestOperation(accel.OperationSequence):
         self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
         self.flagger = template.flagger.instantiate(
-                command_queue, channels, baselines)
+                command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
         self.accum = template.accum.instantiate(
                 command_queue, channels, channel_range, baselines)
         self.postproc = template.postproc.instantiate(
