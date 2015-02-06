@@ -22,6 +22,7 @@ from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
+from katsdpingest import endpoint
 from katsdpsigproc import accel
 
  # import model components. In the future this may be done by the sdp_proxy and the 
@@ -41,23 +42,18 @@ def comma_list(type_):
 def parse_opts():
     parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%(default)s]')
-    parser.add_argument('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%(default)s]')
-    parser.add_argument('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on. [default=%(default)s]')
-    parser.add_argument('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%(default)s]')
-    parser.add_argument('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on. [default=%(default)s]')
-    parser.add_argument('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%(default)s]')
-    parser.add_argument('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%(default)s]')
-    parser.add_argument('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%(default)s]')
-    parser.add_argument('--spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%(default)s]')
-    parser.add_argument('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%(default)s]')
-    parser.add_argument('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%(default)s]')
-    parser.add_argument('--continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%(default)s]')
+    parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148, single_port=True), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--l0-spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%(default)s]', metavar='RATE')
+    parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--l0-continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%(default)s]', metavar='RATE')
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
     parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
     parser.add_argument('--antennas', default=2, type=int, help='number of antennas (prior to masking). [default=%(default)s]')
     parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
-    parser.add_argument('--channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
+    parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--file-base', type=str, help='base directory into which to write HDF5 files. [default=no file]')
@@ -76,7 +72,7 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
 
-    def __init__(self, logger, sdisp_ips, sdisp_port, antennas, channels, *args, **kwargs):
+    def __init__(self, logger, sdisp_endpoints, antennas, channels, *args, **kwargs):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
@@ -89,11 +85,9 @@ class IngestDeviceServer(DeviceServer):
         self.obs = None
          # the observation component for holding observation attributes
         self.sdisp_ips = {}
-        self.sdisp_ips['127.0.0.1'] = sdisp_port
-         # add default signal display destination
-        for ip in sdisp_ips.split(","):
-            self.sdisp_ips[ip] = sdisp_port
-         # add additional user specified ip
+        for endpoint in sdisp_endpoints:
+            self.sdisp_ips[endpoint.host] = endpoint.port
+         # add default or user specified endpoints
         # compile the device code
         context = accel.create_some_context(interactive=False)
         self.proc_template = CBFIngest.create_proc_template(context, antennas, channels)
@@ -205,7 +199,7 @@ class IngestDeviceServer(DeviceServer):
                 self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead, self.h5_file, self.model, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
@@ -327,12 +321,12 @@ class IngestDeviceServer(DeviceServer):
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead_port))
+            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead[0].port))
             tx.end()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead_port))
+            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead[0].port))
             tx.end()
             time.sleep(1)
 
@@ -396,7 +390,7 @@ if __name__ == '__main__':
 
     restart_queue = Queue.Queue()
     antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, antennas, opts.channels,
+    server = IngestDeviceServer(logger, opts.sdisp_spead, antennas, opts.cbf_channels,
             opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
