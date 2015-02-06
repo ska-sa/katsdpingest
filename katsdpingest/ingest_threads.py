@@ -606,17 +606,20 @@ class CBFIngest(threading.Thread):
 
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
-        try:
-            self._run()
-        finally:
-            # It's important to clean up anything here that might hold a
-            # reference to device objects, because of a limitation of
-            # PyCUDA (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions)
-            # that causes objects to leak
-            with self.proc.template.context:
+
+        # PyCUDA has a bug/limitation regarding cleanup
+        # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
+        # to cause device objects and `HostArray`s to leak. To prevent it,
+        # we need to ensure that references are dropped (and hence objects
+        # are deleted) with the context being current.
+        with self.proc_template.context:
+            try:
+                self._run()
+            finally:
                 # These have references to self, causing circular references
                 self._output_avg = None
                 self._sd_avg = None
+                # Drop last references to all the objects
                 self.proc = None
 
     def _run(self):
