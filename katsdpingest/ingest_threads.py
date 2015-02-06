@@ -295,7 +295,8 @@ class CBFIngest(threading.Thread):
         self.proc = None    # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.flags_description = zip(self.proc_template.flag_names, self.proc_template.flag_descriptions)
          # an array describing the flags produced by the rfi flagger
-        self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
+        if self.h5_file is not None:
+            self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
          # insert flags descriptions into output file
         #### Done with blocks
         threading.Thread.__init__(self)
@@ -405,10 +406,11 @@ class CBFIngest(threading.Thread):
 
     def write_process_log(self, process, args, revision):
         """Write an entry into the process log."""
-        if self._process_log_idx > 0:
-            self.h5_file['/History/process_log'].resize(self._process_log_idx+1, axis=0)
-        self.h5_file['/History/process_log'][self._process_log_idx] = (process, args, revision)
-        self._process_log_idx += 1
+        if self.h5_file is not None:
+            if self._process_log_idx > 0:
+                self.h5_file['/History/process_log'].resize(self._process_log_idx+1, axis=0)
+            self.h5_file['/History/process_log'][self._process_log_idx] = (process, args, revision)
+            self._process_log_idx += 1
 
     def write_timestamps(self):
         """Write the accumulated timestamps into a dataset.
@@ -499,8 +501,9 @@ class CBFIngest(threading.Thread):
         new_shape = list(data_item.shape)
         new_shape[-2] = baselines
         self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
-        self.h5_file.create_dataset(cbf_data_dataset, [0] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
-        self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
+        if self.h5_file is not None:
+            self.h5_file.create_dataset(cbf_data_dataset, [0] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
+            self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)

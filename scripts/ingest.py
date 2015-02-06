@@ -60,7 +60,7 @@ def parse_opts():
     parser.add_argument('--channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
-    parser.add_argument('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%(default)s]')
+    parser.add_argument('--file-base', type=str, help='base directory into which to write HDF5 files. [default=no file]')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
@@ -192,11 +192,14 @@ class IngestDeviceServer(DeviceServer):
         self.model.add_components([m063,m062,cbf,env,self.obs])
         self.model.build_index()
 
-        fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
-        self.h5_file = self.model.create_h5_file(fname)
-         # open a new HDF5 file
-        if self.h5_file is None:
-            return ("fail","Failed to create HDF5 file. Init failed.")
+        if opts.file_base is not None:
+            fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
+            self.h5_file = self.model.create_h5_file(fname)
+             # open a new HDF5 file
+            if self.h5_file is None:
+                return ("fail","Failed to create HDF5 file. Init failed.")
+        else:
+            self.h5_file = None
 
         self.cbf_thread = CBFIngest(opts, self.proc_template,
                 self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
@@ -347,9 +350,12 @@ class IngestDeviceServer(DeviceServer):
         valid = self.model.is_valid()
          # check to see if we are valid up until the last 5 seconds
         if not valid: logger.warning("Model is not valid (for RTS this is expected). Writing to disk anyway.")
-        self.model.finalise_h5_file(self.h5_file)
-        smsg = self.model.close_h5_file(self.h5_file)
-         # close file and rename if appropriate
+        if self.h5_file is not None:
+            self.model.finalise_h5_file(self.h5_file)
+            smsg = self.model.close_h5_file(self.h5_file)
+             # close file and rename if appropriate
+        else:
+            smsg = "no file to close"
 
         self.h5_file = None
         self.model = None
