@@ -31,6 +31,7 @@ RUN apt-get -y update && apt-get -y install \
     python-mako \
     python-markupsafe \
     python-mock \
+    python-netifaces \
     python-nose \
     python-numpy \
     python-ply \

@@ -2,6 +2,7 @@
 
 import socket
 import struct
+import netifaces
 
 class Endpoint(object):
     """A TCP or UDP endpoint consisting of a host and a port"""
@@ -34,14 +35,23 @@ class Endpoint(object):
         """
         try:
             raw = socket.inet_aton(self.host)
+        except socket.error:
+            return False
+        else:
             # IPv4 multicast is the range 224.0.0.0 - 239.255.255.255
             if raw[0] >= '\xE0' and raw[0] < '\xF0':
-                mreq = struct.pack("4sL", raw, socket.INADDR_ANY)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                for iface in netifaces.interfaces():
+                    for addr in netifaces.ifaddresses(iface).get(netifaces.AF_INET, []):
+                        # Skip point-to-point links (includes loopback)
+                        if 'peer' in addr:
+                            continue
+                        if_raw = socket.inet_aton(addr['addr'])
+                        mreq = struct.pack("4s4s", raw, if_raw)
+                        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                        break  # Should only need to subscribe once per interface
                 return True
-        except socket.error:
-            pass
-        return False
+            else:
+                return False
 
 def endpoint_parser(default_port):
     """Return a factory function that parses a string. The string is either
