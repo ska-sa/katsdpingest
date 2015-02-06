@@ -30,8 +30,6 @@ flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
-MULTICAST_PREFIXES = ['224', '239']
- # list of prefixes used to determine a multicast address
 
 
 class CAMIngest(threading.Thread):
@@ -39,10 +37,9 @@ class CAMIngest(threading.Thread):
     of sensor information from the CAM via SPEAD. It uses these to
     update a model of the telescope that is specific to the current
     ingest configuration (subarray)."""
-    def __init__(self, spead_host, spead_port, h5_file, model, logger):
+    def __init__(self, spead_endpoints, h5_file, model, logger):
         self.logger = logger
-        self.spead_host = spead_host
-        self.spead_port = spead_port
+        self.spead_endpoints = spead_endpoints
         self.h5_file = h5_file
         self.model = model
         self.ig = None
@@ -54,22 +51,16 @@ class CAMIngest(threading.Thread):
     def run(self):
         self.ig = spead64_40.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
-        if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
-         # if we have a multicast address we need to subscribe to the appropriate groups...
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if self.spead_host.rfind("+") > 0:
-                host_base, host_number = self.spead_host.split("+")
-                hosts = ["{0}.{1}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
-            else:
-                hosts = [self.spead_host]
-            for h in hosts:
-                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                 # subscribe to each of these hosts
-            self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx_md = spead64_40.TransportUDPrx(self.spead_port)
+        self.logger.info("CAM SPEAD stream reception on {0}".format([str(x) for x in self.spead_endpoints]))
+        # Socket only used for multicast subscription
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        for endpoint in self.spead_endpoints:
+            if endpoint.multicast_subscribe(sock):
+                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
+            elif endpoint.host != '':
+                self.logging.warning("Ignoring non-multicast address {0}".format(endpoint.host))
+        rx_md = spead64_40.TransportUDPrx(self.spead_endpoints[0].port)
 
         for heap in spead64_40.iterheaps(rx_md):
             self.ig.update(heap)
@@ -252,19 +243,16 @@ class CBFIngest(threading.Thread):
             h5_file, my_sensors, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.cbf_spead_port = opts.cbf_spead_port
-        self.cbf_spead_host = opts.cbf_spead_host
-        self.spectral_spead_port = opts.spectral_spead_port
-        self.spectral_spead_host = opts.spectral_spead_host
-        self.spectral_spead_rate = opts.spectral_spead_rate
-        self.continuum_spead_port = opts.continuum_spead_port
-        self.continuum_spead_host = opts.continuum_spead_host
-        self.continuum_spead_rate = opts.continuum_spead_rate
+        self.cbf_spead_endpoints = opts.cbf_spead
+        self.spectral_spead_endpoint = opts.l0_spectral_spead
+        self.spectral_spead_rate = opts.l0_spectral_spead_rate
+        self.continuum_spead_endpoint = opts.l0_continuum_spead
+        self.continuum_spead_rate = opts.l0_continuum_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
         self.cont_factor = opts.continuum_factor
         self.sd_cont_factor = opts.sd_continuum_factor
-        self.channels = opts.channels
+        self.channels = opts.cbf_channels
         if opts.antenna_mask is not None:
             self.antenna_mask = set(opts.antenna_mask)
         else:
@@ -609,26 +597,20 @@ class CBFIngest(threading.Thread):
 
     def run(self):
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.cbf_spead_host, self.cbf_spead_port))
-        if self.cbf_spead_host[:self.cbf_spead_host.find('.')] in MULTICAST_PREFIXES:
-         # if we have a multicast address we need to subscribe to the appropriate groups...
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if self.cbf_spead_host.rfind("+") > 0:
-                host_base, host_number = self.cbf_spead_host.split("+")
-                hosts = ["{0}.{1}".format(host_base[:host_base.rfind('.')],int(host_base[host_base.rfind('.')+1:])+x) for x in range(int(host_number)+1)]
-            else:
-                hosts = [self.cbf_spead_host]
-            for h in hosts:
-                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                 # subscribe to each of these hosts
-            self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx = spead.TransportUDPrx(self.cbf_spead_port, pkt_count=1024, buffer_size=51200000)
+        self.logger.info("CBF SPEAD stream reception on {0}".format([str(x) for x in self.cbf_spead_endpoints]))
+        # Socket only used for multicast subscription
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        for endpoint in self.cbf_spead_endpoints:
+            if endpoint.multicast_subscribe(sock):
+                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
+            elif endpoint.host != '':
+                self.logging.warning("Ignoring non-multicast address {0}".format(endpoint.host))
+        rx = spead.TransportUDPrx(self.cbf_spead_endpoints[0].port, pkt_count=1024, buffer_size=51200000)
         self.tx_spectral = spead.Transmitter(spead.TransportUDPtx(
-            self.spectral_spead_host, self.spectral_spead_port, self.spectral_spead_rate))
+            self.spectral_spead_endpoint.host, self.spectral_spead_endpoint.port, self.spectral_spead_rate))
         self.tx_continuum = spead.Transmitter(spead.TransportUDPtx(
-            self.continuum_spead_host, self.continuum_spead_port, self.continuum_spead_rate))
+            self.continuum_spead_endpoint.host, self.continuum_spead_endpoint.port, self.continuum_spead_rate))
         ig_cbf = spead.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
