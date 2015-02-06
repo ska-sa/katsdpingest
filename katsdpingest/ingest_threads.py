@@ -437,9 +437,6 @@ class CBFIngest(threading.Thread):
         if self.h5_file is not None:
             self.write_timestamps()
         self.h5_file = None
-        # Break circular references
-        self._output_avg = None
-        self._sd_avg = None
 
     def drop_sdisp_ip(self, ip):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
@@ -608,6 +605,22 @@ class CBFIngest(threading.Thread):
         self.proc.start_sd_sum()
 
     def run(self):
+        """Thin wrapper than runs the real code and handles some cleanup."""
+        try:
+            self._run()
+        finally:
+            # It's important to clean up anything here that might hold a
+            # reference to device objects, because of a limitation of
+            # PyCUDA (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions)
+            # that causes objects to leak
+            with self.proc.template.context:
+                # These have references to self, causing circular references
+                self._output_avg = None
+                self._sd_avg = None
+                self.proc = None
+
+    def _run(self):
+        """Real implementation of `run`."""
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.cbf_spead_host, self.cbf_spead_port))
         if self.cbf_spead_host[:self.cbf_spead_host.find('.')] in MULTICAST_PREFIXES:
