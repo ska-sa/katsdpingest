@@ -59,7 +59,7 @@ class CAMIngest(threading.Thread):
             if endpoint.multicast_subscribe(sock):
                 self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
             elif endpoint.host != '':
-                self.logging.warning("Ignoring non-multicast address {0}".format(endpoint.host))
+                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
         rx_md = spead64_40.TransportUDPrx(self.spead_endpoints[0].port)
 
         for heap in spead64_40.iterheaps(rx_md):
@@ -605,7 +605,7 @@ class CBFIngest(threading.Thread):
             if endpoint.multicast_subscribe(sock):
                 self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
             elif endpoint.host != '':
-                self.logging.warning("Ignoring non-multicast address {0}".format(endpoint.host))
+                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
         rx = spead.TransportUDPrx(self.cbf_spead_endpoints[0].port, pkt_count=1024, buffer_size=51200000)
         self.tx_spectral = spead.Transmitter(spead.TransportUDPtx(
             self.spectral_spead_endpoint.host, self.spectral_spead_endpoint.port, self.spectral_spead_rate))
