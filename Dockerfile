@@ -66,7 +66,7 @@ RUN sed -n '/^git/p' /tmp/install/requirements.txt > /tmp/install/requirements-g
 # Install the current package
 COPY . /tmp/install/katsdpingest
 WORKDIR /tmp/install/katsdpingest
-RUN python ./setup.py install
+RUN python ./setup.py clean && python ./setup.py install
 
 # Run ingest as a non-root user
 RUN adduser --system ingest
