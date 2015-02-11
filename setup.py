@@ -27,7 +27,8 @@ setup (
         'katcp',
         'katpoint',
         'katsdpsigproc',
-        'katsdpdisp'
+        'katsdpdisp',
+        'katsdptelstate'
     ],
     zip_safe = False,
 )

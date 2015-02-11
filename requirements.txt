@@ -8,5 +8,7 @@ katcp==0.5.2
 git+ssh://git@github.com/ska-sa/katsdpsigproc
 git+ssh://git@github.com/ska-sa/katpoint
 git+ssh://git@github.com/ska-sa/katsdpdisp
+git+ssh://git@github.com/ska-sa/katsdptelstate
 mock
 netifaces
+redis>=2.10.0

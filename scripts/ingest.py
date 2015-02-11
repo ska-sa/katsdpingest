@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
@@ -24,6 +24,7 @@ import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
 from katsdpingest import endpoint
 from katsdpsigproc import accel
+import katsdptelstate
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
@@ -40,8 +41,7 @@ def comma_list(type_):
     return convert
 
 def parse_opts():
-    parser = argparse.ArgumentParser(
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = katsdptelstate.ArgumentParser()
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148, single_port=True), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
