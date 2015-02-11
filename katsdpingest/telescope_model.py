@@ -319,7 +319,6 @@ class TelescopeModel(object):
                     try:
                         dest.set_value(item_value)
                         if dest.spead_item is None: dest.spead_item = item
-                        item._changed = False
                     except ValueError as e:
                         logger.warning("Failed to set {0} to {1}".format(item_name, item_value))
                         continue

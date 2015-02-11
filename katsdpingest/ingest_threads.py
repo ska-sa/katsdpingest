@@ -20,6 +20,7 @@ import katsdpsigproc.rfi.device as rfi
 from katsdpsigproc import percentile
 from katsdpsigproc import maskedsum
 import katsdpdisp.data as sdispdata
+import katsdptelstate
 import logging
 import socket
 import struct
@@ -37,9 +38,10 @@ class CAMIngest(threading.Thread):
     of sensor information from the CAM via SPEAD. It uses these to
     update a model of the telescope that is specific to the current
     ingest configuration (subarray)."""
-    def __init__(self, spead_endpoints, h5_file, model, logger):
+    def __init__(self, spead_endpoints, h5_file, telstate, model, logger):
         self.logger = logger
         self.spead_endpoints = spead_endpoints
+        self.telstate = telstate
         self.h5_file = h5_file
         self.model = model
         self.ig = None
@@ -47,6 +49,24 @@ class CAMIngest(threading.Thread):
 
     def enable_debug(self, debug):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    def _update_telstate_from_ig(self, ig):
+        for item_name in ig.keys():
+            item = ig.get_item(item_name)
+            if item._changed:
+                try:
+                    (value_time, status, sensor_value) = item.get_value().split(" ",2)
+                    value_time = float(value_time)
+                except ValueError:
+                    sensor_value = item.get_value()
+                    self.logger.warning("Sensor {0} not formatted as expected: {1}".format(item_name, sensor_value))
+                    if self.telstate is not None:
+                        self.telstate.add(item_name, sensor_value, ts=time.time())
+                else:
+                    if status == 'unknown':
+                        self.logger.debug("Sensor {0} has type unknown. Not updating value.".format(item_name))
+                    elif self.telstate is not None:
+                        self.telstate.add(item_name, sensor_value, value_time)
 
     def run(self):
         self.ig = spead64_40.ItemGroup()
@@ -65,6 +85,9 @@ class CAMIngest(threading.Thread):
         for heap in spead64_40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
+            self._update_telstate_from_ig(self.ig)
+            for item_name in self.ig.keys():
+                self.ig.get_item(item_name)._changed = False
 
         self.logger.info("CAM ingest thread complete at %f" % time.time())
 
@@ -240,7 +263,7 @@ class CBFIngest(threading.Thread):
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
 
     def __init__(self, opts, proc_template,
-            h5_file, my_sensors, model, cbf_name, logger):
+            h5_file, my_sensors, telstate, model, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.cbf_spead_endpoints = opts.cbf_spead
@@ -259,6 +282,7 @@ class CBFIngest(threading.Thread):
             self.antenna_mask = None
         self.proc_template = proc_template
         self.h5_file = h5_file
+        self.telstate = telstate
         self.model = model
         self.cbf_name = cbf_name
         self.cbf_component = self.model.components[self.cbf_name]
@@ -483,6 +507,7 @@ class CBFIngest(threading.Thread):
         baselines = len(self.cbf_attr['bls_ordering'].value)
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
+        self._set_telstate_attribute('bls_ordering', self.cbf_attr['bls_ordering'].value)
 
          # we need to create the raw datasets.
         data_item = ig_cbf.get_item('xeng_raw')
@@ -595,6 +620,27 @@ class CBFIngest(threading.Thread):
         #### Prepare for the next group
         self.proc.start_sd_sum()
 
+    def _set_telstate_attribute(self, name, value):
+        if self.telstate is not None:
+            name = '{0}_{1}'.format(self.cbf_name, name)
+            try:
+                self.telstate.add(name, value, immutable=True)
+            except katsdptelstate.ImmutableKeyError:
+                old = self.telstate.get(name)
+                if not np.array_equal(old, value):
+                    self.logger.warning('Attribute %s could not be set to %s because it is already set to %s',
+                            name, old, value)
+
+    def _update_telstate_from_ig(self, ig):
+        """Updates the telescope state from new values in the item group."""
+        for item_name in ig.keys():
+            item = ig.get_item(item_name)
+            # bls_ordering is set later by _initialize, after permuting it.
+            # The other items are data rather than metadata, and so do not
+            # live in the telescope state.
+            if item._changed and item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
+                self._set_telstate_attribute(item_name, item.get_value())
+
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
 
@@ -652,49 +698,61 @@ class CBFIngest(threading.Thread):
             #### Update the telescope model
 
             ig_cbf.update(heap)
-            self.model.update_from_ig(ig_cbf, proxy_path=self.cbf_name)
-             # any interesting attributes will now end up in the model
-             # this means we are only really interested in actual data now
-            if not ig_cbf._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
-            if not ig_cbf._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
-            data_ts = ig_cbf['timestamp']
-            data_item = ig_cbf.get_item('xeng_raw')
-            if not data_item._changed:
-                self.logger.debug("Xeng_raw is unchanged")
-                continue
-            if data_ts <= prev_ts:
-                self.logger.warning("Data timestamps have gone backwards, dropping heap")
-                continue
-            prev_ts = data_ts
-             # we have new data...
+            try:
+                self.model.update_from_ig(ig_cbf, proxy_path=self.cbf_name)
+                self._update_telstate_from_ig(ig_cbf)
+                 # any interesting attributes will now end up in the model
+                 # this means we are only really interested in actual data now
+                if not ig_cbf._names.has_key('xeng_raw'):
+                    self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present")
+                    continue
+                if not ig_cbf._names.has_key('timestamp'):
+                    self.logger.warning("No timestamp received for current data frame - discarding")
+                    continue
+                data_ts = ig_cbf['timestamp']
+                data_item = ig_cbf.get_item('xeng_raw')
+                if not data_item._changed:
+                    self.logger.debug("Xeng_raw is unchanged")
+                    continue
+                if data_ts <= prev_ts:
+                    self.logger.warning("Data timestamps have gone backwards, dropping heap")
+                    continue
+                prev_ts = data_ts
+                 # we have new data...
 
-             # check to see if our CBF model is valid
-             # i.e. make sure any attributes marked as critical are present
-            if not self.cbf_component.is_valid(check_sensors=False):
-                self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
-                continue
+                 # check to see if our CBF model is valid
+                 # i.e. make sure any attributes marked as critical are present
+                if not self.cbf_component.is_valid(check_sensors=False):
+                    self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
+                    continue
 
-            ##### Configure datasets and other items now that we have complete metadata
-            if idx == 0:
-                self._initialise(ig_cbf)
+                ##### Configure datasets and other items now that we have complete metadata
+                if idx == 0:
+                    self._initialise(ig_cbf)
 
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
+                self._output_avg.add_timestamp(data_ts)
+                self._sd_avg.add_timestamp(data_ts)
 
-            ##### Generate timestamps
-            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
-            current_ts = self.cbf_attr['sync_time'].value + current_ts_rel
-            self._my_sensors["last-dump-timestamp"].set_value(current_ts)
+                ##### Generate timestamps
+                current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
+                current_ts = self.cbf_attr['sync_time'].value + current_ts_rel
+                self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
-            ##### Perform data processing
-            self.proc.buffer('vis_in').set(self.command_queue, data_item.get_value())
-            self.proc()
+                ##### Perform data processing
+                self.proc.buffer('vis_in').set(self.command_queue, data_item.get_value())
+                self.proc()
 
-            #### Done with reading this frame
-            idx += 1
-            self.pkt_sensor.set_value(idx)
-            tt = time.time() - st
-            self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
+                #### Done with reading this frame
+                idx += 1
+                self.pkt_sensor.set_value(idx)
+                tt = time.time() - st
+                self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
+            finally:
+                # Exceptions aren't really an issue here, but the code above contains
+                # continue statements, and we want to do this cleanup even if one of
+                # those occurs.
+                for item_name in ig_cbf.keys():
+                    ig_cbf.get_item(item_name)._changed = False
 
         #### Stop received.
 
