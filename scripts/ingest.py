@@ -22,8 +22,8 @@ from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
-from katsdpingest import endpoint
 from katsdpsigproc import accel
+from katsdptelstate import endpoint
 import katsdptelstate
 
  # import model components. In the future this may be done by the sdp_proxy and the 
