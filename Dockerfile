@@ -55,6 +55,7 @@ RUN pip install --no-deps \
     katcp==0.5.5 \
     pycuda==2014.1 \
     pyephem==3.7.5.3 \
+    redis==2.10.3 \
     scikits.fitting==0.5.1 \
     six==1.9.0
 COPY requirements.txt /tmp/install/requirements.txt
