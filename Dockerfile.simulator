@@ -1,0 +1,69 @@
+FROM ubuntu:14.04
+
+MAINTAINER Bruce Merry "bmerry@ska.ac.za"
+
+# Suppress debconf warnings
+ENV DEBIAN_FRONTEND noninteractive
+
+# Set up access to github private repositories
+COPY conf/id_rsa /root/.ssh/
+RUN echo "Host *\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
+RUN chmod -R go-rwx ~/.ssh
+
+# Install system packages. Python packages are mostly installed here, but
+# certain packages are handled by pip:
+# - Not available in Ubuntu 14.04 (universe): pyephem, scikits.fitting, pycuda, katcp, ansicolors
+# - Ubuntu 14.04 version is too old: six
+RUN apt-get -y update && apt-get -y install \
+    wget git-core subversion \
+    python python-dev python-pip \
+    python-blinker \
+    python-genshi \
+    python-iniparse \
+    python-numpy \
+    python-ply \
+    python-twisted \
+    python-zope.interface
+
+# svn 1.8 has an issue with embedding the password into the URL
+# (see http://stackoverflow.com/questions/22451147/svn-1-8-gets-confused-with-password-in-repo-string-using-python-pip),
+# so we have to run a command to pre-populate the authentication cache. We also need to
+# - Download the CA certificate (Ubuntu does not trust cacert)
+# - Set up the configuration file to allow passwords to be stored in plaintext
+# - Put the internal IP for katfs into /etc/hosts (since the external version doesn't do SSL).
+#   Docker ensures that this change is not persistent.
+ENV KATFS_IP 192.168.1.21
+RUN wget -q http://www.cacert.org/certs/root.crt -O /usr/local/share/ca-certificates/cacert-root.crt && \
+    wget -q http://www.cacert.org/certs/class3.crt -O /usr/local/share/ca-certificates/cacert-class3.crt && \
+    update-ca-certificates
+RUN mkdir -p $HOME/.subversion && \
+    /bin/echo -e '[global]\nstore-passwords = yes\nstore-plaintext-passwords = yes\n' > $HOME/.subversion/servers
+RUN echo "$KATFS_IP katfs.kat.ac.za" >> /etc/hosts && \
+    svn ls --username kat --password kat https://katfs.kat.ac.za/svnDS/code/katconf > /dev/null
+
+# Install Python dependencies. Versions are explicitly listed and pinned, so
+# that the docker image is reproducible. There were all up-to-date versions
+# at the time of writing i.e. there are no currently known reasons not to
+# update to newer versions.
+RUN echo "$KATFS_IP katfs.kat.ac.za" >> /etc/hosts && pip install --no-deps \
+    katcp==0.5.5 \
+    pyephem==3.7.5.3 \
+    ProxyTypes==0.9 \
+    six==1.9.0 \
+    git+https://github.com/ska-sa/PySPEAD \
+    git+ssh://git@github.com/ska-sa/katpoint \
+    svn+https://kat@katfs.kat.ac.za/svnDS/code/katconf/trunk#egg=katconf \
+    svn+https://kat@katfs.kat.ac.za/svnDS/code/katcore/trunk#egg=katcore
+
+# Install the current package
+COPY . /tmp/install/katsdpingest
+WORKDIR /tmp/install/katsdpingest
+RUN python ./setup.py clean && pip install --no-deps .
+
+# Run as a non-root user
+RUN adduser --system simulator
+WORKDIR /home/simulator
+USER simulator
+
+EXPOSE 2041
+CMD ["/usr/local/bin/cbf_data_simulator.py", "--standalone"]
