@@ -629,7 +629,7 @@ class CBFIngest(threading.Thread):
                 old = self.telstate.get(name)
                 if not np.array_equal(old, value):
                     self.logger.warning('Attribute %s could not be set to %s because it is already set to %s',
-                            name, old, value)
+                            name, value, old)
 
     def _update_telstate_from_ig(self, ig):
         """Updates the telescope state from new values in the item group."""
