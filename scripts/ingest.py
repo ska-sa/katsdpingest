@@ -97,22 +97,6 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
 
-        self._my_sensors["obs-ants"] = Sensor.string("script-ants","The antennas specified by the user for use by the executed script.","")
-        self._my_sensors["obs-script-name"] = Sensor.string("script-name", "Current script name", "")
-        self._my_sensors["obs-experiment-id"] = Sensor.string("script-experiment-id", "Current experiment id", "")
-        self._my_sensors["obs-observer"] = Sensor.string("script-observer", "Current experiment observer", "")
-        self._my_sensors["obs-description"] = Sensor.string("script-description", "Current experiment description", "")
-        self._my_sensors["obs-script-arguments"] = Sensor.string("script-arguments", "Options and parameters of script - from sys.argv", "")
-        self._my_sensors["obs-status"] = Sensor.string("script-status", "Current status reported by running script", "")
-        self._my_sensors["obs-starttime"] = Sensor.string("script-starttime", "Start time of current script", "")
-        self._my_sensors["obs-endtime"] = Sensor.string("script-endtime", "End time of current script", "")
-
-        self._my_sensors["spead-num-chans"] = Sensor(Sensor.INTEGER, "spead_num_chans","Number of channels reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-num-bls"] = Sensor(Sensor.INTEGER, "spead_num_bls","Number of baselines reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-dump-period"] = Sensor(Sensor.FLOAT, "spead_dump_period","Dump period reported via SPEAD header from the DBE","",default=0,params=[0,2**31])
-        self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
-
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
@@ -120,10 +104,6 @@ class IngestDeviceServer(DeviceServer):
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown at start
-                continue
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
@@ -232,38 +212,6 @@ class IngestDeviceServer(DeviceServer):
         logger.info(smsg)
         return ("ok","set")
 
-    @request(Str(), Str())
-    @return_reply(Str())
-    def request_set_obs_param(self, req, key_string, value_string):
-        """Write a key/value observation parameter to the output file.
-
-        Parameters
-        ----------
-        key_string : str
-            The name of the observation parameter.
-        value_string : str
-            A string containing the value of the observation parameter.
-
-        Returns
-        -------
-        success : {'ok', 'fail'}
-            Whether storing the key/value pair succeeded.
-
-        Examples
-        --------
-        ?set_obs_param script-name Test
-        !set_obs_param ok script-name=Test
-
-        """
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
-        try:
-            self.obs.set_attribute(key_string, value_string)
-        except ValueError, e:
-            return ("fail", "Could not set attribute '%s=%s': %s" % (key_string, value_string, e))
-        smsg = "%s=%s" % (key_string, value_string)
-        logger.info("Set obs param %s" % smsg)
-        return ("ok", smsg)
-
     @request(Str())
     @return_reply(Str())
     def request_drop_sdisp_ip(self, req, ip):
@@ -354,10 +302,6 @@ class IngestDeviceServer(DeviceServer):
         self.h5_file = None
         self.model = None
         self._my_sensors["capture-active"].set_value(0)
-        for sensor in self._my_sensors:
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown when thread has stopped
         logger.info(smsg)
         return ("ok", smsg)
 
