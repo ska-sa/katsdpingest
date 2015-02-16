@@ -57,6 +57,7 @@ class CAMIngest(threading.Thread):
                 try:
                     (value_time, status, sensor_value) = item.get_value().split(" ",2)
                     value_time = float(value_time)
+                    sensor_value = np.safe_eval(sensor_value)
                 except ValueError:
                     sensor_value = item.get_value()
                     self.logger.warning("Sensor {0} not formatted as expected: {1}".format(item_name, sensor_value))
