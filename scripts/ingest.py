@@ -92,10 +92,6 @@ class IngestDeviceServer(DeviceServer):
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown at start
-                continue
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
@@ -292,10 +288,6 @@ class IngestDeviceServer(DeviceServer):
         self.h5_file = None
         self.model = None
         self._my_sensors["capture-active"].set_value(0)
-        for sensor in self._my_sensors:
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown when thread has stopped
         logger.info(smsg)
         return ("ok", smsg)
 
