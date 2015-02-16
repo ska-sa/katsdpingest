@@ -522,6 +522,7 @@ class CBFIngest(threading.Thread):
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
+        self._set_telstate_attribute('l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
         self.logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
@@ -621,9 +622,10 @@ class CBFIngest(threading.Thread):
         #### Prepare for the next group
         self.proc.start_sd_sum()
 
-    def _set_telstate_attribute(self, name, value):
+    def _set_telstate_attribute(self, name, value, add_cbf_prefix=True):
         if self.telstate is not None:
-            name = '{0}_{1}'.format(self.cbf_name, name)
+            if add_cbf_prefix:
+                name = '{0}_{1}'.format(self.cbf_name, name)
             try:
                 self.telstate.add(name, value, immutable=True)
             except katsdptelstate.ImmutableKeyError:
