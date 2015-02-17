@@ -5,14 +5,14 @@ m062_pos_actual_scan_elev, Actual elevation after scan offset, deg, float
 m062_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
 m062_pos_request_scan_elev, Requested elevation after scan offset, deg, float
 m062_target, Current target, , string
-m062_noise_source, Noise diode flag, , boolean
+m062_dig_noise_diode, Noise diode flag, , boolean
 m063_activity, Combined state of the antenna proxy, , discrete
 m063_pos_actual_scan_azim, Actual azimuth after scan offset, deg, float
 m063_pos_actual_scan_elev, Actual elevation after scan offset, deg, float
 m063_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
 m063_pos_request_scan_elev, Requested elevation after scan offset, deg, float
 m063_target, Current target, , string
-m063_noise_source, Noise diode flag, , boolean
+m063_dig_noise_diode, Noise diode flag, , boolean
 data_rts_auto_delay_enabled, Whether automatic delay parameter sending is on., , boolean
 data_rts_target, Current target, , string
 anc_asc_air_pressure, Air pressure, mbar, float
