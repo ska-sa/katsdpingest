@@ -522,7 +522,7 @@ class CBFIngest(threading.Thread):
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
-        self._set_telstate_attribute('l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
+        self._set_telstate_attribute('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
         self.logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
