@@ -31,4 +31,4 @@ USER kat
 WORKDIR /home/kat
 
 EXPOSE 2041
-ENTRYPOINT ["/usr/local/bin/cbf_data_simulator.py", "--standalone"]
+CMD ["/usr/local/bin/cbf_data_simulator.py", "--standalone"]

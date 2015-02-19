@@ -53,4 +53,3 @@ WORKDIR /home/kat
 EXPOSE 2040
 EXPOSE 7147/udp
 EXPOSE 7148/udp
-ENTRYPOINT ["/usr/local/bin/ingest.py"]
