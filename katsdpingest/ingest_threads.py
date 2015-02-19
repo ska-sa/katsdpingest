@@ -424,6 +424,7 @@ class CBFIngest(threading.Thread):
                 self.h5_file['/History/process_log'].resize(self._process_log_idx+1, axis=0)
             self.h5_file['/History/process_log'][self._process_log_idx] = (process, args, revision)
             self._process_log_idx += 1
+        self.logger.info("Processing element: %s (%s) %d", process, args, revision)
 
     def write_timestamps(self):
         """Write the accumulated timestamps into a dataset.
