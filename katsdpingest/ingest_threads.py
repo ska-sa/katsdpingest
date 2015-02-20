@@ -262,6 +262,8 @@ class CBFIngest(threading.Thread):
              # this means we are only really interested in actual data now
             if not ig._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
             if not ig._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
+            ti = ig.get_item('timestamp')
+            if ti._value is None: self.logger.error("Receiver timestamp is invalid (None)"); continue
             data_ts = ig['timestamp']
             data_item = ig.get_item('xeng_raw')
             if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue
