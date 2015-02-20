@@ -10,7 +10,7 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
-import spead
+import spead64_48 as spead
 import sys
 import time
 import optparse
@@ -158,12 +158,12 @@ class IngestDeviceServer(DeviceServer):
 
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
-        m062 = AntennaPositioner(name='m062')
+#        m062 = AntennaPositioner(name='m062')
         cbf = CorrelatorBeamformer(name='data_rts')
         env = Enviro(name='anc_asc')
         self.obs = Observation(name='obs')
         self.model = TelescopeModel()
-        self.model.add_components([m063,m062,cbf,env,self.obs])
+        self.model.add_components([m063,cbf,env,self.obs])
         self.model.build_index()
 
         fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
