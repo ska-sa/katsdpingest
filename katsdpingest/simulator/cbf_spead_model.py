@@ -264,7 +264,7 @@ class DBE7SpeadData(object):
         ig.add_item(name="int_time",id=0x1016,
             description="Approximate (it's a float!) integration time per accumulation in seconds.",
             shape=[],fmt=spead.mkfmt(('f',64)),
-            init_val=self.acc_time_get())
+            init_val=self.get_acc_time())
 
         ig.add_item(name='sync_time',id=0x1027,
             description="Time at which the system was last synchronised (armed and triggered by a 1PPS) in seconds since the Unix Epoch.",
@@ -389,7 +389,7 @@ class DBE7SpeadData(object):
         """get number of accumulations per dump"""
         return self._n_accs
 
-    def acc_time_get(self):
+    def get_acc_time(self):
         n_accs = self.acc_n_get()
         return float(self.config['n_chans'] * n_accs) / self.config['bandwidth']
 
