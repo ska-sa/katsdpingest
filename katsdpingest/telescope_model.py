@@ -336,6 +336,7 @@ class AntennaPositioner(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(AntennaPositioner, self).__init__(*args, **kwargs)
         self._critical_sensors = ['activity','target','pos_actual_scan_elev','pos_request_scan_elev','pos_actual_scan_azim','pos_request_scan_azim']
+        self._std_sensors = ['dig_noise_diode']
         self._critical_attributes = ['description']
         self._build()
 
