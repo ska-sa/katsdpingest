@@ -3,5 +3,6 @@ h5py
 spead
 iniparse
 blinker
+netifaces
 scikits.fitting
 katcp==0.5.2
