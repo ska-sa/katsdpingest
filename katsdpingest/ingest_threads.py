@@ -9,7 +9,8 @@
 
 import numpy as np
 import threading
-import spead
+import spead64_40 as spead40
+import spead64_48 as spead
 import time
 import copy
 import katsdpingest.sigproc as sp
@@ -45,7 +46,7 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def run(self):
-        self.ig = spead.ItemGroup()
+        self.ig = spead40.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
@@ -62,9 +63,9 @@ class CAMIngest(threading.Thread):
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                  # subscribe to each of these hosts
             self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
-        rx_md = spead.TransportUDPrx(self.spead_port)
+        rx_md = spead40.TransportUDPrx(self.spead_port)
 
-        for heap in spead.iterheaps(rx_md):
+        for heap in spead40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
 
@@ -264,6 +265,8 @@ class CBFIngest(threading.Thread):
              # this means we are only really interested in actual data now
             if not ig._names.has_key('xeng_raw'): self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present"); continue
             if not ig._names.has_key('timestamp'): self.logger.warning("No timestamp received for current data frame - discarding"); continue
+            ti = ig.get_item('timestamp')
+            if ti._value is None: self.logger.error("Receiver timestamp is invalid (None)"); continue
             data_ts = ig['timestamp']
             data_item = ig.get_item('xeng_raw')
             if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue

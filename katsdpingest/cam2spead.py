@@ -336,12 +336,3 @@ class Cam2SpeadDeviceServer(DeviceServer):
             return ("fail", "Unknown SPEAD stream %r" % (name,))
         self.update_sensor('obs_script_log', log)
         return ("ok",)
-
-    @request(Str(), Str(), Timestamp(), Bool())
-    @return_reply()
-    def request_set_nd_sensor(self, req, name, receptor, timestamp, value):
-        """Set a noise diode flag on the desired SPEAD stream."""
-        if name not in self.destinations:
-            return ("fail", "Unknown SPEAD stream %r" % (name,))
-        self.update_sensor(receptor + '_noise_source', value, timestamp)
-        return ("ok",)
