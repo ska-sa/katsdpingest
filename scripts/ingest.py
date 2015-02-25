@@ -176,10 +176,10 @@ class IngestDeviceServer(DeviceServer):
             self.h5_file = None
 
         self.cbf_thread = CBFIngest(opts, self.proc_template,
-                self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+                self.h5_file, self._my_sensors, opts.telstate, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead, self.h5_file, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead, self.h5_file, opts.telstate, self.model, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
