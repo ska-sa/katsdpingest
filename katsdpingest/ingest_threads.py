@@ -17,6 +17,7 @@ import katsdpingest.sigproc as sp
 import logging
 import socket
 import struct
+from .endpoint import Endpoint
 
 
 timestamps_dataset = '/Data/timestamps'
@@ -59,10 +60,10 @@ class CAMIngest(threading.Thread):
             else:
                 hosts = [self.spead_host]
             for h in hosts:
-                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                 # subscribe to each of these hosts
-            self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
+                ep = Endpoint(h,self.spead_port)
+                ep.multicast_subscribe(sock)
+                 # subscribe to each of these hosts and all local interfaces
+            self.logger.info("Subscribing (on all ifaces) to the following multicast addresses: {0}".format(hosts))
         rx_md = spead40.TransportUDPrx(self.spead_port)
 
         for heap in spead40.iterheaps(rx_md):
@@ -234,10 +235,11 @@ class CBFIngest(threading.Thread):
             else:
                 hosts = [self.spead_host]
             for h in hosts:
-                mreq = struct.pack("4sl", socket.inet_aton(h), socket.INADDR_ANY)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                ep = Endpoint(h,self.spead_port)
+                ep.multicast_subscribe(sock)
+                 # subscribe to each of these hosts and all local interfaces
                  # subscribe to each of these hosts
-            self.logger.info("Subscribing to the following multicast addresses: {0}".format(hosts))
+            self.logger.info("Subscribing (on all ifaces) to the following multicast addresses: {0}".format(hosts))
         rx = spead.TransportUDPrx(self.spead_port, pkt_count=1024, buffer_size=51200000)
         ig = spead.ItemGroup()
         idx = 0
