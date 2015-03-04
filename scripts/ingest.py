@@ -16,6 +16,7 @@ import time
 import argparse
 import Queue
 import logging
+import manhole
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
@@ -339,6 +340,10 @@ if __name__ == '__main__':
     server.set_restart_queue(restart_queue)
     server.start()
     logger.info("Started k7_capture server.")
+
+    manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
+     # allow remote debug connections and expose server and opts
+
     try:
         while True:
             try:
