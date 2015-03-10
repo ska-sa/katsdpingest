@@ -655,8 +655,11 @@ class IngestTemplate(object):
         self.accum = AccumTemplate(context, 2)
         self.postproc = PostprocTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
+        self.percentiles = [percentile.Percentile5Template(context, max(size, 1), False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
+        # These last two are used when the input is empty (zero baselines)
+        self.nan_percentiles = fill.FillTemplate(context, np.float32, 'float')
+        self.zero_percentiles_flags = fill.FillTemplate(context, np.uint8, 'unsigned char')
 
     def instantiate(self, command_queue, channels, channel_range,
             cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
@@ -760,17 +763,23 @@ class IngestOperation(accel.OperationSequence):
         for prange in percentile_ranges:
             size = prange[1] - prange[0]
             ptemplate = None
-            # Find the smallest match
-            for t in template.percentiles:
-                if t.max_columns >= size:
-                    if ptemplate is None or t.max_columns < ptemplate.max_columns:
-                        ptemplate = t
-            if ptemplate is None:
-                raise ValueError('Baseline range {0} is too large for any template'.format(prange))
-            self.percentiles.append(
-                ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
-            self.percentiles_flags.append(
-                template.percentiles_flags.instantiate(command_queue, (kept_channels, baselines), prange))
+            if size > 0:
+                # Find the smallest match
+                for t in template.percentiles:
+                    if t.max_columns >= size:
+                        if ptemplate is None or t.max_columns < ptemplate.max_columns:
+                            ptemplate = t
+                if ptemplate is None:
+                    raise ValueError('Baseline range {0} is too large for any template'.format(prange))
+                self.percentiles.append(
+                    ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
+                self.percentiles_flags.append(
+                    template.percentiles_flags.instantiate(command_queue, (kept_channels, baselines), prange))
+            else:
+                self.percentiles.append(template.nan_percentiles.instantiate(command_queue, (5, kept_channels)))
+                self.percentiles[-1].set_value(np.nan)
+                self.percentiles_flags.append(template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,)))
+                self.percentiles_flags[-1].set_value(0)
 
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
@@ -818,10 +827,12 @@ class IngestOperation(accel.OperationSequence):
         }
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
+            # The :data slots are used when NaN-filling. Unused slots are ignored,
+            # so it is safe to just list all the variations.
             compounds['sd_spec_vis'].append(name + ':src')
             compounds['sd_spec_flags'].append(name + '_flags:src')
-            compounds[name] = [name + ':dest']
-            compounds[name + '_flags'] = [name + '_flags:dest']
+            compounds[name] = [name + ':dest', name + ':data']
+            compounds[name + '_flags'] = [name + '_flags:dest', name + '_flags:data']
 
         aliases = {
                 'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']

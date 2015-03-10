@@ -534,11 +534,14 @@ class CBFIngest(threading.Thread):
         collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)[0]
         percentile_ranges = []
         for p in collection_products:
-            start = p[0]
-            end = p[-1] + 1
-            if not np.array_equal(np.arange(start, end), p):
-                raise ValueError("percentile baselines are not contiguous: {}".format(p))
-            percentile_ranges.append((start, end))
+            if p:
+                start = p[0]
+                end = p[-1] + 1
+                if not np.array_equal(np.arange(start, end), p):
+                    raise ValueError("percentile baselines are not contiguous: {}".format(p))
+                percentile_ranges.append((start, end))
+            else:
+                percentile_ranges.append((0, 0))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
 
         self.proc = self.proc_template.instantiate(
