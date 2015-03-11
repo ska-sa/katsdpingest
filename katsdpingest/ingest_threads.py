@@ -59,13 +59,12 @@ class CAMIngest(threading.Thread):
                     value_time = float(value_time)
                     sensor_value = np.safe_eval(sensor_value)
                 except ValueError:
-                    sensor_value = item.get_value()
-                    self.logger.warning("Sensor {0} not formatted as expected: {1}".format(item_name, sensor_value))
-                    if self.telstate is not None:
-                        self.telstate.add(item_name, sensor_value, ts=time.time())
+                    self.logger.warning("Sensor {0} received invalid update '{1}' (ignored)"
+                                        .format(item_name, item.get_value()))
                 else:
                     if status == 'unknown':
-                        self.logger.debug("Sensor {0} has type unknown. Not updating value.".format(item_name))
+                        self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
+                                          .format(item_name, item.get_value()))
                     elif self.telstate is not None:
                         self.telstate.add(item_name, sensor_value, value_time)
 
