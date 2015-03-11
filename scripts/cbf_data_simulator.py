@@ -80,10 +80,10 @@ def parse_opts(argv):
     return parser.parse_args(argv)
 
 def setup_standalone(server, model):
-    model.set_mode('c8n856M32k',mode_delay=0)
-    for cbf_ant, ant in zip([0,1],[62,63]):
-        for ch,pol in zip(['x', 'y'], ['h', 'v']):
-            model.set_antenna_mapping('%d%s' %(cbf_ant, ch), 'm%03d%s' %(ant, pol))
+    model.set_mode('c8n856M4k',mode_delay=0)
+    for cbf_ant, ant in zip([0, 1, 2, 3],[63, 62, 1, 0]):
+        for ch, pol in zip(['x', 'y'], ['h', 'v']):
+            model.set_antenna_mapping('%d%s' % (cbf_ant, ch), 'm%03d%s' % (ant, pol))
 
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
