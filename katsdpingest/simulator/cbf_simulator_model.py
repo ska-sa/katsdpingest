@@ -94,7 +94,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     standalone = False
     valid_modes = ('ready', 'c16n400M1k', 'c16n400M8k', 'c16n13M4k',
                    'c16n25M4k', 'c16n2M4k', 'c16n3M8k', 'c16n7M4k',
-                   'bc16n400M1k', 'c8n856M32k',)
+                   'bc16n400M1k', 'c8n856M32k','c8n856M4k')
 
     def __init__(self, config_dir, *names, **kwargs):
         super(K7CorrelatorModel, self).__init__(*names, **kwargs)
@@ -252,7 +252,7 @@ class K7CorrelatorModel(TestInterfaceModel):
         self.add_test_sensor(Sensor(
             Sensor.FLOAT, 'mode-change-delay',
             'Time that correlator should hang while wating for the mode to change',
-            'seconds', [0, 1000], default=10))
+            'seconds', [0, 1000], default=0))
 
     def _init_values(self):
         self.adc_value = 0
@@ -278,8 +278,9 @@ class K7CorrelatorModel(TestInterfaceModel):
     _test_el = AddLockSettersGetters.add()
 
     def start(self, *names, **kwargs):
-        self.set_mode('c8n856M32k', mode_delay=0)
-        #self.spead_issue()
+        if not hasattr(self, 'config'):
+            self.set_mode('c8n856M4k', mode_delay=0)
+             # default for when no mode set
         super(K7CorrelatorModel, self).start(*names, **kwargs)
 
     def start_data_stream(self):
@@ -517,6 +518,9 @@ class K7CorrelatorModel(TestInterfaceModel):
             'mode-change-delay'
 
         """
+        if not (mode.startswith('c8n') or mode.startswith('c16n')):
+            mode = mode[0] + "8n" + mode[1:]
+         # fix for difference between product and instrument
         if mode_delay is None:
             mode_delay = self.get_test_sensor('mode-change-delay').value()
 
@@ -542,8 +546,8 @@ class K7CorrelatorModel(TestInterfaceModel):
 
 
         if mode == 'ready':
-            # Fake ready mode using the c8n856M32k config as basis
-            config_file = os.path.join(self.config_dir, 'c8n856M32k')
+            # Fake ready mode using the c8n856M4k config as basis
+            config_file = os.path.join(self.config_dir, 'c8n856M4k')
         else:
             config_file = os.path.join(self.config_dir, mode)
         self.config = ModelCorrConf(config_file)
