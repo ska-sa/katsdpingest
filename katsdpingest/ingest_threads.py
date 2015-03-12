@@ -59,14 +59,21 @@ class CAMIngest(threading.Thread):
                     value_time = float(value_time)
                     sensor_value = np.safe_eval(sensor_value)
                 except ValueError:
-                    self.logger.warning("Sensor {0} received invalid update '{1}' (ignored)"
-                                        .format(item_name, item.get_value()))
-                else:
-                    if status == 'unknown':
-                        self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
-                                          .format(item_name, item.get_value()))
-                    elif self.telstate is not None:
-                        self.telstate.add(item_name, sensor_value, value_time)
+                 # our update is not a classical sensor triplet of time / status / value
+                    sensor_value = item.get_value()
+                    value_time = time.time()
+                    status = "nominal"
+                     # fake up a realistic looking sensor
+                    if sensor_value == '':
+                        self.logger.error("Not inserting empty string into sensor {} due to existing numpy/pickle bug"
+                                          .format(item_name))
+                         # TODO: once fixed in numpy remove this check
+                        continue
+                if status == 'unknown':
+                    self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
+                                      .format(item_name, item.get_value()))
+                elif self.telstate is not None:
+                    self.telstate.add(item_name, sensor_value, value_time)
 
     def run(self):
         self.ig = spead64_40.ItemGroup()
