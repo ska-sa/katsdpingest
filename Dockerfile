@@ -35,6 +35,7 @@ RUN pip install --no-deps \
     katcp==0.5.5 \
     pycuda==2014.1 \
     scikits.fitting==0.5.1 \
+    manhole==1.0.0 \
     git+https://github.com/ska-sa/PySPEAD \
     git+ssh://git@github.com/ska-sa/katpoint \
     git+ssh://git@github.com/ska-sa/katsdpsigproc \
