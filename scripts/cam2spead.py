@@ -24,8 +24,6 @@ default_sensors = os.path.join(conf_dir, 'rts_sensors.csv')
 # Parse command-line options
 parser = optparse.OptionParser(usage='%prog [options]',
                                description="Stream CAM events via SPEAD.")
-parser.add_option('-s', '--system',
-                  help='System configuration file (default = site default)')
 parser.add_option('-c', '--sysconfig', default='/var/kat/katconfig',
                   help='Configuration directory, can be overrided by KATCONF '
                        'environment variable (default=%default)')
@@ -69,7 +67,7 @@ if opts.fake_cam:
         logger.warning('No attributes were returned by fake CAM server %s:%d' %
                        (opts.fake_cam_host, opts.fake_cam_port))
 else:
-    kat = katcorelib.tbuild(system=opts.system)
+    kat = katcorelib.tbuild()
     all_sensors = kat.sensors
     antennas = kat.katconfig.array_conf.antennas
     attributes = dict([('%s_description' % (ant,), antennas[ant].observer.description)
