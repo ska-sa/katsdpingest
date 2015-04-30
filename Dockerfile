@@ -4,9 +4,10 @@ MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
 # The drivers must match the version of the kernel module running on the host
 ENV CUDA_RUN_FILE cuda_6.5.19_linux_64.run
-ENV CUDA_RUN http://developer.download.nvidia.com/compute/cuda/6_5/rel/installers/cuda_6.5.19_linux_64.run
+ENV CUDA_RUN http://mirror.kat.ac.za/nvidia/cuda_6.5.19_linux_64.run
 ENV DRIVER_RUN_FILE NVIDIA-Linux-x86_64-346.35.run
-ENV DRIVER_RUN http://uk.download.nvidia.com/XFree86/Linux-x86_64/346.35/NVIDIA-Linux-x86_64-346.35.run
+ENV DRIVER_RUN http://mirror.kat.ac.za/nvidia/NVIDIA-Linux-x86_64-346.35.run
+ENV MIRROR_IP 192.168.1.25
 
 # Install system packages. Python packages are mostly installed here, but
 # certain packages are handled by pip because they're not available.
@@ -21,8 +22,8 @@ RUN apt-get -y update && apt-get -y install \
     python-py \
     python-pytools \
     python-scipy
-RUN wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit && rm -- $CUDA_RUN_FILE
-RUN wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network && rm -- $DRIVER_RUN_FILE
+RUN echo "$MIRROR_IP mirror.kat.ac.za" >> /etc/hosts && wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit && rm -- $CUDA_RUN_FILE
+RUN echo "$MIRROR_IP mirror.kat.ac.za" >> /etc/hosts && wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network && rm -- $DRIVER_RUN_FILE
 ENV PATH="$PATH:/usr/local/cuda/bin"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64"
 
