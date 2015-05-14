@@ -69,7 +69,7 @@ if opts.fake_cam:
         logger.warning('No attributes were returned by fake CAM server %s:%d' %
                        (opts.fake_cam_host, opts.fake_cam_port))
 else:
-    kat = katcorelib.tbuild(system=opts.system)
+    kat = katcorelib.tbuild()
     all_sensors = kat.sensors
     antennas = kat.katconfig.array_conf.antennas
     attributes = dict([('%s_description' % (ant,), antennas[ant].observer.description)
