@@ -286,7 +286,7 @@ class IngestDeviceServer(DeviceServer):
 
         if self.cam_thread.is_alive():
             logger.info("Sending forced stop to CAM thread on port {}".format(opts.cam_spead_port))
-            tx = spead40.Transmitter(spead.TransportUDPtx('localhost',opts.cam_spead_port))
+            tx = spead40.Transmitter(spead40.TransportUDPtx('localhost',opts.cam_spead_port))
             tx.end()
             time.sleep(1)
 
