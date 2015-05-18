@@ -35,7 +35,7 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
-    parser.add_option('-w', '--working-folder', dest='workpath', default=os.path.join("/", "var", "kat", "sdpcontroller"), metavar='WORKING_PATH', help='folder to write process standard out logs into (default=%default)')
+    parser.add_option('-w', '--working-folder', dest='workpath', default=os.path.join("/", "var", "kat", "log"), metavar='WORKING_PATH', help='folder to write process standard out logs into (default=%default)')
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on')
