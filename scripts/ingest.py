@@ -10,12 +10,15 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
+import spead64_40 as spead40
 import spead64_48 as spead
 import sys
 import time
 import optparse
 import Queue
 import logging
+import logging.handlers
+import os
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
@@ -32,6 +35,7 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 def parse_opts(argv):
     parser = optparse.OptionParser()
+    parser.add_option('-w', '--working-folder', dest='workpath', default=os.path.join("/", "var", "kat", "sdpcontroller"), metavar='WORKING_PATH', help='folder to write process standard out logs into (default=%default)')
     parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
     parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
     parser.add_option('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on')
@@ -39,11 +43,10 @@ def parse_opts(argv):
     parser.add_option('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on')
     parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
+    parser.add_option('--antennas', default='m063,m062', help='Comma seperated list of antennas to record to file. Other antennas visibility data is discarded. [default=%default]')
     parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
     parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
-    parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
-                      help='level to use for basic logging or name of logging configuration file; '
-                           'default is /log/log.<SITENAME>.conf')
+    parser.add_option('-l', '--loglevel', dest='loglevel', type="string", default="INFO", metavar='LOGLEVEL', help='set the Python logging level (default=%default)')
     return parser.parse_args(argv)
 
 
@@ -54,8 +57,9 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
 
-    def __init__(self, logger, sdisp_ips, sdisp_port, *args, **kwargs):
+    def __init__(self, logger, sdisp_ips, sdisp_port, antennas, *args, **kwargs):
         self.logger = logger
+        self.antennas = antennas
         self.cbf_thread = None
          # reference to the CBF ingest thread
         self.cam_thread = None
@@ -157,13 +161,15 @@ class IngestDeviceServer(DeviceServer):
              # may be worth expanding the scope to checking the file and the CAM thread as well
 
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
-        m063 = AntennaPositioner(name='m063')
-#        m062 = AntennaPositioner(name='m062')
         cbf = CorrelatorBeamformer(name='data_rts')
         env = Enviro(name='anc_asc')
         self.obs = Observation(name='obs')
         self.model = TelescopeModel()
-        self.model.add_components([m063,cbf,env,self.obs])
+        self.model.add_components([cbf,env,self.obs])
+
+        for a in self.antennas.split(","):
+            self.model.add_components([AntennaPositioner(name=a)])
+
         self.model.build_index()
 
         fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
@@ -172,10 +178,10 @@ class IngestDeviceServer(DeviceServer):
         if self.h5_file is None:
             return ("fail","Failed to create HDF5 file. Init failed.")
 
-        self.cbf_thread = CBFIngest(opts.cbf_spead_host, opts.cbf_spead_port, self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+        self.cbf_thread = CBFIngest(opts.cbf_spead_host, opts.cbf_spead_port, self.h5_file, self._my_sensors, self.model, cbf.name, self.antennas)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
@@ -267,26 +273,29 @@ class IngestDeviceServer(DeviceServer):
         """Closes the current capture file and renames it for use by augment."""
         if self.cbf_thread is None:
             return ("fail","No existing capture session.")
+        logger.debug("Capture done called. Thread status is ({},{})".format(self.cbf_thread.is_alive(), self.cam_thread.is_alive()))
 
          # if the observation framework is behaving correctly
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
+            logger.info("Sending forced stop to CBF thread on port {}".format(opts.cbf_spead_port))
             tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead_port))
             tx.end()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cam_spead_port))
+            logger.info("Sending forced stop to CAM thread on port {}".format(opts.cam_spead_port))
+            tx = spead40.Transmitter(spead.TransportUDPtx('localhost',opts.cam_spead_port))
             tx.end()
             time.sleep(1)
 
-        self.cbf_thread.finalise()
-         # no further correspondence will be entered into
-
         self.cbf_thread.join()
         self.cam_thread.join()
-         # we really dont want these lurking around
+         # threads are now safe for finalisation
+        logger.debug("All ingest threads now terminated.")
+        self.cbf_thread.finalise()
+         # no further correspondence will be entered into
         self.cbf_thread = None
          # we are done with the capture thread
         self.cam_thread = None
@@ -313,13 +322,29 @@ class IngestDeviceServer(DeviceServer):
 if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
 
-    # Setup configuration source
-    #katconf.set_config(katconf.environ(opts.sysconfig))
-    # set up Python logging
-    #katconf.configure_logging(opts.logging)
+    logger = logging.getLogger('ingest')
 
-    logger = logging.getLogger("katsdpingest.ingest")
-    logger.setLevel(logging.INFO)
+    if isinstance(opts.loglevel, basestring):
+        opts.loglevel = getattr(logging, opts.loglevel.upper())
+    logger.setLevel(opts.loglevel)
+    try:
+        fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e6, backupCount=10)
+        formatter = logging.Formatter(("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s"),
+                                      datefmt="%Y-%m-%d %H:%M:%S")
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+
+        sh = logging.StreamHandler()
+        sh.setFormatter(formatter)
+        logger.addHandler(sh)
+         # we assume this is the SDP ur process and so we setup logging in a fairly manual fashion
+    except IOError:
+        logging.basicConfig()
+        (logger.warn("Failed to create log file so reverting to console output. Most likely issue is that {0} does not exist or is not writeable"
+         .format(os.path.join(opts.workpath))))
+
+    if len(logger.root.handlers) > 0: logger.root.removeHandler(logger.root.handlers[0])
+     # purge the root handler if it exists to avoid console duplicates
 
     spead.logger.setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
@@ -327,16 +352,8 @@ if __name__ == '__main__':
     sp.ProcBlock.logger = logger
      # logger ref for use in the signal processing routines
 
-    cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
-    cbf_logger.setLevel(logging.INFO)
-    cbf_logger.info("CBF ingest logging started")
-
-    cam_logger = logging.getLogger("katsdpingest.cam_ingest")
-    cam_logger.setLevel(logging.INFO)
-    cam_logger.info("CAM ingest logging started")
-
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
+    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.antennas, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     logger.info("Started k7_capture server.")

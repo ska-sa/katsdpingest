@@ -28,13 +28,14 @@ sdisp_ips = {}
 MULTICAST_PREFIXES = ['224', '239']
  # list of prefixes used to determine a multicast address
 
+logger = logging.getLogger('ingest')
 
 class CAMIngest(threading.Thread):
     """The CAM Ingest class receives meta-data updates in the form
     of sensor information from the CAM via SPEAD. It uses these to
     update a model of the telescope that is specific to the current
     ingest configuration (subarray)."""
-    def __init__(self, spead_host, spead_port, h5_file, model, logger):
+    def __init__(self, spead_host, spead_port, h5_file, model):
         self.logger = logger
         self.spead_host = spead_host
         self.spead_port = spead_port
@@ -48,7 +49,6 @@ class CAMIngest(threading.Thread):
 
     def run(self):
         self.ig = spead40.ItemGroup()
-        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
          # if we have a multicast address we need to subscribe to the appropriate groups...
@@ -66,15 +66,18 @@ class CAMIngest(threading.Thread):
             self.logger.info("Subscribing (on all ifaces) to the following multicast addresses: {0}".format(hosts))
         rx_md = spead40.TransportUDPrx(self.spead_port)
 
+        count = 0
         for heap in spead40.iterheaps(rx_md):
             self.ig.update(heap)
             self.model.update_from_ig(self.ig)
+            if count == 0: logger.info("First update to model from CAM SPEAD stream completed.")
+            count += 1
 
-        self.logger.info("CAM ingest thread complete at %f" % time.time())
+        self.logger.info("CAM ingest thread complete. ({} heaps received)".format(count))
 
 
 class CBFIngest(threading.Thread):
-    def __init__(self, spead_host, spead_port, h5_file, my_sensors, model, cbf_name, logger):
+    def __init__(self, spead_host, spead_port, h5_file, my_sensors, model, cbf_name, antennas):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.spead_port = spead_port
@@ -84,6 +87,7 @@ class CBFIngest(threading.Thread):
         self.cbf_name = cbf_name
         self.cbf_component = self.model.components[self.cbf_name]
         self.cbf_attr = self.cbf_component.attributes
+        self.antennas = antennas
 
         self._process_log_idx = 0
         self._my_sensors = my_sensors
@@ -99,8 +103,6 @@ class CBFIngest(threading.Thread):
         self.sd_frame = None
         self.baseline_mask = None
          # by default record all baselines
-        self._script_ants = None
-         # a reference to the antennas requested from the current script
         #### Initialise processing blocks used
         self.scale = sp.Scale(1.0)
          # at this stage the scale factor is unknown
@@ -151,12 +153,11 @@ class CBFIngest(threading.Thread):
         return copy.deepcopy(self.ig_sd.get_heap())
 
     def set_baseline_mask(self, bls_ordering):
-        """Uses the _script_ants variable to set a baseline mask.
-        This only works if script_ants has been set by an external process between capture_done and capture_start."""
+        """Uses the antennas variable to set a baseline mask."""
         new_bls = bls_ordering
-        if self._script_ants is not None:
-            logger.info("Using script-ants (%s) as a custom baseline mask..." % self._script_ants)
-            ants = self._script_ants.replace(" ","").split(",")
+        if self.antennas is not None:
+            logger.info("Using (%s) as a custom baseline mask..." % self.antennas)
+            ants = self.antennas.replace(" ","").split(",")
             if len(ants) > 0:
                 b = bls_ordering.tolist()
                 self.baseline_mask = [b.index(pair) for pair in b if pair[0][:-1] in ants and pair[1][:-1] in ants]
@@ -188,6 +189,7 @@ class CBFIngest(threading.Thread):
 
         As this MUST be called before the file is closed, it may get called multiple times as security to
         ensure that it is done - it is therefore safe to call multiple times."""
+        logger.debug("Attempting to write timestamps to h5 file.")
         if self.h5_file is not None:
             if timestamps_dataset not in self.h5_file:
             # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
@@ -223,8 +225,7 @@ class CBFIngest(threading.Thread):
              # new connection requires headers...
 
     def run(self):
-        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}:{1}".format(self.spead_host, self.spead_port))
+        self.logger.info("CBF SPEAD stream reception on {}:{}".format(self.spead_host, self.spead_port))
         if self.spead_host[:self.spead_host.find('.')] in MULTICAST_PREFIXES:
          # if we have a multicast address we need to subscribe to the appropriate groups...
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -258,6 +259,7 @@ class CBFIngest(threading.Thread):
             st = time.time()
             if idx == 0:
                 self.status_sensor.set_value("capturing")
+                logger.info("First SPEAD heap received from CBF")
 
             #### Update the telescope model
 
@@ -282,15 +284,14 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metedata
 
-            self.baseline_mask = range(self.cbf_attr['n_bls'].value)
-             # default mask is to include all known baseline
-
-            if self._script_ants is not None:
-             # we need to calculate a baseline_mask to match the specified script_ants
-                self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
-
             if idx == 0:
-                 # we need to create the raw and timestamp datasets.
+                if self.antennas is not None:
+                    self.cbf_attr['bls_ordering'].value = self.set_baseline_mask(self.cbf_attr['bls_ordering'].value)
+                     # we need to calculate a baseline_mask to match the specified antennas
+                else:
+                    self.baseline_mask = range(self.cbf_attr['n_bls'].value)
+                     # default mask is to include all known baseline
+
                 new_shape = list(data_item.shape)
                 new_shape[-2] = len(self.baseline_mask)
                 self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
@@ -337,7 +338,7 @@ class CBFIngest(threading.Thread):
                 except sp.VanVleckOutOfRangeError:
                     self.logger.warning("Out of range error whilst applying Van Vleck data correction")
                 power_after = np.median(sp.ProcBlock.current[:, self.cpref.autos, 0])
-                print "Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before)
+                self.logger.debug("Van vleck power correction: %.2f => %.2f (%.2f scaling)\n" % (power_before,power_after,power_after/power_before))
             sp.ProcBlock.current = sp.ProcBlock.current.copy()
              # *** Dont delete this line ***
              # since array uses advanced selection (baseline_mask not contiguous) we may
@@ -367,14 +368,15 @@ class CBFIngest(threading.Thread):
             self.send_sd_data(self.ig_sd.get_heap())
 
             #### Done with writing this frame
+            if idx % 60 == 0: self.logger.info("Capturing CBF data. ({} heaps received, last timestamp: {})".format(idx, current_ts))
             idx += 1
             if self.h5_file is not None: self.h5_file.flush()
             self.pkt_sensor.set_value(idx)
             tt = time.time() - st
-            self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
+            self.logger.debug("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
 
         #### Stop received.
 
-        self.logger.info("CBF ingest complete at %f" % time.time())
+        self.logger.info("CBF ingest complete. ({} heaps received.)".format(idx))
         self.logger.debug("\nProcessing Blocks\n=================\n%s\n%s\n" % (self.scale,self.rfi))
         self.status_sensor.set_value("complete")
