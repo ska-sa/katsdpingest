@@ -52,9 +52,6 @@ def parse_opts(argv):
                       default="",
                       metavar='HOST',
                       help='listen to HOST (default="%default" - all hosts)')
-    parser.add_option('-s', '--system',
-                      default='systems/local.conf',
-                      help='system configuration file to use. [default=%default]')
     parser.add_option('-f', '--sysconfig',
                       dest='sysconfig',
                       default='/var/kat/katconfig',
