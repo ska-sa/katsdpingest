@@ -166,6 +166,7 @@ class TestPostproc(object):
     def test_bad_cont_factor(self):
         """Test with a continuum factor that does not divide into the channel count"""
         template = mock.sentinel.template
+        mock.sentinel.command_queue.context = mock.sentinel.context
         assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8, 8)
 
     @device_test
