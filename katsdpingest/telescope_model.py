@@ -336,7 +336,9 @@ class AntennaPositioner(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(AntennaPositioner, self).__init__(*args, **kwargs)
         self._critical_sensors = ['activity','target','pos_actual_scan_elev','pos_request_scan_elev','pos_actual_scan_azim','pos_request_scan_azim']
-        self._std_sensors = ['dig_noise_diode']
+        self._std_sensors = ['dig_noise_diode', 'rsc_rxl_serial_number',
+                             'rsc_rxs_serial_number', 'rsc_rxu_serial_number',
+                             'rsc_rxx_serial_number', 'ap_indexer_position']
         self._critical_attributes = ['description']
         self._build()
 
@@ -344,7 +346,7 @@ class CorrelatorBeamformer(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
         self._critical_sensors = ['target']
-        self._std_sensors = ['auto_delay']
+        self._std_sensors = ['auto_delay_enabled']
         self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth','sync_time','int_time','scale_factor_timestamp','center_freq']
         self._build()
 
