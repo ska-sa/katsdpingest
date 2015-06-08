@@ -15,7 +15,7 @@ from katsdpingest.sensorbridge import (SensorBridge, KatcpSensorBridge,
 from katsdpingest import __version__
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('kat.cam2spead')
 
 
 class TransmitThread(threading.Thread):

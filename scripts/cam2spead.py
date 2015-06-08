@@ -54,7 +54,7 @@ katconf.set_config(katconf.environ(opts.sysconfig))
 katconf.configure_logging(opts.logging)
 # Suppress SPEAD info messages
 spead.logger.setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('kat.cam2spead')
 
 # Get sensor objects and attributes, either via KAT connection or a fake CAM device
 if opts.fake_cam:
