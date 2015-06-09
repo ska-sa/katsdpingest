@@ -152,7 +152,7 @@ class test_CorrelatorData_c16n400M1k(ModuleSetupTestCase):
 
     def test_data(self):
         # Set dump rate to 100ms to speed stuff up
-        self.sim.katcp_req('k7-accumulation-length', 100)
+        self.sim.katcp_req('accumulation-length', 100)
         # Set test target at az 165, el 45 deg with flux of 200
         self.sim.katcp_req('test-target', '165.', '45.', '200.')
         # Point 'antenna' away from test target
