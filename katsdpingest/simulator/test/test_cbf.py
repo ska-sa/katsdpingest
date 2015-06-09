@@ -140,7 +140,7 @@ EXPECTED_REQUEST_LIST = [
     ('capture-stop', 'For compatibility with dbe_proxy. Does nothing :).'),
     ('cycle-nd', 'Fire the noise diode with the requested duty cycle. Set to 0 to disable.'),
     ('fire-nd', 'Insert noise diode spike into output data.'),
-    ('k7-accumulation-length', 'Set the accumulation length. (?k7-accumlation-length accumulation-period)'),
+    ('accumulation-length', 'Set the accumulation length. (?accumlation-length accumulation-period)'),
     ('k7-adc-snap-shot', 'retrieve an adc snapshot (?k7-adc-snap-shot [pps|now] threshold input+)'),
     ('k7-delay', 'set the delay and fringe correction (?k7-delay board-input time delay-value delay-rate fringe-offset fringe-rate)'),
     ('k7-frequency-select', 'select a frequency for fine channelisation (?k7-frequency-select center-frequency)'),
@@ -187,8 +187,8 @@ class TestDbeKat7(unittest.TestCase, SimulatorTestMixin):
         self.client.assert_request_succeeds("label-input", "0x", "ant1H", args_equal=["ant1H"])
         self.client.assert_request_succeeds("label-input", "0x", args_equal=["ant1H"])
 
-    def test_k7_accumulation_length(self):
-        self.client.assert_request_succeeds("k7-accumulation-length", 1.0)
+    def test_accumulation_length(self):
+        self.client.assert_request_succeeds("accumulation-length", 1.0)
 
     @unittest.skip
     # Request not currently implemented
