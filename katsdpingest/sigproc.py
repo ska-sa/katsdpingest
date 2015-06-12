@@ -631,15 +631,16 @@ class IngestTemplate(object):
         and there must be one that is at least big enough.
     """
 
-    flag_names = ['reserved0','static','cam','reserved3','detected_rfi','predicted_rfi','reserved6','reserved7']
+    flag_names = ['reserved0','static','cam','reserved3','ingest_rfi','predicted_rfi','cal_rfi','reserved7']
     flag_descriptions = [
             'reserved - bit 0',
             'predefined static flag list',
             'flag based on live CAM information',
             'reserved - bit 3',
-            'RFI detected in the online system',
+            'RFI detected in ingest',
             'RFI predicted from space based pollutants',
-            'reserved - bit 6','reserved - bit 7']
+            'RFI detected in calibration',
+            'reserved - bit 7']
 
     def __init__(self, context, flagger, cont_factor, sd_cont_factor, percentile_sizes):
         self.context = context
