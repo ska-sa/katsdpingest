@@ -23,7 +23,7 @@ logger = logging.getLogger(log_name)
 #
 # cycle_nd -> Should go to sim interface, actually listen to rfe3 simulator?
 # fire_nd -> Should go to sim interface, actually listen to rfe3 simulator?
-# poco_accumulation_length -> k7_accumulation_length
+# poco_accumulation_length -> accumulation_length
 # poco_gain -> k7_gain
 # pointing_az -> Should go to sim interface, interaction with other simulators?
 # pointing_el -> Should go to sim interface, interaction with other simulators?
@@ -40,7 +40,7 @@ logger = logging.getLogger(log_name)
 # Requests to add:
 #
 # capture_list -> DONE
-# k7_accumulation_length -> DONE
+# accumulation_length -> DONE
 # k7_adc_snap_shot -> DONE
 # k7_delay -> DONE, stubbily
 # k7_frequency_select TODO
@@ -199,8 +199,8 @@ class DBE7DeviceServer(SensorSignalDeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_k7_accumulation_length(self, req, period):
-        """Set the accumulation length. (?k7-accumlation-length accumulation-period)"""
+    def request_accumulation_length(self, req, period):
+        """Set the accumulation length. (?accumlation-length accumulation-period)"""
         self._model.set_dump_period(float(period) / 1000.0)
         dump_period = self._model.get_dump_period()
         time.sleep(dump_period)

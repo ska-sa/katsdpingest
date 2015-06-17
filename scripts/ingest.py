@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
@@ -12,17 +12,20 @@
 
 import spead64_40
 import spead64_48 as spead
-import sys
 import time
-import optparse
+import argparse
 import Queue
 import logging
+import manhole
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest.sigproc as sp
 from katsdpingest.ingest_threads import CAMIngest, CBFIngest
+from katsdpsigproc import accel
+from katsdptelstate import endpoint
+import katsdptelstate
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
@@ -30,29 +33,37 @@ from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer
 
 # import katconf
 
-def parse_opts(argv):
-    parser = optparse.OptionParser()
-    parser.add_option('--sdisp-ips', default='127.0.0.1', help='default signal display destination ip addresses. Either single ip or comma separated list. [default=%default]')
-    parser.add_option('--sdisp-port', default='7149',type=int, help='port on which to send signal display data. [default=%default]')
-    parser.add_option('--cbf-spead-port', default=7148, type=int, help='default port to receive CBF SPEAD stream on')
-    parser.add_option('--cbf-spead-host', default='127.0.0.1', help='default host to receive CBF SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
-    parser.add_option('--cam-spead-port', default=7147, type=int, help='port to receive CAM SPEAD stream on')
-    parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
-    parser.add_option('--spectral-spead-port', default=7200, type=int, help='port on which to send spectral L0 output. [default=%default]')
-    parser.add_option('--spectral-spead-host', default='127.0.0.1', help='default destination for spectral L0 output. [default=%default]')
-    parser.add_option('--spectral-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%default]')
-    parser.add_option('--continuum-spead-port', default=7201, type=int, help='port on which to send continuum L0 output. [default=%default]')
-    parser.add_option('--continuum-spead-host', default='127.0.0.1', help='default destination for continuum L0 output. [default=%default]')
-    parser.add_option('--continuum-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%default]')
-    parser.add_option('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%default]')
-    parser.add_option('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%default]')
-    parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
-    parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
-    parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
-    parser.add_option('-l', '--logging', dest='logging', type='string', default=None, metavar='LOGGING',
+def comma_list(type_):
+    """Return a function which splits a string on commas and converts each element to
+    `type_`."""
+
+    def convert(arg):
+        return [type_(x) for x in arg.split(',')]
+    return convert
+
+def parse_opts():
+    parser = katsdptelstate.ArgumentParser()
+    parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148, single_port=True), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--l0-spectral-spead-rate', default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%(default)s]', metavar='RATE')
+    parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINT')
+    parser.add_argument('--l0-continuum-spead-rate', default=1000000000, help='rate (bits per second) to transmit continuum L0 output. [default=%(default)s]', metavar='RATE')
+    parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
+    parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
+    parser.add_argument('--antennas', default=2, type=int, help='number of antennas (prior to masking). [default=%(default)s]')
+    parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
+    parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
+    parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
+    parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
+    parser.add_argument('--file-base', type=str, help='base directory into which to write HDF5 files. [default=no file]')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
+    parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
+    parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
                       help='level to use for basic logging or name of logging configuration file; '
                            'default is /log/log.<SITENAME>.conf')
-    return parser.parse_args(argv)
+    return parser.parse_args()
 
 
 class IngestDeviceServer(DeviceServer):
@@ -62,7 +73,7 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
 
-    def __init__(self, logger, sdisp_ips, sdisp_port, *args, **kwargs):
+    def __init__(self, logger, sdisp_endpoints, antennas, channels, *args, **kwargs):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
@@ -75,31 +86,17 @@ class IngestDeviceServer(DeviceServer):
         self.obs = None
          # the observation component for holding observation attributes
         self.sdisp_ips = {}
-        self.sdisp_ips['127.0.0.1'] = sdisp_port
-         # add default signal display destination
-        for ip in sdisp_ips.split(","):
-            self.sdisp_ips[ip] = sdisp_port
-         # add additional user specified ip
+        for endpoint in sdisp_endpoints:
+            self.sdisp_ips[endpoint.host] = endpoint.port
+         # add default or user specified endpoints
+        # compile the device code
+        context = accel.create_some_context(interactive=False)
+        self.proc_template = CBFIngest.create_proc_template(context, antennas, channels)
+
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
-
-        self._my_sensors["obs-ants"] = Sensor.string("script-ants","The antennas specified by the user for use by the executed script.","")
-        self._my_sensors["obs-script-name"] = Sensor.string("script-name", "Current script name", "")
-        self._my_sensors["obs-experiment-id"] = Sensor.string("script-experiment-id", "Current experiment id", "")
-        self._my_sensors["obs-observer"] = Sensor.string("script-observer", "Current experiment observer", "")
-        self._my_sensors["obs-description"] = Sensor.string("script-description", "Current experiment description", "")
-        self._my_sensors["obs-script-arguments"] = Sensor.string("script-arguments", "Options and parameters of script - from sys.argv", "")
-        self._my_sensors["obs-status"] = Sensor.string("script-status", "Current status reported by running script", "")
-        self._my_sensors["obs-starttime"] = Sensor.string("script-starttime", "Start time of current script", "")
-        self._my_sensors["obs-endtime"] = Sensor.string("script-endtime", "End time of current script", "")
-
-        self._my_sensors["spead-num-chans"] = Sensor(Sensor.INTEGER, "spead_num_chans","Number of channels reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-num-bls"] = Sensor(Sensor.INTEGER, "spead_num_bls","Number of baselines reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-dump-period"] = Sensor(Sensor.FLOAT, "spead_dump_period","Dump period reported via SPEAD header from the DBE","",default=0,params=[0,2**31])
-        self._my_sensors["spead-accum-per-dump"] = Sensor(Sensor.INTEGER, "spead_accum_per_dump","Accumulations per dump reported via SPEAD header from the DBE","",default=0,params=[0,2**63])
-        self._my_sensors["spead-center-freq"] = Sensor(Sensor.FLOAT, "spead_center_freq","Center frequency of correlator reported via SPEAD header","",default=0,params=[0,2**31])
 
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
 
@@ -108,10 +105,6 @@ class IngestDeviceServer(DeviceServer):
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown at start
-                continue
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
@@ -174,21 +167,20 @@ class IngestDeviceServer(DeviceServer):
         self.model.add_components([m063,m062,cbf,env,self.obs])
         self.model.build_index()
 
-        fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
-        self.h5_file = self.model.create_h5_file(fname)
-         # open a new HDF5 file
-        if self.h5_file is None:
-            return ("fail","Failed to create HDF5 file. Init failed.")
+        if opts.file_base is not None:
+            fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
+            self.h5_file = self.model.create_h5_file(fname)
+             # open a new HDF5 file
+            if self.h5_file is None:
+                return ("fail","Failed to create HDF5 file. Init failed.")
+        else:
+            self.h5_file = None
 
-        self.cbf_thread = CBFIngest(
-                opts.cbf_spead_host, opts.cbf_spead_port,
-                opts.spectral_spead_host, opts.spectral_spead_port, opts.spectral_rate,
-                opts.continuum_spead_host, opts.continuum_spead_port, opts.continuum_rate,
-                opts.output_int_time, opts.sd_int_time,
-                self.h5_file, self._my_sensors, self.model, cbf.name, cbf_logger)
+        self.cbf_thread = CBFIngest(opts, self.proc_template,
+                self.h5_file, self._my_sensors, opts.telstate, self.model, cbf.name, cbf_logger)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead_host, opts.cam_spead_port, self.h5_file, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead, self.h5_file, opts.telstate, self.model, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
@@ -220,38 +212,6 @@ class IngestDeviceServer(DeviceServer):
         smsg = "SD Metadata resent"
         logger.info(smsg)
         return ("ok","set")
-
-    @request(Str(), Str())
-    @return_reply(Str())
-    def request_set_obs_param(self, req, key_string, value_string):
-        """Write a key/value observation parameter to the output file.
-
-        Parameters
-        ----------
-        key_string : str
-            The name of the observation parameter.
-        value_string : str
-            A string containing the value of the observation parameter.
-
-        Returns
-        -------
-        success : {'ok', 'fail'}
-            Whether storing the key/value pair succeeded.
-
-        Examples
-        --------
-        ?set_obs_param script-name Test
-        !set_obs_param ok script-name=Test
-
-        """
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
-        try:
-            self.obs.set_attribute(key_string, value_string)
-        except ValueError, e:
-            return ("fail", "Could not set attribute '%s=%s': %s" % (key_string, value_string, e))
-        smsg = "%s=%s" % (key_string, value_string)
-        logger.info("Set obs param %s" % smsg)
-        return ("ok", smsg)
 
     @request(Str())
     @return_reply(Str())
@@ -310,12 +270,12 @@ class IngestDeviceServer(DeviceServer):
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead_port))
+            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead[0].port))
             tx.end()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead_port))
+            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead[0].port))
             tx.end()
             time.sleep(1)
 
@@ -333,23 +293,22 @@ class IngestDeviceServer(DeviceServer):
         valid = self.model.is_valid()
          # check to see if we are valid up until the last 5 seconds
         if not valid: logger.warning("Model is not valid (for RTS this is expected). Writing to disk anyway.")
-        self.model.finalise_h5_file(self.h5_file)
-        smsg = self.model.close_h5_file(self.h5_file)
-         # close file and rename if appropriate
+        if self.h5_file is not None:
+            self.model.finalise_h5_file(self.h5_file)
+            smsg = self.model.close_h5_file(self.h5_file)
+             # close file and rename if appropriate
+        else:
+            smsg = "no file to close"
 
         self.h5_file = None
         self.model = None
         self._my_sensors["capture-active"].set_value(0)
-        for sensor in self._my_sensors:
-            if sensor.startswith("spead"):
-                self._my_sensors[sensor].set_value(0,status=Sensor.UNKNOWN)
-                 # set all SPEAD sensors to unknown when thread has stopped
         logger.info(smsg)
         return ("ok", smsg)
 
 
 if __name__ == '__main__':
-    opts, args = parse_opts(sys.argv)
+    opts = parse_opts()
 
     # Setup configuration source
     #katconf.set_config(katconf.environ(opts.sysconfig))
@@ -375,10 +334,16 @@ if __name__ == '__main__':
     cam_logger.info("CAM ingest logging started")
 
     restart_queue = Queue.Queue()
-    server = IngestDeviceServer(logger, opts.sdisp_ips, opts.sdisp_port, opts.host, opts.port)
+    antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
+    server = IngestDeviceServer(logger, opts.sdisp_spead, antennas, opts.cbf_channels,
+            opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
     logger.info("Started k7_capture server.")
+
+    manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
+     # allow remote debug connections and expose server and opts
+
     try:
         while True:
             try:

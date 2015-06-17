@@ -14,7 +14,7 @@ from .antsol import stefcal
 from .__init__ import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
-from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
 
 class ProcBlock(object):
     """A generic processing block for use in the Kat-7 online system.
@@ -177,10 +177,10 @@ class PrepareTemplate(object):
 
         vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
         vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
-        permutation = accel.DeviceArray(context, (baselines,), np.uint16)
+        permutation = accel.DeviceArray(context, (baselines,), np.int16)
         weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
         vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
-        permutation.set(queue, np.arange(baselines).astype(np.uint16))
+        permutation.set(queue, np.arange(baselines).astype(np.int16))
         def generate(block, vtx, vty):
             local_mem = (block * vtx + 1) * (block * vty) * 8
             if local_mem > 32768:
@@ -188,7 +188,7 @@ class PrepareTemplate(object):
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
-                'vty': vty}).instantiate(queue, channels, channel_range, baselines)
+                'vty': vty}).instantiate(queue, channels, channel_range, baselines, baselines)
             fn.bind(vis_in=vis_in, vis_out=vis_out,
                     permutation=permutation, weights=weights)
             return tune.make_measure(queue, fn)
@@ -197,21 +197,21 @@ class PrepareTemplate(object):
                 vtx=[1, 2, 3, 4],
                 vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, channel_range, baselines):
-        return Prepare(self, command_queue, channels, channel_range, baselines)
+    def instantiate(self, command_queue, channels, channel_range, in_baselines, out_baselines):
+        return Prepare(self, command_queue, channels, channel_range, in_baselines, out_baselines)
 
 class Prepare(accel.Operation):
     """Concrete instance of :class:`PrepareTemplate`.
 
     .. rubric:: Slots
 
-    **vis_in** : channels × baselines × 2, int32
+    **vis_in** : channels × in_baselines × 2, int32
         Input visibilities
-    **permutation** : baselines, uint16
-        Permutation mapping original to new baseline index
-    **vis_out** : baselines × channels, complex64
+    **permutation** : in_baselines, int16
+        Permutation mapping original to new baseline index, or -1 to discard
+    **vis_out** : out_baselines × channels, complex64
         Transformed visibilities
-    **weights** : baselines × kept-channels, float32
+    **weights** : out_baselines × kept-channels, float32
         Weights corresponding to visibilities
 
     Parameters
@@ -224,31 +224,36 @@ class Prepare(accel.Operation):
         Number of channels
     channel_range : tuple of two ints
         Half-open interval of channels that will be written to **weights**
-    baselines : int
-        Number of baselines
+    in_baselines : int
+        Number of baselines in the input
+    out_baselines : int
+        Number of baselines in the output
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines):
+    def __init__(self, template, command_queue, channels, channel_range, in_baselines, out_baselines):
+        if in_baselines < out_baselines:
+            raise ValueError('Baselines can only be discarded, not amplified')
         super(Prepare, self).__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
         self.channels = channels
         self.channel_range = channel_range
-        self.baselines = baselines
+        self.in_baselines = in_baselines
+        self.out_baselines = out_baselines
         self.scale = 1.0
         padded_channels = accel.Dimension(channels, tiley)
-        padded_baselines = accel.Dimension(baselines, tilex)
+        padded_in_baselines = accel.Dimension(in_baselines, tilex)
         complex_parts = accel.Dimension(2, exact=True)
         self.slots['vis_in'] = accel.IOSlot(
-                (padded_channels, padded_baselines, complex_parts), np.int32)
+                (padded_channels, padded_in_baselines, complex_parts), np.int32)
         # For output we do not need to pad the baselines, because the
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
-                (baselines, padded_channels), np.complex64)
+                (out_baselines, padded_channels), np.complex64)
         # Channels need to be range-checked anywhere here, so no padding
         self.slots['weights'] = accel.IOSlot(
-                (baselines, channel_range[1] - channel_range[0]), np.float32)
-        self.slots['permutation'] = accel.IOSlot((baselines,), np.uint16)
+                (out_baselines, channel_range[1] - channel_range[0]), np.float32)
+        self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
 
     def set_scale(self, scale):
         self.scale = scale
@@ -262,7 +267,7 @@ class Prepare(accel.Operation):
         block = self.template.block
         tilex = block * self.template.vtx
         tiley = block * self.template.vty
-        xblocks = accel.divup(self.baselines, tilex)
+        xblocks = accel.divup(self.in_baselines, tilex)
         yblocks = accel.divup(self.channels, tiley)
         self.command_queue.enqueue_kernel(
                 self.template.kernel,
@@ -276,7 +281,7 @@ class Prepare(accel.Operation):
                     np.int32(vis_in.padded_shape[1]),
                     np.int32(self.channel_range[0]),
                     np.int32(self.channel_range[1]),
-                    np.int32(self.baselines),
+                    np.int32(self.in_baselines),
                     np.float32(self.scale)
                 ],
                 global_size = (xblocks * block, yblocks * block),
@@ -286,7 +291,8 @@ class Prepare(accel.Operation):
         return {
             'channels': self.channels,
             'channel_range': self.channel_range,
-            'baselines': self.baselines,
+            'in_baselines': self.in_baselines,
+            'out_baselines': self.out_baselines,
             'scale': self.scale
         }
 
@@ -478,38 +484,35 @@ class PostprocTemplate(object):
     ----------
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context for which kernels will be compiled
-    cont_factor : int
-        Number of spectral channels per continuum channel
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - wgsx, wgsy: number of workitems per workgroup in each dimension
     """
-    autotune_version = 1
+    autotune_version = 2
 
-    def __init__(self, context, cont_factor, tuning=None):
+    def __init__(self, context, tuning=None):
         if tuning is None:
-            tuning = self.autotune(context, cont_factor)
+            tuning = self.autotune(context)
         self.context = context
-        self.cont_factor = cont_factor
         self.wgsx = tuning['wgsx']
         self.wgsy = tuning['wgsy']
         program = accel.build(context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,
                 'wgsy': self.wgsy,
-                'cont_factor': cont_factor
             },
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('postproc')
 
     @classmethod
     @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
-    def autotune(cls, context, cont_factor):
+    def autotune(cls, context):
         queue = context.create_tuning_command_queue()
         baselines = 1024
-        channels = accel.roundup(2048, cont_factor)
+        channels = 2048
+        cont_factor = 16
         cont_channels = channels // cont_factor
 
         vis =     accel.DeviceArray(context, (channels, baselines), np.complex64)
@@ -524,8 +527,8 @@ class PostprocTemplate(object):
         weights.set(queue, rs.uniform(1e-5, 4.0, weights.shape).astype(np.float32))
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
         def generate(**tuning):
-            fn = cls(context, cont_factor, tuning=tuning).instantiate(
-                    queue, channels, baselines)
+            fn = cls(context, tuning=tuning).instantiate(
+                    queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
             return tune.make_measure(queue, fn)
@@ -533,8 +536,8 @@ class PostprocTemplate(object):
                 wgsx=[8, 16, 32],
                 wgsy=[8, 16, 32])
 
-    def instantiate(self, context, channels, baselines):
-        return Postproc(self, context, channels, baselines)
+    def instantiate(self, context, channels, baselines, cont_factor):
+        return Postproc(self, context, channels, baselines, cont_factor)
 
 class Postproc(accel.Operation):
     """Concrete instance of :class:`PostprocTemplate`.
@@ -564,24 +567,27 @@ class Postproc(accel.Operation):
         Number of channels (must be a multiple of `template.cont_factor`)
     baselines : int
         Number of baselines
+    cont_factor : int
+        Number of spectral channels per continuum channel
 
     Raises
     ------
     ValueError
         If `channels` is not a multiple of `template.cont_factor`
     """
-    def __init__(self, template, command_queue, channels, baselines):
+    def __init__(self, template, command_queue, channels, baselines, cont_factor):
         super(Postproc, self).__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
+        self.cont_factor = cont_factor
 
-        if channels % template.cont_factor:
+        if channels % cont_factor:
             raise ValueError('Number of channels must be a multiple of the continuum factor')
-        cont_channels = channels // template.cont_factor
+        cont_channels = channels // cont_factor
 
         spectral_dims = (
-            accel.Dimension(channels, template.cont_factor * template.wgsy),
+            accel.Dimension(channels, cont_factor * template.wgsy),
             accel.Dimension(baselines, template.wgsx))
         cont_dims = (
             accel.Dimension(cont_channels, template.wgsy),
@@ -596,9 +602,11 @@ class Postproc(accel.Operation):
     def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
         buffers = [self.buffer(name) for name in buffer_names]
-        args = [x.buffer for x in buffers] + [np.int32(buffers[0].padded_shape[1])]
+        args = [x.buffer for x in buffers] + [
+            np.int32(self.cont_factor),
+            np.int32(buffers[0].padded_shape[1])]
         xblocks = accel.divup(self.baselines, self.template.wgsx)
-        yblocks = accel.divup(self.channels, self.template.wgsy * self.template.cont_factor)
+        yblocks = accel.divup(self.channels, self.template.wgsy * self.cont_factor)
         self.command_queue.enqueue_kernel(
             self.template.kernel, args,
             global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
@@ -606,7 +614,7 @@ class Postproc(accel.Operation):
 
     def parameters(self):
         return {
-            'cont_factor': self.template.cont_factor,
+            'cont_factor': self.cont_factor,
             'channels': self.channels,
             'baselines': self.baselines
         }
@@ -620,10 +628,6 @@ class IngestTemplate(object):
         Context for which kernels will be compiled
     flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
         Template for RFI flagging. It must have transposed flag outputs.
-    cont_factor : int
-        Number of spectral channels per continuum channel
-    sd_cont_factor : int
-        Number of spectral channels to average together for signal displays
     percentile_sizes : list of int
         Set of number of baselines per percentile calculation. These do not need to exactly
         match the actual sizes of the ranges passed to the instance. The smaller template
@@ -642,7 +646,7 @@ class IngestTemplate(object):
             'RFI detected in calibration',
             'reserved - bit 7']
 
-    def __init__(self, context, flagger, cont_factor, sd_cont_factor, percentile_sizes):
+    def __init__(self, context, flagger, percentile_sizes):
         self.context = context
         self.prepare = PrepareTemplate(context)
         self.zero = ZeroTemplate(context)
@@ -650,13 +654,20 @@ class IngestTemplate(object):
                 context, np.complex64, 'float2')
         self.flagger = flagger
         self.accum = AccumTemplate(context, 2)
-        self.postproc = PostprocTemplate(context, cont_factor)
-        self.sd_postproc = PostprocTemplate(context, sd_cont_factor)
+        self.postproc = PostprocTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.percentiles = [percentile.Percentile5Template(context, size, False) for size in percentile_sizes]
+        self.percentiles = [percentile.Percentile5Template(context, max(size, 1), False) for size in percentile_sizes]
+        self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
+        # These last two are used when the input is empty (zero baselines)
+        self.nan_percentiles = fill.FillTemplate(context, np.float32, 'float')
+        self.zero_percentiles_flags = fill.FillTemplate(context, np.uint8, 'unsigned char')
 
-    def instantiate(self, command_queue, channels, channel_range, baselines, percentile_ranges):
-        return IngestOperation(self, command_queue, channels, channel_range, baselines, percentile_ranges)
+    def instantiate(self, command_queue, channels, channel_range,
+            cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
+            background_args={}, noise_est_args={}, threshold_args={}):
+        return IngestOperation(self, command_queue, channels, channel_range,
+                cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
+                background_args, noise_est_args, threshold_args)
 
 class IngestOperation(accel.OperationSequence):
     """Concrete instance of :class:`IngestTemplate`.
@@ -665,7 +676,7 @@ class IngestOperation(accel.OperationSequence):
 
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
-    **permutation** : baselines, uint16
+    **permutation** : baselines, int16
         Permutation mapping original to new baseline index
     **timeseries_weights** : kept-channels, float32
         Per-channel weights for timeseries averaging
@@ -690,6 +701,8 @@ class IngestOperation(accel.OperationSequence):
         Weights sum over channels of **sd_spec_vis**
     **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
         Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
+    **percentileN**_flags : kept-channels, uint8 (where *N* is 0, 1, ...)
+        For each channel, the bitwise OR of the flags from the corresponding set of baselines in **percentileN**
 
     .. rubric:: Scratch slots
 
@@ -705,45 +718,69 @@ class IngestOperation(accel.OperationSequence):
         Number of channels
     channel_range : tuple of two ints
         Half-open interval of channels that will be written to **weights**
+    cbf_baselines : int
+        Number of baselines received from CBF
     baselines : int
-        Number of baselines
+        Number of baselines, after antenna masking
+    cont_factor : int
+        Number of spectral channels per continuum channel
+    sd_cont_factor : int
+        Number of spectral channels to average together for signal displays
     percentile_ranges : list of 2-tuples of ints
         Column range for each set of baselines (post-permutation) for which
         percentiles will be computed.
+    background_args : dict, optional
+        Extra keyword arguments to pass to the background instantiation
+    noise_est_args : dict, optional
+        Extra keyword arguments to pass to the noise estimation instantiation
+    threshold_args : dict, optional
+        Extra keyword arguments to pass to the threshold instantiation
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines, percentile_ranges):
+    def __init__(self, template, command_queue, channels, channel_range,
+            cbf_baselines, baselines,
+            cont_factor, sd_cont_factor, percentile_ranges,
+            background_args={}, noise_est_args={}, threshold_args={}):
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
-                command_queue, channels, channel_range, baselines)
+                command_queue, channels, channel_range, cbf_baselines, baselines)
         self.zero_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         self.zero_sd_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
         self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
         self.flagger = template.flagger.instantiate(
-                command_queue, channels, baselines)
+                command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
         self.accum = template.accum.instantiate(
                 command_queue, channels, channel_range, baselines)
         self.postproc = template.postproc.instantiate(
-                command_queue, kept_channels, baselines)
-        self.sd_postproc = template.sd_postproc.instantiate(
-                command_queue, kept_channels, baselines)
+                command_queue, kept_channels, baselines, cont_factor)
+        self.sd_postproc = template.postproc.instantiate(
+                command_queue, kept_channels, baselines, sd_cont_factor)
         self.timeseries = template.timeseries.instantiate(
                 command_queue, (kept_channels, baselines))
         self.percentiles = []
+        self.percentiles_flags = []
         for prange in percentile_ranges:
             size = prange[1] - prange[0]
             ptemplate = None
-            # Find the smallest match
-            for t in template.percentiles:
-                if t.max_columns >= size:
-                    if ptemplate is None or t.max_columns < ptemplate.max_columns:
-                        ptemplate = t
-            if ptemplate is None:
-                raise ValueError('Baseline range {0} is too large for any template'.format(prange))
-            self.percentiles.append(
-                ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
+            if size > 0:
+                # Find the smallest match
+                for t in template.percentiles:
+                    if t.max_columns >= size:
+                        if ptemplate is None or t.max_columns < ptemplate.max_columns:
+                            ptemplate = t
+                if ptemplate is None:
+                    raise ValueError('Baseline range {0} is too large for any template'.format(prange))
+                self.percentiles.append(
+                    ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
+                self.percentiles_flags.append(
+                    template.percentiles_flags.instantiate(command_queue, (kept_channels, baselines), prange))
+            else:
+                self.percentiles.append(template.nan_percentiles.instantiate(command_queue, (5, kept_channels)))
+                self.percentiles[-1].set_value(np.nan)
+                self.percentiles_flags.append(template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,)))
+                self.percentiles_flags[-1].set_value(0)
 
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
@@ -758,8 +795,10 @@ class IngestOperation(accel.OperationSequence):
                 ('sd_postproc', self.sd_postproc),
                 ('timeseries', self.timeseries)
         ]
-        for i, op in enumerate(self.percentiles):
-            operations.append(('percentile{0}'.format(i), op))
+        for i in range(len(self.percentiles)):
+            name = 'percentile{0}'.format(i)
+            operations.append((name, self.percentiles[i]))
+            operations.append((name + '_flags', self.percentiles_flags[i]))
 
         # TODO: eliminate transposition of flags, which aren't further used
         assert 'flags_t' in self.flagger.slots
@@ -789,8 +828,12 @@ class IngestOperation(accel.OperationSequence):
         }
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
+            # The :data slots are used when NaN-filling. Unused slots are ignored,
+            # so it is safe to just list all the variations.
             compounds['sd_spec_vis'].append(name + ':src')
-            compounds[name] = [name + ':dest']
+            compounds['sd_spec_flags'].append(name + '_flags:src')
+            compounds[name] = [name + ':dest', name + ':data']
+            compounds[name + '_flags'] = [name + '_flags:dest', name + '_flags:data']
 
         aliases = {
                 'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
@@ -834,8 +877,9 @@ class IngestOperation(accel.OperationSequence):
         """
         self.sd_postproc()
         self.timeseries()
-        for p in self.percentiles:
+        for p, f in zip(self.percentiles, self.percentiles_flags):
             p()
+            f()
 
     def descriptions(self):
         """Generate descriptions of all the components, for the process log.

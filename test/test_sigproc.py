@@ -18,8 +18,7 @@ def create_flagger(context, args):
             context, args.width)
     noise_est = rfi.NoiseEstMADTDeviceTemplate(
             context, args.channels + args.border)
-    threshold = rfi.ThresholdSumDeviceTemplate(
-            context, args.sigmas)
+    threshold = rfi.ThresholdSumDeviceTemplate(context)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
 
 def create_percentile_ranges(antennas):
@@ -47,14 +46,14 @@ def create_percentile_ranges(antennas):
 def create_template(context, args):
     percentile_ranges = create_percentile_ranges(args.antennas)
     percentile_sizes = list(set([x[1] - x[0] for x in percentile_ranges]))
-    return sp.IngestTemplate(context, create_flagger(context, args),
-            args.freq_avg, args.sd_freq_avg, percentile_sizes)
+    return sp.IngestTemplate(context, create_flagger(context, args), percentile_sizes)
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument_group('Data selection')
-    parser.add_argument('--antennas', '-a', type=int, help='number of antennas', default=7)
+    parser.add_argument('--antennas', '-a', type=int, help='total number of antennas', default=7)
+    parser.add_argument('--mask-antennas', type=int, help='number of antennas in antenna mask', default=None)
     parser.add_argument('--channels', '-c', type=int, help='number of frequency channels', default=1024)
     parser.add_argument('--border', '-B', type=int, default=0, help='extra overlap channels')
 
@@ -71,16 +70,21 @@ def main():
     args = parser.parse_args()
     channels = args.channels + args.border
     channel_range = (args.border // 2, args.channels + args.border // 2)
-    baselines = args.antennas * (args.antennas + 1) * 2
+    cbf_baselines = args.antennas * (args.antennas + 1) * 2
+    if args.mask_antennas is None:
+        baselines = cbf_baselines
+    else:
+        baselines = args.mask_antennas * (args.mask_antennas + 1) * 2
 
     context = accel.create_some_context(True)
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
-    proc = template.instantiate(command_queue, channels, channel_range, baselines,
-            create_percentile_ranges(args.antennas))
+    proc = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
+            args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.antennas),
+            threshold_args={'n_sigma': args.sigmas})
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
-    permutation = np.random.permutation(baselines).astype(np.uint16)
+    permutation = np.random.permutation(baselines).astype(np.int16)
     proc.buffer('permutation').set(command_queue, permutation)
 
     command_queue.finish()
@@ -95,7 +99,7 @@ def main():
     sd_buffers = [proc.buffer(name) for name in sd_names]
     sd_arrays = [buf.empty_like() for buf in sd_buffers]
 
-    dumps = [generate_data(vis_in_device, channels, baselines) for i in range(max(args.sd_time_avg, args.time_avg))]
+    dumps = [generate_data(vis_in_device, channels, cbf_baselines) for i in range(max(args.sd_time_avg, args.time_avg))]
     # Push data before we start timing, to ensure everything is allocated
     for dump in dumps:
         proc.buffer('vis_in').set(command_queue, dump)

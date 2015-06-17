@@ -17,8 +17,18 @@ setup (
         "scripts/sim_observe.py",
         ],
     install_requires = [
+        'numpy',
+        'scipy',
+        'iniparse',
+        'blinker',
+        'netifaces',
         'scikits.fitting',
-        'katsdpsigproc'
+        'spead',
+        'katcp',
+        'katpoint',
+        'katsdpsigproc',
+        'katsdpdisp',
+        'katsdptelstate'
     ],
     zip_safe = False,
 )
