@@ -256,7 +256,7 @@ class CBFIngest(threading.Thread):
         max_antennas = cls._tune_next_antennas(antennas)
         max_channels = cls._tune_next(channels, cls.tune_channels)
 
-        flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
+        flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
