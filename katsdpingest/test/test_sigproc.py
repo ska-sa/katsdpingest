@@ -214,7 +214,7 @@ class TestPostproc(object):
         sigproc.PostprocTemplate(context, 16)
 
 class TestIngestOperation(object):
-    flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
+    flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
 
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)

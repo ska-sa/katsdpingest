@@ -163,7 +163,7 @@ def _split_array(x, dtype):
 class CBFIngest(threading.Thread):
     @classmethod
     def create_proc_template(cls, context):
-        flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
+        flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
         # TODO: these parameters should probably come from somewhere else
         # (particularly cont_factor).
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
