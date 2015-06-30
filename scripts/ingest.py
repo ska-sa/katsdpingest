@@ -10,8 +10,6 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
-import spead64_40 as spead40
-import spead64_48 as spead
 import sys
 import time
 import optparse
@@ -19,6 +17,9 @@ import Queue
 import logging
 import logging.handlers
 import os
+
+import spead64_40 as spead40
+import spead64_48 as spead
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
@@ -44,9 +45,9 @@ def parse_opts(argv):
     parser.add_option('--cam-spead-host', default='127.0.0.1', help='default host to receive CAM SPEAD stream from, may be multicast or unicast. <ip>[+<count>]. [default=%default]')
     parser.add_option('--file-base', default='/var/kat/data/staging', help='base directory into which to write HDF5 files. [default=%default]')
     parser.add_option('--antennas', default='m063,m062', help='Comma seperated list of antennas to record to file. Other antennas visibility data is discarded. [default=%default]')
-    parser.add_option('-p', '--port', dest='port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
-    parser.add_option('-a', '--host', dest='host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
-    parser.add_option('-l', '--loglevel', dest='loglevel', type="string", default="INFO", metavar='LOGLEVEL', help='set the Python logging level (default=%default)')
+    parser.add_option('-p', '--port', type=long, default=2040, metavar='N', help='katcp host port. [default=%default]')
+    parser.add_option('-a', '--host', type="string", default="", metavar='HOST', help='katcp host address. [default="" (all hosts)]')
+    parser.add_option('-l', '--loglevel', type="string", default="INFO", metavar='LOGLEVEL', help='set the Python logging level (default=%default)')
     return parser.parse_args(argv)
 
 
