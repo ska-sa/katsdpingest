@@ -324,31 +324,31 @@ if __name__ == '__main__':
     opts, args = parse_opts(sys.argv)
 
     logger = logging.getLogger('ingest')
+    logger.setLevel(opts.loglevel.upper())
+     # Since Python 2.7 and 3.2 the log level can be set via its string name
+    spead.logger.setLevel(logging.WARNING)
+     # configure SPEAD to display warnings about dropped packets etc...
 
-    if isinstance(opts.loglevel, basestring):
-        opts.loglevel = getattr(logging, opts.loglevel.upper())
-    logger.setLevel(opts.loglevel)
     try:
-        fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e6, backupCount=10)
-        formatter = logging.Formatter(("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s"),
+        formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
+
+        fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e6, backupCount=10)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
+        spead.logger.addHandler(fh)
 
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         logger.addHandler(sh)
+        spead.logger.addHandler(sh)
          # we assume this is the SDP ur process and so we setup logging in a fairly manual fashion
+        if len(logger.root.handlers) > 0: logger.root.removeHandler(logger.root.handlers[0])
+         # purge the root handler if it exists to avoid console duplicates
     except IOError:
         logging.basicConfig()
         (logger.warn("Failed to create log file so reverting to console output. Most likely issue is that {0} does not exist or is not writeable"
          .format(os.path.join(opts.workpath))))
-
-    if len(logger.root.handlers) > 0: logger.root.removeHandler(logger.root.handlers[0])
-     # purge the root handler if it exists to avoid console duplicates
-
-    spead.logger.setLevel(logging.WARNING)
-     # configure SPEAD to display warnings about dropped packets etc...
 
     sp.ProcBlock.logger = logger
      # logger ref for use in the signal processing routines
