@@ -330,21 +330,20 @@ if __name__ == '__main__':
      # configure SPEAD to display warnings about dropped packets etc...
 
     try:
+        if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
+         # purge the root handler if it exists to avoid console duplicates (seems unnecessary)
+
         formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
 
         fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e6, backupCount=10)
         fh.setFormatter(formatter)
-        logger.addHandler(fh)
-        spead.logger.addHandler(fh)
+        logging.root.addHandler(fh)
 
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
-        logger.addHandler(sh)
-        spead.logger.addHandler(sh)
+        logging.root.addHandler(sh)
          # we assume this is the SDP ur process and so we setup logging in a fairly manual fashion
-        if len(logger.root.handlers) > 0: logger.root.removeHandler(logger.root.handlers[0])
-         # purge the root handler if it exists to avoid console duplicates
     except IOError:
         logging.basicConfig()
         (logger.warn("Failed to create log file so reverting to console output. Most likely issue is that {0} does not exist or is not writeable"
