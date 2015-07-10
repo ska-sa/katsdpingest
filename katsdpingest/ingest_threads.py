@@ -22,6 +22,7 @@ from .endpoint import Endpoint
 
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Data/flags'
+cbf_flags_dataset = '/Data/cbf_flags'
 cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
@@ -276,6 +277,9 @@ class CBFIngest(threading.Thread):
             if not data_item._changed: self.logger.debug("Xeng_raw is unchanged"); continue
              # we have new data...
 
+            if ig._names.has_key('flags_xeng_raw'): cbf_flags = ig['flags_xeng_raw']
+            else: cbf_flags = -1
+
              # check to see if our CBF model is valid
              # i.e. make sure any attributes marked as critical are present
             if not self.cbf_component.is_valid(check_sensors=False):
@@ -297,6 +301,8 @@ class CBFIngest(threading.Thread):
                 self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
                 self.h5_file.create_dataset(cbf_data_dataset, [1] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
                 self.h5_file.create_dataset(flags_dataset, [1] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
+                self.h5_file.create_dataset(cbf_flags_dataset, [1], maxshape=[None], dtype=np.int64)
+                 # flag dataset to hold 48 bit flag value. Signed int so we can use -1 to indicate no flags received
 
                  # configure the signal processing blocks
                 self.scale.scale_factor = np.float32(self.cbf_attr['n_accs'].value)
@@ -308,6 +314,7 @@ class CBFIngest(threading.Thread):
                  # resize datasets
                 self.h5_file[cbf_data_dataset].resize(idx+1, axis=0)
                 self.h5_file[flags_dataset].resize(idx+1, axis=0)
+                self.h5_file[cbf_flags_dataset].resize(idx+1, axis=0)
 
             if self.sd_frame is None:
                 self.sd_frame = np.zeros((self.cbf_attr['n_chans'].value,len(self.baseline_mask),2),dtype=np.float32)
@@ -355,6 +362,8 @@ class CBFIngest(threading.Thread):
              # finalise flagging operations and return flag data to write
             self.h5_file[flags_dataset][idx] = flags
              # write flags to file
+            self.h5_file[cbf_flags_dataset][idx] = cbf_flags
+             # CBF flags
             self.h5_file[cbf_data_dataset][idx] = sp.ProcBlock.current.view(np.float32).reshape(list(sp.ProcBlock.current.shape) + [2])[np.newaxis,...]
              # write data to file (with temporary remap as mentioned above...)
 
