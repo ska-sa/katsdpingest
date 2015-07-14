@@ -160,7 +160,7 @@ class IngestDeviceServer(DeviceServer):
         # for AR1 we build a standard model like for RTS... for now. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
         m062 = AntennaPositioner(name='m062')
-        cbf = CorrelatorBeamformer(name='data_1')
+        cbf = CorrelatorBeamformer(name='cbf')
         env = Enviro(name='anc')
         self.obs = Observation(name='obs')
         self.model = TelescopeModel()

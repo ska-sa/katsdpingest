@@ -73,6 +73,8 @@ class CAMIngest(threading.Thread):
                     self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
                                       .format(item_name, item.get_value()))
                 elif self.telstate is not None:
+                    # XXX Nasty hack to get SDP onto cbf name for AR1 integration
+                    item_name = item_name.replace('data_1_', 'cbf_')
                     self.telstate.add(item_name, sensor_value, value_time)
 
     def run(self):
