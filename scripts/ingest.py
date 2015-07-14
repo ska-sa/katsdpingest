@@ -157,11 +157,11 @@ class IngestDeviceServer(DeviceServer):
              # this should be enough of an indicator as to session activity, but it 
              # may be worth expanding the scope to checking the file and the CAM thread as well
 
-        # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
+        # for AR1 we build a standard model like for RTS... for now. Normally this would be provided by the sdp_proxy
         m063 = AntennaPositioner(name='m063')
         m062 = AntennaPositioner(name='m062')
         cbf = CorrelatorBeamformer(name='cbf')
-        env = Enviro(name='anc_asc')
+        env = Enviro(name='anc')
         self.obs = Observation(name='obs')
         self.model = TelescopeModel()
         self.model.add_components([m063,m062,cbf,env,self.obs])
@@ -292,7 +292,7 @@ class IngestDeviceServer(DeviceServer):
          # now we make sure to sync the model to the output file
         valid = self.model.is_valid()
          # check to see if we are valid up until the last 5 seconds
-        if not valid: logger.warning("Model is not valid (for RTS this is expected). Writing to disk anyway.")
+        if not valid: logger.warning("Model is not valid (this is expected for now). Writing to disk anyway.")
         if self.h5_file is not None:
             self.model.finalise_h5_file(self.h5_file)
             smsg = self.model.close_h5_file(self.h5_file)
