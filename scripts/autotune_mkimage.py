@@ -27,9 +27,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image')
     parser.add_argument('base_image')
-    parser.add_argument('--copy', action='store_true', help='Copy old autotuning results from an existing container')
+    parser.add_argument('--copy', action='store_true', help='Copy old autotuning results from existing image')
     parser.add_argument('--copy-from', type=str, metavar='IMAGE', help='Specify alternative image from which to obtain existing results (implies --copy)')
-    parser.add_argument('--skip', action='store_true', help='Only copy, do run not tuning check afterwards')
+    parser.add_argument('--skip', action='store_true', help='Only copy, do not run tuning check afterwards')
     parser.add_argument('--host', '-H', type=str, default='unix:///var/run/docker.sock', help='Docker host')
     args = parser.parse_args()
 
