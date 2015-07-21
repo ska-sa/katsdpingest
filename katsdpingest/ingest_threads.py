@@ -256,7 +256,7 @@ class CBFIngest(threading.Thread):
         max_antennas = cls._tune_next_antennas(antennas)
         max_channels = cls._tune_next(channels, cls.tune_channels)
 
-        flag_value = 1 << sp.IngestTemplate.flag_names.index('detected_rfi')
+        flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
@@ -540,11 +540,14 @@ class CBFIngest(threading.Thread):
         collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)[0]
         percentile_ranges = []
         for p in collection_products:
-            start = p[0]
-            end = p[-1] + 1
-            if not np.array_equal(np.arange(start, end), p):
-                raise ValueError("percentile baselines are not contiguous: {}".format(p))
-            percentile_ranges.append((start, end))
+            if p:
+                start = p[0]
+                end = p[-1] + 1
+                if not np.array_equal(np.arange(start, end), p):
+                    raise ValueError("percentile baselines are not contiguous: {}".format(p))
+                percentile_ranges.append((start, end))
+            else:
+                percentile_ranges.append((0, 0))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('',channels)[1]
 
         self.proc = self.proc_template.instantiate(

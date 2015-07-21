@@ -166,6 +166,7 @@ class TestPostproc(object):
     def test_bad_cont_factor(self):
         """Test with a continuum factor that does not divide into the channel count"""
         template = mock.sentinel.template
+        mock.sentinel.command_queue.context = mock.sentinel.context
         assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8, 8)
 
     @device_test
@@ -216,7 +217,7 @@ class TestPostproc(object):
         sigproc.PostprocTemplate(context)
 
 class TestIngestOperation(object):
-    flag_value = 1 << sigproc.IngestTemplate.flag_names.index('detected_rfi')
+    flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
 
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)
@@ -408,10 +409,16 @@ class TestIngestOperation(object):
         # Percentiles
         percentiles = []
         for i, (start, end) in enumerate(percentile_ranges):
-            expected['percentile{0}'.format(i)] = np.percentile(
-                    np.abs(expected['sd_spec_vis'][..., start:end]), [0, 100, 25, 75, 50], axis=1, interpolation='lower')
-            expected['percentile{0}_flags'.format(i)] = np.bitwise_or.reduce(
-                    expected['sd_spec_flags'][..., start:end], axis=1)
+            if start != end:
+                percentile = np.percentile(
+                        np.abs(expected['sd_spec_vis'][..., start:end]), [0, 100, 25, 75, 50], axis=1, interpolation='lower')
+                flags = np.bitwise_or.reduce(
+                        expected['sd_spec_flags'][..., start:end], axis=1)
+            else:
+                percentile = np.tile(np.nan, (5, expected['sd_spec_vis'].shape[0])).astype(np.float32)
+                flags = np.zeros(expected['sd_spec_flags'].shape[0], np.uint8)
+            expected['percentile{0}'.format(i)] = percentile
+            expected['percentile{0}_flags'.format(i)] = flags
 
         return expected
 
@@ -428,7 +435,7 @@ class TestIngestOperation(object):
         scale = 1.0 / 64
         dumps = 4
         sd_dumps = 3   # Must currently be <= dumps, but could easily be fixed
-        percentile_ranges = [(0, 10), (32, 40), (180, 192)]
+        percentile_ranges = [(0, 10), (32, 40), (0, 0), (180, 192)]
         # Use a very low significance so that there will still be about 50%
         # flags after averaging
         n_sigma = -1.0
@@ -448,7 +455,7 @@ class TestIngestOperation(object):
                 context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
+        template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12])
         fn = template.instantiate(queue, channels, channel_range, cbf_baselines, baselines,
                 cont_factor, sd_cont_factor, percentile_ranges,
                 threshold_args={'n_sigma': n_sigma})

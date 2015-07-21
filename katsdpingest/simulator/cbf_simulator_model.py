@@ -618,7 +618,7 @@ class K7CorrelatorModel(TestInterfaceModel):
 
         try:
             self._thread_paused = True
-            if stream == 'k7':
+            if stream in ('k7', 'c856M4k'):
                 if data_port != meta_port:
                     raise ValueError('k7 stream must have meta_port = data_port')
                 c['rx_udp_ip_str'] = data_ip
@@ -657,7 +657,7 @@ class K7CorrelatorModel(TestInterfaceModel):
     def capture_list(self):
         c = self.config
         # It seems that the config does not specify a separate port
-        capture_list = [CaptureDestination('k7',
+        capture_list = [CaptureDestination('c856M4k',
                                            c['rx_meta_ip_str'], c['rx_udp_port'],
                                            c['rx_udp_ip_str'], c['rx_udp_port'],)]
 
