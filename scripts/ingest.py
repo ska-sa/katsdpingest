@@ -138,6 +138,20 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is not None: self.cbf_thread.enable_debug(debug)
         if self.cam_thread is not None: self.cam_thread.enable_debug(debug)
 
+    @request(Str(),Str())
+    @return_reply(Str())
+    def request_internal_log_level(self, req, component, level):
+        """Set the log level of an internal component to the specified value.
+           ?internal-log-level <component> <level>
+        """
+        level = level.upper()
+        logger = logging.getLogger(component)
+        try:
+            logger.setLevel(level)
+        except ValueError:
+            return ("fail", "Unknown log level specified {}".format(level))
+        return ("ok", "Log level set to {}".format(level))
+        
     @return_reply(Str())
     def request_capture_start(self, req, msg):
         """Dummy capture start command - calls capture init."""
