@@ -42,7 +42,6 @@ def main():
         old = get_existing(cli, args.copy_from)
 
     devices = []
-    volumes = []
     binds = {}
     db_filename = None
     command = ['ingest_autotune.py']
@@ -58,18 +57,17 @@ def main():
             command = ['/bin/sh', '-c', 'mkdir -p ~/.cache/katsdpsigproc && tar -C ~/.cache/katsdpsigproc -xf /tuning.tar']
             if not args.skip:
                 command[-1] += ' && exec ingest_autotune.py'
-            volumes = ['/tuning.tar']
-            binds = {filename: {'bind': '/tuning.tar', 'ro': True}}
+            binds = {filename: {'bind': '/tuning.tar', 'mode': 'ro'}}
 
         container = cli.create_container(
                 image=args.base_image,
-                volumes=volumes,
-                command=command)
+                command=command,
+                host_config=docker.utils.create_host_config(devices=devices, binds=binds))
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
         try:
             container_id = container['Id']
-            cli.start(container_id, devices=devices, binds=binds)
+            cli.start(container_id)
             try:
                 for line in cli.logs(container_id, True, True, True):
                     sys.stdout.write(line)
