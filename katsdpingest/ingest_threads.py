@@ -32,7 +32,7 @@ cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
 
-CBF_SPEAD_SENSORS = ["cbf_flags_xeng_raw"]
+CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
  # CBF SPEAD metadata items that should be stored as sensors rather than attributes
  # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
 
@@ -659,7 +659,7 @@ class CBFIngest(threading.Thread):
             # live in the telescope state.
             if item._changed and item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
                 self._set_telstate_entry(item_name, item.get_value(), attribute=(item_name not in CBF_SPEAD_SENSORS))
-                 # store as an attribute unless item is in CBF_SPEAD_SENSORS (e.g. cbf_flags_xeng_raw)
+                 # store as an attribute unless item is in CBF_SPEAD_SENSORS (e.g. flags_xeng_raw)
 
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
