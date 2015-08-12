@@ -17,6 +17,8 @@ import argparse
 import Queue
 import logging
 import manhole
+import signal
+import os
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
@@ -357,6 +359,17 @@ if __name__ == '__main__':
 
     manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
      # allow remote debug connections and expose server and opts
+
+    def graceful_exit(_signo=None, _stack_frame=None):
+        logger.info("Exiting ingest on SIGTERM")
+        os.kill(os.getpid(), signal.SIGINT)
+         # rely on the interrupt handler around the katcp device server
+         # to peform graceful shutdown. this preserves the command
+         # line Ctrl-C shutdown.
+
+    signal.signal(signal.SIGTERM, graceful_exit)
+     # mostly needed for Docker use since this process runs as PID 1
+     # and does not get passed sigterm unless it has a custom listener
 
     try:
         while True:
