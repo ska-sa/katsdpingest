@@ -32,6 +32,10 @@ cbf_data_dataset = '/Data/correlator_data'
 sdisp_ips = {}
  # dict storing the configured signal destination ip addresses
 
+CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
+ # CBF SPEAD metadata items that should be stored as sensors rather than attributes
+ # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
+
 
 class CAMIngest(threading.Thread):
     """The CAM Ingest class receives meta-data updates in the form
@@ -517,7 +521,7 @@ class CBFIngest(threading.Thread):
         baselines = len(self.cbf_attr['bls_ordering'].value)
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
-        self._set_telstate_attribute('bls_ordering', self.cbf_attr['bls_ordering'].value)
+        self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'].value)
 
          # we need to create the raw datasets.
         data_item = ig_cbf.get_item('xeng_raw')
@@ -531,7 +535,7 @@ class CBFIngest(threading.Thread):
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
-        self._set_telstate_attribute('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
+        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
         self.logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
@@ -634,12 +638,12 @@ class CBFIngest(threading.Thread):
         #### Prepare for the next group
         self.proc.start_sd_sum()
 
-    def _set_telstate_attribute(self, name, value, add_cbf_prefix=True):
+    def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
         if self.telstate is not None:
             if add_cbf_prefix:
                 name = '{0}_{1}'.format(self.cbf_name, name)
             try:
-                self.telstate.add(name, value, immutable=True)
+                self.telstate.add(name, value, immutable=attribute)
             except katsdptelstate.ImmutableKeyError:
                 old = self.telstate.get(name)
                 if not np.array_equal(old, value):
@@ -654,7 +658,8 @@ class CBFIngest(threading.Thread):
             # The other items are data rather than metadata, and so do not
             # live in the telescope state.
             if item._changed and item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
-                self._set_telstate_attribute(item_name, item.get_value())
+                self._set_telstate_entry(item_name, item.get_value(), attribute=(item_name not in CBF_SPEAD_SENSORS))
+                 # store as an attribute unless item is in CBF_SPEAD_SENSORS (e.g. flags_xeng_raw)
 
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
