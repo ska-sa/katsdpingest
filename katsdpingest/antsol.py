@@ -9,7 +9,7 @@ logger = logging.getLogger("kat.katsdpingest.antsol")
 
 def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=30, ref_ant=-1,
             init_gain=None, conv_thresh=0.0001):
-    """Solve for antenna gains using StefCal (array dot product version).
+    """Solve for antenna gains using StEFCal (array dot product version).
 
     The observed visibilities are provided in a NumPy array of any shape and
     dimension, as long as the last dimension represents baselines. The gains
@@ -74,7 +74,7 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=30, ref_ant=-1,
     # Initial estimate of gain vector
     gain_shape = tuple(list(vis.shape[:-1]) + [num_ants])
     g_curr = np.ones(gain_shape, dtype=np.complex) if init_gain is None else init_gain
-    logger.debug("StefCal solving for %s gains from vis with shape %s" %
+    logger.debug("StEFCal solving for %s gains from vis with shape %s" %
                  ('x'.join(str(gs) for gs in gain_shape), vis.shape))
     for n in range(num_iters):
         # Basis vector (collection) represents gain_B* times model (assumed 1)
@@ -107,7 +107,7 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=30, ref_ant=-1,
     return g_curr
 
 
-# Quick test of StefCal by running this as a script
+# Quick test of StEFCal by running this as a script
 if __name__ == '__main__':
 
     logging.basicConfig(level=logging.DEBUG)
@@ -147,11 +147,11 @@ if __name__ == '__main__':
         # Extract cross-correlations from covariance matrix and stack them into vector
         vis[m] = V[(antA, antB)]
 
-    print 'Testing StefCal:\n----------------'
+    print 'Testing StEFCal:\n----------------'
     g_estm = stefcal(vis, N, antA, antB, num_iters=100, ref_ant=ref_ant)
     compare = '\n'.join([("%+5.3f%+5.3fj -> %+5.3f%+5.3fj" %
                           (gt.real, gt.imag, ge.real, ge.imag))
                          for gt, ge in np.c_[g_norm, g_estm.mean(axis=0)]])
     print '\nOriginal gain -> Mean estimated gain vector:\n' + compare
-    print 'StefCal mean absolute gain error = %f' % \
+    print 'StEFCal mean absolute gain error = %f' % \
           (np.abs(g_estm.mean(axis=0) - g_norm).mean(),)
