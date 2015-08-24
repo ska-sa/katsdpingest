@@ -7,7 +7,7 @@ import numpy as np
 logger = logging.getLogger("kat.katsdpingest.antsol")
 
 
-def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=100, ref_ant=-1,
+def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=30, ref_ant=-1,
             init_gain=None, conv_thresh=0.0001):
     """Solve for antenna gains using StefCal (array dot product version).
 
@@ -87,16 +87,19 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=100, ref_ant=-1,
         g_new *= np.abs(g_ref) / g_ref
         logger.debug("Iteration %d: mean absolute gain change = %f" %
                      (n + 1, 0.5 * np.abs(g_new - g_curr).mean()))
-        # (*) Note: n starts at zero, while Salvini & Wijnholds (2014) algorithm starts at one
-        if n % 2 == 0:
-            # For odd* iterations, avoid getting stuck by only going halfway to solution
-            g_curr = 0.5 * (g_new + g_curr)
-        else:
-            # For even* iterations, check for convergence
+        # Salvini & Wijnholds tweak gains every *even* iteration but their counter starts at 1
+        if n % 2:
+            # Check for convergence of relative l_2 norm of change in gain vector
             error = np.linalg.norm(g_new - g_curr, axis=-1) / np.linalg.norm(g_new, axis=-1)
-            g_curr = g_new
             if np.max(error) < conv_thresh:
+                g_curr = g_new
                 break
+            else:
+                # Avoid getting stuck bouncing between two gain vectors by going halfway in between
+                g_curr = 0.5 * (g_new + g_curr)
+        else:
+            # Normal update every *odd* iteration
+            g_curr = g_new
     if ref_ant < 0:
         middle_angle = np.arctan2(np.median(g_curr.imag, axis=-1),
                                   np.median(g_curr.real, axis=-1))
@@ -145,7 +148,7 @@ if __name__ == '__main__':
         vis[m] = V[(antA, antB)]
 
     print 'Testing StefCal:\n----------------'
-    g_estm = stefcal(vis, N, antA, antB, num_iters=10, ref_ant=ref_ant)
+    g_estm = stefcal(vis, N, antA, antB, num_iters=100, ref_ant=ref_ant)
     compare = '\n'.join([("%+5.3f%+5.3fj -> %+5.3f%+5.3fj" %
                           (gt.real, gt.imag, ge.real, ge.imag))
                          for gt, ge in np.c_[g_norm, g_estm.mean(axis=0)]])
