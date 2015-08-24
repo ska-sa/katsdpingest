@@ -7,7 +7,8 @@ import numpy as np
 logger = logging.getLogger("kat.katsdpingest.antsol")
 
 
-def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, init_gain=None):
+def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=100, ref_ant=-1,
+            init_gain=None, conv_thresh=0.0001):
     """Solve for antenna gains using StefCal (array dot product version).
 
     The observed visibilities are provided in a NumPy array of any shape and
@@ -38,11 +39,12 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
     num_iters : int, optional
         Number of iterations
     ref_ant : int, optional
-        Reference antenna whose gain will be forced to be 1.0. Alternatively,
-        if *ref_ant* is -1, the average gain magnitude will be 1 and the median
-        gain phase will be 0.
+        Reference antenna for which phase will be forced to 0.0. Alternatively,
+        if *ref_ant* is -1, the median gain phase will be 0.
     init_gain : array of complex, shape(num_ants,) or None, optional
         Initial gain vector (all equal to 1.0 by default)
+    conv_thresh : float, optional
+        Convergence threshold (max relative l_2 norm of change in gain vector)
 
     Returns
     -------
@@ -55,6 +57,12 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
 
     The algorithm is iterative but should converge in a small number of
     iterations (10 to 30).
+
+    References
+    ----------
+    .. [1] Salvini, Wijnholds, "Fast gain calibration in radio astronomy using
+       alternating direction implicit methods: Analysis and applications," 2014,
+       preprint at `<http://arxiv.org/abs/1410.2101>`_
 
     """
     # Each row of this array contains the indices of baselines with the same antA
@@ -73,19 +81,26 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
         g_basis = g_curr[..., antB_per_antA]
         # Do scalar least-squares fit of basis vector to vis vector for whole collection in parallel
         g_new = (g_basis * weighted_vis).sum(axis=-1) / (g_basis.conj() * g_basis).sum(axis=-1)
-        # Normalise g_new to match g_curr so that taking their average and
-        # difference make sense (without copy the elements of g_new are mangled up)
-        g_new /= (g_new[..., ref_ant][..., np.newaxis].copy() if ref_ant >= 0 else
-                  g_new[..., 0][..., np.newaxis].copy())
+        # Get gains for reference antenna (or first one, if none given)
+        g_ref = g_new[..., max(ref_ant, 0)][..., np.newaxis].copy()
+        # Force reference gain to have zero phase
+        g_new *= np.abs(g_ref) / g_ref
         logger.debug("Iteration %d: mean absolute gain change = %f" %
                      (n + 1, 0.5 * np.abs(g_new - g_curr).mean()))
-        # Avoid getting stuck during iteration
-        g_curr = 0.5 * (g_new + g_curr)
+        # (*) Note: n starts at zero, while Salvini & Wijnholds (2014) algorithm starts at one
+        if n % 2 == 0:
+            # For odd* iterations, avoid getting stuck by only going halfway to solution
+            g_curr = 0.5 * (g_new + g_curr)
+        else:
+            # For even* iterations, check for convergence
+            error = np.linalg.norm(g_new - g_curr, axis=-1) / np.linalg.norm(g_new, axis=-1)
+            g_curr = g_new
+            if np.max(error) < conv_thresh:
+                break
     if ref_ant < 0:
-        avg_amp = np.mean(np.abs(g_curr), axis=-1)
         middle_angle = np.arctan2(np.median(g_curr.imag, axis=-1),
                                   np.median(g_curr.real, axis=-1))
-        g_curr /= (avg_amp * np.exp(1j * middle_angle))[..., np.newaxis]
+        g_curr *= np.exp(-1j * middle_angle)[..., np.newaxis]
     return g_curr
 
 
