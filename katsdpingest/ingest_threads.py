@@ -56,7 +56,7 @@ class CAMIngest(threading.Thread):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def _update_telstate_from_ig(self, updated):
-        for name, item in updated.iteritems():
+        for item_name, item in updated.iteritems():
             try:
                 (value_time, status, sensor_value) = item.value.split(" ",2)
                 value_time = float(value_time)
