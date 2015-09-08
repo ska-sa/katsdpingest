@@ -204,7 +204,11 @@ class TelescopeModel(object):
     def create_h5_file(self, filename):
         """Initialises an HDF5 output file as appropriate
         for this version of the telescope model."""
-        f = h5py.File(filename, mode="w")
+        # Need to use at least version 1.8, so that >64K attributes
+        # (specifically bls_ordering) can be stored. At present there is no
+        # way to explicitly request 1.8; this should be revisited after 1.10
+        # ships.
+        f = h5py.File(filename, mode="w", libver='latest')
         f['/'].create_group('Data')
         f['/'].create_group('History')
         f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
