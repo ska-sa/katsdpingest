@@ -307,27 +307,23 @@ class TelescopeModel(object):
                 ig[u.key] = u.value
             yield ig.get_heap()
 
-    def update_from_ig(self, ig, proxy_path=None):
+    def update_from_ig(self, updated, proxy_path=None):
         """Traverses a SPEAD itemgroup looking for any changed items that match items expected in the model
         index and then updating these as appropriate. Attributes are non-volatile and will not 
         be overwritten, whilst conforming sensor are inserted into Sensor objects."""
-        for item_name in ig.keys():
-            # ig has no iteritems or equivalent
-            item = ig.get_item(item_name)
-            if item._changed:
+        for item_name, item in updated.iteritems():
+            try:
+                if proxy_path is not None: item_name = "{0}_{1}".format(proxy_path,item_name)
+                 # some sensors and attributes lack proper identification
+                dest = self.index[item_name]
                 try:
-                    if proxy_path is not None: item_name = "{0}_{1}".format(proxy_path,item_name)
-                     # some sensors and attributes lack proper identification
-                    dest = self.index[item_name]
-                    item_value = item.get_value()
-                    try:
-                        dest.set_value(item_value)
-                        if dest.spead_item is None: dest.spead_item = item
-                    except ValueError as e:
-                        logger.warning("Failed to set {0} to {1}".format(item_name, item_value))
-                        continue
-                except KeyError:
-                    logger.debug("Item {0} not in index.".format(item_name))
+                    dest.set_value(item.value)
+                    if dest.spead_item is None: dest.spead_item = item
+                except ValueError as e:
+                    logger.warning("Failed to set {0} to {1}".format(item_name, item.value))
+                    continue
+            except KeyError:
+                logger.debug("Item {0} not in index.".format(item_name))
 
 #### Component Definitions
 
@@ -343,7 +339,7 @@ class CorrelatorBeamformer(TelescopeComponent):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
         self._critical_sensors = ['dbe_mode','target']
         self._std_sensors = ['auto_delay']
-        self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
+        self._critical_attributes = ['adc_sample_rate', 'n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
         self._std_attributes = ['center_freq']
         self._build()
 

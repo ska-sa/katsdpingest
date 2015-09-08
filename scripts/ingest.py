@@ -10,8 +10,7 @@
 # Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
 # just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
 
-import spead64_40
-import spead64_48 as spead
+import spead2
 import time
 import argparse
 import Queue
@@ -286,13 +285,11 @@ class IngestDeviceServer(DeviceServer):
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
-            tx = spead.Transmitter(spead.TransportUDPtx('localhost',opts.cbf_spead[0].port))
-            tx.end()
+            self.cbf_thread.rx.stop()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
-            tx = spead64_40.Transmitter(spead64_40.TransportUDPtx('localhost',opts.cam_spead[0].port))
-            tx.end()
+            self.cam_thread.rx.stop()
             time.sleep(1)
 
         self.cbf_thread.finalise()
@@ -334,8 +331,7 @@ if __name__ == '__main__':
     logger = logging.getLogger("katsdpingest.ingest")
     logger.setLevel(logging.INFO)
 
-    spead.logger.setLevel(logging.WARNING)
-    spead64_40.logger.setLevel(logging.WARNING)
+    logging.getLogger('spead2').setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
 
     sp.ProcBlock.logger = logger
