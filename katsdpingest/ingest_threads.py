@@ -313,7 +313,8 @@ class CBFIngest(threading.Thread):
         self.sdisp_ips = {}
         self._sd_count = 0
         self.center_freq = 0
-        self.ig_sd = None
+        self.sd_flavour = spead2.Flavour(4, 64, 40, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
         self.timestamps = []
          # temporary timestamp store
         #### Initialise processing blocks used
@@ -341,11 +342,10 @@ class CBFIngest(threading.Thread):
 
         self._sd_count += 1
 
-    def _create_ig_sd(self):
-        """Create the item group for signal displays. Static values are also filled in."""
-        flavour = spead2.Flavour(4, 64, 40, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        inline_format = [('u', flavour.heap_address_bits)]
-        self.ig_sd = spead2.send.ItemGroup(flavour=flavour)
+    def _update_sd_metadata(self):
+        """Update the itemgroup for the signal display metadata to include any changes since last sent..."""
+        inline_format = [('u', self.sd_flavour.heap_address_bits)]
+        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
          # we need to clear the descriptor so as not to accidently send a signal display frame twice...
         self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.",
             **_slot_shape(self.proc.buffer('sd_spec_vis'), np.float32))
@@ -370,16 +370,17 @@ class CBFIngest(threading.Thread):
         self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.",
             dtype=np.uint8,shape=(self.proc.buffer('percentile0').shape[1],n_perc_signals))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-                            shape=[],dtype=np.float64, value=self.center_freq)
+            shape=[],dtype=np.float64, value=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
                             shape=[], dtype=None, format=inline_format)
         bls_ordering = np.asarray(self.cbf_attr['bls_ordering'].value)
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
-                            shape=[], dtype=np.float64, value=self.cbf_attr['bandwidth'].value)
+            shape=[], dtype=np.float64, value=self.cbf_attr['bandwidth'].value)
         self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
-                            shape=[], dtype=None, format=inline_format, value=self.cbf_attr['n_chans'].value)
+            shape=[], dtype=None, format=inline_format, value=self.cbf_attr['n_chans'].value)
+        return self.ig_sd.get_heap()
 
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None):
@@ -427,8 +428,9 @@ class CBFIngest(threading.Thread):
         return permutation, np.array([x[1] for x in reordered])
 
     def send_sd_metadata(self):
-        if self.ig_sd is not None:
-            heap = self.ig_sd.get_heap(descriptors='all', data='none')
+        heap = self._update_sd_metadata()
+        self._sd_metadata = heap
+        if heap is not None:
             for tx in self.sdisp_ips.itervalues():
                 tx.send_heap(heap)
 
@@ -478,8 +480,8 @@ class CBFIngest(threading.Thread):
         config = spead2.send.StreamConfig(max_packet_size=9172)
         self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip,port))
         self.sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
-        if self.ig_sd is not None:
-            self.sdisp_ips[ip].send_heap(self.ig_sd.get_heap(descriptors='all', data='all'))
+        if self._sd_metadata is not None:
+            self.sdisp_ips[ip].send_heap(self._sd_metadata)
              # new connection requires headers...
 
     def set_timeseries_mask(self,maskstr):
@@ -578,7 +580,6 @@ class CBFIngest(threading.Thread):
             self.write_process_log(*description)
 
         # initialise the signal display metadata
-        self._create_ig_sd()
         self.send_sd_metadata()
 
     def _flush_output(self, timestamps):
