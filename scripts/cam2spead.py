@@ -11,10 +11,23 @@ import os.path
 import numpy as np
 from pkg_resources import resource_filename
 
+# Only needed for fake_cam
+from katcp.resource_client import (IOLoopThreadWrapper, KATCPClientResource,
+                                   ThreadSafeKATCPClientResourceWrapper)
+from katcp.ioloop_manager import IOLoopManager
+
 import spead64_40 as spead
-import katconf
-import katcorelib
 from katsdpingest.cam2spead import Cam2SpeadDeviceServer
+
+# Don't depend on CAM
+try:
+    import katconf
+except ImportError:
+    katconf = None
+try:
+    import katcorelib
+except ImportError:
+    katcorelib = None
 
 
 # Obtain default sensor list
@@ -50,18 +63,33 @@ parser.add_option('--fake-cam-port', type=int, default=2047,
 opts, args = parser.parse_args()
 
 # Setup configuration source and configure logging (via conf file or directly)
-katconf.set_config(katconf.environ(opts.sysconfig))
-katconf.configure_logging(opts.logging)
+if katconf:
+    katconf.set_config(katconf.environ(opts.sysconfig))
+    katconf.configure_logging(opts.logging)
+else:
+    logging.basicConfig()
 # Suppress SPEAD info messages
 spead.logger.setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Get sensor objects and attributes, either via KAT connection or a fake CAM device
 if opts.fake_cam:
-    fake_cam = katcorelib.build_client('fake_cam',
-                                       opts.fake_cam_host, opts.fake_cam_port,
-                                       required=True, controlled=True)
-    all_sensors = fake_cam.sensor
+    # Start up ioloop
+    ioloopman = IOLoopManager()
+    ioloop = ioloopman.get_ioloop()
+    ioloop.make_current()
+    wrapped_ioloop = IOLoopThreadWrapper(ioloop)
+    ioloopman.start()
+    wrapped_ioloop.default_timeout = 1
+    # Create fake CAM client and connect it to sim_observe
+    async_fake_cam = KATCPClientResource({'name':'fake_cam', 'description':'A fake CAM',
+                                          'address':(opts.fake_cam_host, opts.fake_cam_port),
+                                          'controlled':True})
+    fake_cam = ThreadSafeKATCPClientResourceWrapper(async_fake_cam, wrapped_ioloop)
+    fake_cam.start()
+    fake_cam.until_synced()
+    # The fake_cam client should now look like a kat object
+    all_sensors = fake_cam.sensor._mapping
     # Obtain attribute dictionary from server and check if valid
     reply = fake_cam.req.get_attributes()
     attributes = eval(reply.messages[0].arguments[1], {}) if reply else {}
@@ -69,6 +97,8 @@ if opts.fake_cam:
         logger.warning('No attributes were returned by fake CAM server %s:%d' %
                        (opts.fake_cam_host, opts.fake_cam_port))
 else:
+    if not katcorelib:
+        raise ImportError('No module named katcorelib')
     kat = katcorelib.tbuild(system=opts.system)
     all_sensors = kat.sensors
     antennas = kat.katconfig.array_conf.antennas
