@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from katsdpingest import telescope_model as tm
 import time
-import spead64_40 as spead
+import spead2
 
 class TelescopeModelTestCases(unittest.TestCase):
     """Run a number of test against the telescope model.
@@ -51,7 +51,7 @@ class TelescopeModelTestCases(unittest.TestCase):
          # test updating the model from a SPEAD itemgroup
         self.model.add_components(self.components)
         self.model.build_index()
-        ig = spead.ItemGroup()
+        updated = {}
          # get a sensor and attribute to use
         sensor_name = [k for k,v in self.model.index.iteritems() if type(v) == tm.Sensor][0]
         attribute_name = [k for k,v in self.model.index.iteritems() if type(v) == tm.Attribute][0]
@@ -59,12 +59,16 @@ class TelescopeModelTestCases(unittest.TestCase):
         attribute_descr = "attribute description string"
         sensor_val = 31.5
         attribute_val = "test value"
-        ig.add_item(name=sensor_name, id=0x7001, description=sensor_descr, shape=-1, fmt=spead.mkfmt(('s', 8)))
-        ig.add_item(name=attribute_name, id=0x7002, description=attribute_descr, shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=attribute_val)
-        ig[sensor_name] = "{0} nominal {1}".format(time.time(), sensor_val)
+        updated[sensor_name] = spead2.Item(
+            name=sensor_name, id=0x7001, description=sensor_descr,
+            shape=(None,), dtype=None, format=[('c', 8)],
+            value="{0} nominal {1}".format(time.time(), sensor_val))
+        updated[attribute_name] = spead2.Item(
+            name=attribute_name, id=0x7002, description=attribute_descr,
+            shape=(None,), dtype=None, format=[('c', 8)], value=attribute_val)
 
          # update from ig
-        self.model.update_from_ig(ig)
+        self.model.update_from_ig(updated)
 
          # check values have been set
         self.assertEqual(self.model.index[sensor_name].value, sensor_val)
