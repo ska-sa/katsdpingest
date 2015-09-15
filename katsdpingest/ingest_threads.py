@@ -313,7 +313,7 @@ class CBFIngest(threading.Thread):
         self.sdisp_ips = {}
         self._sd_count = 0
         self.center_freq = 0
-        self.sd_flavour = spead2.Flavour(4, 64, 40, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
         self.timestamps = []
          # temporary timestamp store
