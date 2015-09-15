@@ -261,7 +261,7 @@ class TelescopeModel(object):
         ig._new_names.append(item.name)
         ig._update_keys()
 
-    def update_from_ig(self, updated, proxy_path=None):
+    def update(self, updated, proxy_path=None):
         """Traverses a SPEAD itemgroup looking for any changed items that match items expected in the model
         index and then updating these as appropriate. Attributes are non-volatile and will not 
         be overwritten, whilst conforming sensor are inserted into Sensor objects."""

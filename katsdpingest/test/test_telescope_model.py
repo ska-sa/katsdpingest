@@ -68,7 +68,7 @@ class TelescopeModelTestCases(unittest.TestCase):
             shape=(None,), dtype=None, format=[('c', 8)], value=attribute_val)
 
          # update from ig
-        self.model.update_from_ig(updated)
+        self.model.update(updated)
 
          # check values have been set
         self.assertEqual(self.model.index[sensor_name].value, sensor_val)

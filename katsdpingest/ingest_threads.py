@@ -55,7 +55,7 @@ class CAMIngest(threading.Thread):
     def enable_debug(self, debug):
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
-    def _update_telstate_from_ig(self, updated):
+    def _update_telstate(self, updated):
         for item_name, item in updated.iteritems():
             try:
                 (value_time, status, sensor_value) = item.value.split(" ",2)
@@ -98,8 +98,8 @@ class CAMIngest(threading.Thread):
 
         for heap in rx_md:
             updated = self.ig.update(heap)
-            self.model.update_from_ig(updated)
-            self._update_telstate_from_ig(updated)
+            self.model.update(updated)
+            self._update_telstate(updated)
 
         self.logger.info("CAM ingest thread complete at %f" % time.time())
 
@@ -659,7 +659,7 @@ class CBFIngest(threading.Thread):
                     self.logger.warning('Attribute %s could not be set to %s because it is already set to %s',
                             name, value, old)
 
-    def _update_telstate_from_ig(self, updated):
+    def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
         for item_name, item in updated.iteritems():
             # bls_ordering is set later by _initialize, after permuting it.
@@ -738,8 +738,8 @@ class CBFIngest(threading.Thread):
             #### Update the telescope model
 
             updated = ig_cbf.update(heap)
-            self.model.update_from_ig(updated, proxy_path=self.cbf_name)
-            self._update_telstate_from_ig(updated)
+            self.model.update(updated, proxy_path=self.cbf_name)
+            self._update_telstate(updated)
              # any interesting attributes will now end up in the model
              # this means we are only really interested in actual data now
             if 'xeng_raw' not in updated:
