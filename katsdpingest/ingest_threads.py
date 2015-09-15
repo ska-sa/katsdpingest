@@ -370,16 +370,16 @@ class CBFIngest(threading.Thread):
         self.ig_sd.add_item(name=('sd_percspectrumflags'),id=(0x3506), description="Flags for percentiles of spectrum.",
             dtype=np.uint8,shape=(self.proc.buffer('percentile0').shape[1],n_perc_signals))
         self.ig_sd.add_item(name="center_freq",id=0x1011, description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-            shape=[],dtype=np.float64, value=self.center_freq)
+            shape=(),dtype=None,format=[('f', 64)], value=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
-                            shape=[], dtype=None, format=inline_format)
+            shape=(),dtype=None,format=inline_format)
         bls_ordering = np.asarray(self.cbf_attr['bls_ordering'].value)
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=[], dtype=np.float64, value=self.cbf_attr['bandwidth'].value)
+            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'].value)
         self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
-            shape=[], dtype=None, format=inline_format, value=self.cbf_attr['n_chans'].value)
+            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'].value)
         return self.ig_sd.get_heap()
 
     @classmethod
@@ -497,7 +497,7 @@ class CBFIngest(threading.Thread):
             ig.add_item(id=None, name='flags', description="Flags for visibilities",
                     shape=flags.shape, dtype=flags.dtype)
             ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
-                    shape=[], dtype=np.float64)
+                    shape=(), dtype=None, format=[('f', 64)])
         ig['correlator_data'].value = vis
         ig['flags'].value = flags
         ig['timestamp'].value = ts_rel
