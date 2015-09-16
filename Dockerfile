@@ -37,7 +37,7 @@ ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64"
 RUN pip install --no-deps \
     ansicolors==1.0.2 \
     katcp==0.5.5 \
-    pycuda==2014.1 \
+    pycuda==2015.1.3 \
     scikits.fitting==0.5.1 \
     manhole==1.0.0 \
     spead2==0.2.2 \
