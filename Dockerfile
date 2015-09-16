@@ -14,6 +14,7 @@ ENV MIRROR_IP 192.168.1.25
 RUN apt-get -y update && apt-get -y install \
     python-appdirs \
     python-blinker \
+    python-concurrent.futures \
     python-decorator \
     python-h5py \
     python-iniparse \
@@ -21,7 +22,9 @@ RUN apt-get -y update && apt-get -y install \
     python-markupsafe \
     python-py \
     python-pytools \
-    python-scipy
+    python-scipy \
+    libboost-python1.55-dev \
+    libboost-system1.55-dev
 RUN echo "$MIRROR_IP mirror.kat.ac.za" >> /etc/hosts && wget -q $CUDA_RUN && sh ./$CUDA_RUN_FILE -silent -toolkit && rm -- $CUDA_RUN_FILE
 RUN echo "$MIRROR_IP mirror.kat.ac.za" >> /etc/hosts && wget -q $DRIVER_RUN && sh ./$DRIVER_RUN_FILE --no-kernel-module --silent --no-network && rm -- $DRIVER_RUN_FILE
 ENV PATH="$PATH:/usr/local/cuda/bin"
@@ -37,7 +40,7 @@ RUN pip install --no-deps \
     pycuda==2014.1 \
     scikits.fitting==0.5.1 \
     manhole==1.0.0 \
-    git+https://github.com/ska-sa/PySPEAD \
+    spead2==0.2.2 \
     git+ssh://git@github.com/ska-sa/katpoint \
     git+ssh://git@github.com/ska-sa/katsdpsigproc \
     git+ssh://git@github.com/ska-sa/katsdpdisp \
