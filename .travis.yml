@@ -1,16 +1,31 @@
+sudo: false
 language: python
 cache:
   directories:
     - $HOME/.ccache
 python:
   - "2.7"
-before_install: sudo apt-get install -qq libhdf5-serial-dev libblas-dev gfortran liblapack-dev ccache
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+      - boost-latest
+    packages:
+      - libhdf5-serial-dev
+      - libblas-dev
+      - gfortran
+      - liblapack-dev
+      - ccache
+      - libboost-system1.55-dev
+      - libboost-python1.55-dev
+      - gcc-4.8
+      - g++-4.8
 # command to install dependencies. pip needs to be updated to make h5py install
-# correctly. The directory changes are to prevent the local setup.cfg from
-# affecting the pip installs.
+# correctly.
 install:
-  - "(cd ~ && pip install -U pip setuptools)"
-  - "(cd ~ && export PATH=/usr/lib/ccache:$PATH && travis_wait pip install -r $OLDPWD/requirements.txt)"
+  - pip install -U pip setuptools
+  - CC=gcc-4.8 pip install spead2
+  - (export PATH=/usr/lib/ccache:$PATH && travis_wait pip install -r requirements.txt)
 # command to run tests
 # The simulator tests depend on private svn repositories that are not available to Travis
 script: nosetests -v -e simulator

@@ -13,6 +13,8 @@ FakeValue = collections.namedtuple('FakeValue', ['value'])
 class TestTimeAverage(object):
     def setup(self):
         self.cbf_attr = {
+            'scale_factor_timestamp': FakeValue(1712000000.0),
+            'adc_sample_rate': FakeValue(1712000000),
             'n_accs': FakeValue(123456),
             'n_chans': FakeValue(4096),
             'int_time': FakeValue(0.75)

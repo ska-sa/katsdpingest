@@ -23,7 +23,7 @@ setup (
         'blinker',
         'netifaces',
         'scikits.fitting',
-        'spead',
+        'spead2>=0.2.0',
         'katcp',
         'katpoint',
         'katsdpsigproc',

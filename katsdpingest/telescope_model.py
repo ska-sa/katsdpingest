@@ -2,7 +2,7 @@ import numpy as np
 import time
 import h5py
 import os
-import spead64_40 as spead
+import spead2
 import logging
 
 ### Model definitions
@@ -13,12 +13,6 @@ logger.setLevel(logging.INFO)
 hdf5_version = "3.0"
  # the version number is intrinsically linked to the telescope model, as this
  # is the arbiter of file structure and format
-
-class SPEADItemUpdate(object):
-    def __init__(self, key, ts, value):
-        self.key = key
-        self.ts = ts
-        self.value = value
 
 class Attribute(object):
     def __init__(self, name, critical=False, init_val=None):
@@ -40,7 +34,7 @@ class Attribute(object):
         """Return a spead item describing this attribute.
         A generic item is create if an extant one is not available."""
         if self.spead_item is None:
-            self.spead_item = spead.Item(name=self.name, description='', shape=-1, fmt=spead.mkfmt(('s', 8)))
+            self.spead_item = spead2.Item(name=self.name, description='', shape=[None], dtype=None, format=[('c', 8)])
         return self.spead_item
 
     def is_valid(self):
@@ -65,6 +59,8 @@ class Sensor(object):
          # resets to initial state
 
     def set_value(self, sensor_string):
+        # spead2 produces unicode strings, but h5py can't support them
+        sensor_string = str(sensor_string)
         (value_time, status, sensor_value) = sensor_string.split(" ",2)
         if status == 'unknown':
             logger.debug("Sensor {0} has type unknown. Not updating value.".format(self.name))
@@ -93,7 +89,7 @@ class Sensor(object):
         """Return a spead item describing this sensor.
         A generic item is create if an extant one is not available."""
         if self.spead_item is None:
-            self.spead_item = spead.Item(name=self.name, description='', shape=-1, fmt=spead.mkfmt(('s', 8)))
+            self.spead_item = spead.Item(name=self.name, description='', shape=[None], dtype=None, format=spead.mkfmt(('c', 8)))
         return self.spead_item
 
     def get_dataset(self):
@@ -204,7 +200,11 @@ class TelescopeModel(object):
     def create_h5_file(self, filename):
         """Initialises an HDF5 output file as appropriate
         for this version of the telescope model."""
-        f = h5py.File(filename, mode="w")
+        # Need to use at least version 1.8, so that >64K attributes
+        # (specifically bls_ordering) can be stored. At present there is no
+        # way to explicitly request 1.8; this should be revisited after 1.10
+        # ships.
+        f = h5py.File(filename, mode="w", libver='latest')
         f['/'].create_group('Data')
         f['/'].create_group('History')
         f['/History'].create_dataset('script_log', [1], maxshape=[None], dtype=np.dtype([('timestamp', np.float64), ('log', h5py.new_vlen(str))]))
@@ -261,69 +261,23 @@ class TelescopeModel(object):
         ig._new_names.append(item.name)
         ig._update_keys()
 
-    def generate_heaps(self, time_spacing=1.0):
-        """Used to create a generator that will yield SPEAD heaps ready to transmit
-        that describe the telescope model. A basic timeline is constructed to order the events
-        and the heap transmitter can use the timestamping to attempt a realtime simulation 
-        if this is desired."""
-
-         # first step is to build metadata
-         # we traverse the entire model and pick up all the SPEAD items
-         # as we go (for missing items these are synthesised as best we can)
-        ig = spead.ItemGroup()
-        all_item_updates = []
-         # the array of Attributes and Sensors to actually send
-
-        for c in self.components.values():
-            for a in c.attributes.itervalues():
-                self._add_spead_item(ig, a.get_spead_item())
-                logger.debug("Attribute {0} has update ts {1}".format(a.name,a.update_ts))
-                if a.update_ts is not None:
-                    logger.debug("Adding attribute {0} to spead update".format(a.name))
-                    all_item_updates.append(SPEADItemUpdate(a.name,a.update_ts,a.value))
-            for s in c.sensors.itervalues():
-                self._add_spead_item(ig, s.get_spead_item())
-                for (sensor_time, sensor_value) in s.values.iteritems():
-                    sensor_state = s.statii[sensor_time]
-                    update_time = s.update_tss[sensor_time]
-                    logger.debug("Adding sensor value for sensor {0} to spead update".format(s.name))
-                    all_item_updates.append(SPEADItemUpdate(s.name, update_time, "{0} {1} {2}".format(sensor_time, sensor_state, sensor_value)))
-        all_item_updates.sort(key=lambda x: x.ts)
-         # sort items by their update time
-
-        yield ig.get_heap()
-         # send metadata
-
-        while len(all_item_updates) > 0:
-            update = [all_item_updates.pop()]
-            while len(all_item_updates) > 0 and all_item_updates[0].ts < (update[0].ts + time_spacing):
-                update.append(all_item_updates.pop())
-             # ok, we now have a group of updates to send
-            for u in update:
-                ig[u.key] = u.value
-            yield ig.get_heap()
-
-    def update_from_ig(self, ig, proxy_path=None):
+    def update(self, updated, proxy_path=None):
         """Traverses a SPEAD itemgroup looking for any changed items that match items expected in the model
         index and then updating these as appropriate. Attributes are non-volatile and will not 
         be overwritten, whilst conforming sensor are inserted into Sensor objects."""
-        for item_name in ig.keys():
-            # ig has no iteritems or equivalent
-            item = ig.get_item(item_name)
-            if item._changed:
+        for item_name, item in updated.iteritems():
+            try:
+                if proxy_path is not None: item_name = "{0}_{1}".format(proxy_path,item_name)
+                 # some sensors and attributes lack proper identification
+                dest = self.index[item_name]
                 try:
-                    if proxy_path is not None: item_name = "{0}_{1}".format(proxy_path,item_name)
-                     # some sensors and attributes lack proper identification
-                    dest = self.index[item_name]
-                    item_value = item.get_value()
-                    try:
-                        dest.set_value(item_value)
-                        if dest.spead_item is None: dest.spead_item = item
-                    except ValueError as e:
-                        logger.warning("Failed to set {0} to {1}".format(item_name, item_value))
-                        continue
-                except KeyError:
-                    logger.debug("Item {0} not in index.".format(item_name))
+                    dest.set_value(item.value)
+                    if dest.spead_item is None: dest.spead_item = item
+                except ValueError as e:
+                    logger.warning("Failed to set {0} to {1}".format(item_name, item.value))
+                    continue
+            except KeyError:
+                logger.debug("Item {0} not in index.".format(item_name))
 
 #### Component Definitions
 
@@ -339,7 +293,7 @@ class CorrelatorBeamformer(TelescopeComponent):
         super(CorrelatorBeamformer, self).__init__(*args, **kwargs)
         self._critical_sensors = ['dbe_mode','target']
         self._std_sensors = ['auto_delay']
-        self._critical_attributes = ['n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
+        self._critical_attributes = ['adc_sample_rate', 'n_chans','n_accs','n_bls','bls_ordering','bandwidth', 'sync_time', 'int_time','scale_factor_timestamp']
         self._std_attributes = ['center_freq']
         self._build()
 

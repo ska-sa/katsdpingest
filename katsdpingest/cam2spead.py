@@ -129,14 +129,14 @@ class Cam2SpeadDeviceServer(DeviceServer):
             logger.debug("Registering attribute %r with SPEAD id 0x%x and value %s" %
                          (name, spead_id, value))
             self.ig.add_item(name=name, id=spead_id, description='todo',
-                             shape=-1, fmt=spead.mkfmt(('s', 8)), init_val=value)
+                             shape=-1, fmt=spead.mkfmt(('c', 8)), init_val=value)
             SensorBridge.next_available_spead_id += 1
         for name, bridge in self.sensor_bridges.iteritems():
             logger.debug("Adding info for sensor %r (id 0x%x) to initial heap: %s" %
                          (name, bridge.spead_id, bridge.last_update))
             self.ig.add_item(name=name, id=bridge.spead_id,
                              description=bridge.description,
-                             shape=-1, fmt=spead.mkfmt(('s', 8)),
+                             shape=-1, fmt=spead.mkfmt(('c', 8)),
                              init_val=bridge.last_update)
         return self.ig.get_heap()
 
