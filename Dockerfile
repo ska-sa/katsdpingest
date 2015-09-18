@@ -40,7 +40,8 @@ RUN pip install --no-deps \
     pycuda==2015.1.3 \
     scikits.fitting==0.5.1 \
     manhole==1.0.0 \
-    spead2==0.2.2 \
+    six==1.9.0 \
+    spead2==0.3.0 \
     git+ssh://git@github.com/ska-sa/katpoint \
     git+ssh://git@github.com/ska-sa/katsdpsigproc \
     git+ssh://git@github.com/ska-sa/katsdpdisp \

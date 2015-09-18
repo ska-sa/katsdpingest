@@ -1,6 +1,6 @@
 numpy
 h5py
-spead2>=0.2.0
+spead2>=0.3.0
 iniparse
 blinker
 scikits.fitting
