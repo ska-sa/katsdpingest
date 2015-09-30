@@ -336,7 +336,7 @@ if __name__ == '__main__':
         formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
 
-        fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e6, backupCount=10)
+        fh = logging.handlers.RotatingFileHandler(os.path.join(opts.workpath, 'ingest.log'), maxBytes=1e7, backupCount=10)
         fh.setFormatter(formatter)
         logging.root.addHandler(fh)
 
