@@ -328,6 +328,13 @@ if __name__ == '__main__':
     # set up Python logging
     #katconf.configure_logging(opts.logging)
 
+    if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
+    formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
+                                      datefmt="%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler()
+    sh.setFormatter(formatter)
+    logging.root.addHandler(sh)
+
     logger = logging.getLogger("katsdpingest.ingest")
     logger.setLevel(logging.INFO)
 
