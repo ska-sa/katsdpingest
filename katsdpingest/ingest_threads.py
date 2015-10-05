@@ -720,7 +720,7 @@ class CBFIngest(threading.Thread):
         ig_cbf = spead2.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
-        prev_ts = 0
+        prev_ts = -1
         datasets = {}
         datasets_index = {}
         current_dbe_target = ''
