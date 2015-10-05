@@ -458,7 +458,8 @@ class CBFIngest(threading.Thread):
             # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
             # regularly - hence this check.
                 if self.timestamps:
-                    self.h5_file.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
+                    ds = self.h5_file.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
+                    ds.attrs['timestamp_reference'] = 'centroid'
                     # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
                     # distributed across the entire file.
                 else:
@@ -592,6 +593,8 @@ class CBFIngest(threading.Thread):
         cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
 
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
+        # Shift to the centre of the dump
+        ts_rel += 0.5 * self.cbf_attr['int_time'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
         self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
         self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
