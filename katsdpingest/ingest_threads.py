@@ -93,7 +93,7 @@ class CAMIngest(threading.Thread):
                 self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
             elif endpoint.host != '':
                 self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
-        rx_md = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2, max_heaps=255)
+        rx_md = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         rx_md.add_udp_reader(self.spead_endpoints[0].port)
         self.rx = rx_md
 

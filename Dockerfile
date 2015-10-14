@@ -41,7 +41,7 @@ RUN pip install --no-deps \
     scikits.fitting==0.5.1 \
     manhole==1.0.0 \
     six==1.9.0 \
-    spead2==0.3.0 \
+    spead2==0.4.0 \
     git+ssh://git@github.com/ska-sa/katpoint \
     git+ssh://git@github.com/ska-sa/katsdpsigproc \
     git+ssh://git@github.com/ska-sa/katsdpdisp \
