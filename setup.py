@@ -14,6 +14,7 @@ setup (
         "scripts/ingest_autotune.py",
         "scripts/cbf_data_simulator.py",
         "scripts/cam2spead.py",
+        "scripts/cam2telstate.py",
         "scripts/sim_observe.py",
         ],
     install_requires = [
@@ -30,5 +31,8 @@ setup (
         'katsdpdisp',
         'katsdptelstate'
     ],
+    extras_require = {
+        'cam2telstate': ['katportalclient', 'tornado>=4.0']
+    }
     zip_safe = False,
 )
