@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e -x
 pip install -U pip setuptools wheel
-pip install numpy  # Some requirements need it already installed
+pip install numpy git+ssh://git@github.com/ska-sa/katversion # Some requirements need it already installed
 pip install -r requirements.txt
 pip install coverage
 if [ "$label" = "cuda" ]; then
