@@ -33,6 +33,6 @@ setup (
     ],
     extras_require = {
         'cam2telstate': ['katportalclient', 'tornado>=4.0', 'six']
-    }
+    },
     zip_safe = False,
 )
