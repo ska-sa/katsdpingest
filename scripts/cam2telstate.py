@@ -16,10 +16,11 @@ class Sensor(object):
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
     """
-    def __init__(self, cam_name, sp_name=None, sampling_strategy='event'):
+    def __init__(self, cam_name, sp_name=None, sampling_strategy='event', immutable=False):
         self.cam_name = cam_name
         self.sp_name = sp_name or cam_name
         self.sampling_strategy = sampling_strategy
+        self.immutable = immutable
 
     def prefix(self, cam_prefix, sp_prefix=None):
         """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
@@ -31,7 +32,8 @@ class Sensor(object):
             sp_prefix = cam_prefix
         return Sensor(cam_prefix + '_' + self.cam_name,
                       sp_prefix + '_' + self.sp_name,
-                      self.sampling_strategy)
+                      self.sampling_strategy,
+                      self.immutable)
 
 
 # Per-receptor sensors, without the prefix for the receptor name
@@ -53,6 +55,13 @@ RECEPTOR_SENSORS = [
 DATA_SENSORS = [
     Sensor('target'),
     Sensor('auto_delay_enabled')
+]
+# Subarray sensors with the subarray name prefix
+SUBARRAY_SENSORS = [
+    Sensor('config_label', immutable=True),
+    Sensor('band', immutable=True),
+    Sensor('product', immutable=True),
+    Sensor('sub_nr', immutable=True)
 ]
 # All other sensors
 OTHER_SENSORS = [
@@ -120,6 +129,9 @@ class Client(object):
         for (cam_prefix, sp_prefix) in [('data_1', 'cbf')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
+        for (cam_prefix, sp_prefix) in [('subarray_1', 'sub')]:
+            for sensor in SUBARRAY_SENSORS:
+                sensors.append(sensor.prefix(cam_prefix, sp_prefix))
         sensors.extend(OTHER_SENSORS)
         return sensors
 
@@ -157,7 +169,8 @@ class Client(object):
             self._logger.debug("Sensor {} received update '{}' with status 'unknown' (ignored)"
                     .format(name, value))
         elif name in self._sensors:
-            self._telstate.add(self._sensors[name].sp_name, value, timestamp)
+            sensor = self._sensors[name]
+            self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
         else:
             self._logger.debug("Sensor {} received update '{}' but we didn't subscribe (ignored)"
                     .format(name, value))
