@@ -10,6 +10,7 @@ import sys
 import pprint
 import katsdptelstate
 import six
+import signal
 
 
 class Sensor(object):
@@ -107,6 +108,7 @@ class Client(object):
         self._args = args
         self._telstate = args.telstate
         self._logger = logger
+        self._loop = tornado.ioloop.IOLoop().current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
         sensors = self.get_sensors()
@@ -153,6 +155,11 @@ class Client(object):
             else:
                 self._logger.warn("Failed to set sampling strategy on %s: %s",
                     sensor.cam_name, result[u'info'])
+        for signal_number in [signal.SIGINT, signal.SIGTERM]:
+            signal.signal(
+                signal_number,
+                lambda sig, frame: self._loop.add_callback_from_signal(self.close))
+            self._logger.debug('Set signal handler for %s', signal_number)
 
     def process_update(self, item):
         self._logger.debug("Received update %s", pprint.pformat(item))
@@ -183,11 +190,21 @@ class Client(object):
         else:
             self.process_update(msg)
 
+    def close_handler(self, sig, frame):
+        self._loop.add_callback_from_signal(self.close)
+
+    @tornado.gen.coroutine
+    def close(self):
+        yield self._portal_client.unsubscribe(self._args.namespace)
+        self._portal_client.disconnect()
+        self._logger.info("disconnected")
+        self._loop.stop()
 
 def main():
     args = parse_args()
     logger = configure_logging()
     loop = tornado.ioloop.IOLoop().current()
+    loop.install()
     client = Client(args, logger)
     loop.add_callback(client.start)
     loop.start()
