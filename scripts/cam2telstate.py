@@ -108,7 +108,7 @@ class Client(object):
         self._args = args
         self._telstate = args.telstate
         self._logger = logger
-        self._loop = tornado.ioloop.IOLoop().current()
+        self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
         sensors = self.get_sensors()
@@ -203,8 +203,7 @@ class Client(object):
 def main():
     args = parse_args()
     logger = configure_logging()
-    loop = tornado.ioloop.IOLoop().current()
-    loop.install()
+    loop = tornado.ioloop.IOLoop.instance()
     client = Client(args, logger)
     loop.add_callback(client.start)
     loop.start()
