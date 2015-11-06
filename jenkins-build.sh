@@ -8,7 +8,7 @@ if [ "$label" = "cuda" ]; then
     pip install pycuda
     export CUDA_DEVICE=0
 elif [ "$label" = "opencl" ]; then
-    pip install pyopencl
+    pip install pyopencl==2015.1     # 2015.2.1 is broken
     export PYOPENCL_CTX=0:0
 fi
 nosetests -e simulator --with-xunit --cover-erase --with-coverage --cover-package=katsdpingest --cover-xml
