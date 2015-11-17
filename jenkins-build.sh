@@ -1,14 +1,12 @@
 #!/bin/bash
 set -e -x
 pip install -U pip setuptools wheel
-pip install numpy  # Some requirements need it already installed
-pip install -r requirements.txt
-pip install coverage
+install-requirements.py \
+    -d ~/docker-base/base-requirements.txt -d ~/docker-base/gpu-requirements.txt \
+    -r requirements.txt -r test-requirements.txt
 if [ "$label" = "cuda" ]; then
-    pip install pycuda
     export CUDA_DEVICE=0
 elif [ "$label" = "opencl" ]; then
-    pip install pyopencl==2015.1     # 2015.2.1 is broken
     export PYOPENCL_CTX=0:0
 fi
 nosetests -e simulator --with-xunit --cover-erase --with-coverage --cover-package=katsdpingest --cover-xml
