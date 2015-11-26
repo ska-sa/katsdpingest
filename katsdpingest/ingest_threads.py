@@ -286,6 +286,7 @@ class CBFIngest(threading.Thread):
         self.spectral_spead_rate = opts.l0_spectral_spead_rate
         self.continuum_spead_endpoint = opts.l0_continuum_spead
         self.continuum_spead_rate = opts.l0_continuum_spead_rate
+        self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
         self.cont_factor = opts.continuum_factor
@@ -479,7 +480,7 @@ class CBFIngest(threading.Thread):
 
     def add_sdisp_ip(self, ip, port):
         # TODO: rate limiting in config
-        config = spead2.send.StreamConfig(max_packet_size=9172)
+        config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
         self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip,port))
         self.sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
         if self._sd_metadata is not None:
