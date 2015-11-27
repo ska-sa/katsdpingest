@@ -1,11 +1,9 @@
 appdirs
-blinker
 Cython
 decorator
 funcsigs
 futures
 h5py
-iniparse
 katcp
 linecache2
 manhole
