@@ -9,4 +9,4 @@ if [ "$label" = "cuda" ]; then
 elif [ "$label" = "opencl" ]; then
     export PYOPENCL_CTX=0:0
 fi
-nosetests -e simulator --with-xunit --cover-erase --with-coverage --cover-package=katsdpingest --cover-xml
+nosetests --with-xunit --cover-erase --with-coverage --cover-package=katsdpingest --cover-xml

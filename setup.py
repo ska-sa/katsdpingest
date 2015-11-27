@@ -11,17 +11,11 @@ setup (
     include_package_data = True,
     scripts = [
         "scripts/ingest.py",
-        "scripts/ingest_autotune.py",
-        "scripts/cbf_data_simulator.py",
-        "scripts/cam2spead.py",
-        "scripts/sim_observe.py",
+        "scripts/ingest_autotune.py"
         ],
     install_requires = [
         'numpy',
         'scipy',
-        'iniparse',
-        'blinker',
-        'netifaces',
         'scikits.fitting',
         'spead2>=0.3.0',
         'katcp',
