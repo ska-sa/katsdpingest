@@ -58,6 +58,7 @@ def parse_opts():
     parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
+    parser.add_argument('--sd-spead-rate', type=float, default=100000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('--file-base', type=str, help='base directory into which to write HDF5 files. [default=no file]')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
