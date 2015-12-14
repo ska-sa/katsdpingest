@@ -73,8 +73,7 @@ else:
     kat = katcorelib.tbuild(system=opts.system)
     all_sensors = kat.sensors
     antennas = kat.katconfig.array_conf.antennas.keys()
-    attributes = dict([('%s_description' % (ant,), antennas[ant].observer.description)
-                       for ant in antennas])
+    attributes = {}
 
 # Load names of sensors to be streamed
 sensors = np.loadtxt(opts.sensor_list, delimiter=',', skiprows=1, dtype=np.str)
