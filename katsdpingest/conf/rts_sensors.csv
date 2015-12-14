@@ -12,6 +12,9 @@ ANT_rsc_rxs_serial_number, S-band RX Cryostat serial number, serial_number, inte
 ANT_rsc_rxu_serial_number, UHF-band RX Cryostat serial number, serial_number, integer
 ANT_rsc_rxx_serial_number, X-band RX Cryostat serial number, serial_number, integer
 ANT_ap_indexer_position, The current receiver indexer position as a discrete mapped to the receiver band it is at., , discrete
+ANT_ap_point_error_tiltmeter_enabled, Indicated if the tiltmeter pointing error correction is enabled or disabled, , boolean
+ANT_ap_tilt_corr_azim, Currently applied pointing error correction in Az based on tiltmeter readout. Resolution: 0.01 arcsec, arcsec, float
+ANT_ap_tilt_corr_elev, Currently applied pointing error correction in El based on tiltmeter readout. Resolution: 0.01 arcsec, arcsec, float
 data_rts_auto_delay_enabled, Whether automatic delay parameter sending is on., , boolean
 data_rts_target, Current target, , string
 anc_asc_air_pressure, Air pressure, mbar, float
