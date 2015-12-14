@@ -62,6 +62,7 @@ if opts.fake_cam:
                                        opts.fake_cam_host, opts.fake_cam_port,
                                        required=True, controlled=True)
     all_sensors = fake_cam.sensor
+    antennas = ['m062', 'm063']
     # Obtain attribute dictionary from server and check if valid
     reply = fake_cam.req.get_attributes()
     attributes = eval(reply.messages[0].arguments[1], {}) if reply else {}
@@ -71,7 +72,7 @@ if opts.fake_cam:
 else:
     kat = katcorelib.tbuild(system=opts.system)
     all_sensors = kat.sensors
-    antennas = kat.katconfig.array_conf.antennas
+    antennas = kat.katconfig.array_conf.antennas.keys()
     attributes = dict([('%s_description' % (ant,), antennas[ant].observer.description)
                        for ant in antennas])
 
@@ -79,11 +80,16 @@ else:
 sensors = np.loadtxt(opts.sensor_list, delimiter=',', skiprows=1, dtype=np.str)
 sensor_names = [line[0].strip() for line in sensors]
 sensor_descriptions = [line[1].strip() for line in sensors]
-# Antenna position sensors are currently the only high-frequency sensors that
-# update too regularly to be treated as event sensors
-sensor_list = [(name, desc, 'period 0.4') if name.find('_pos_') > 0 else
-               (name, desc, 'event') for (name, desc) in
-               zip(sensor_names, sensor_descriptions)]
+sensor_list = []
+for name, desc in zip(sensor_names, sensor_descriptions):
+    # Unpack antenna sensors with actual antenna names
+    names = [name.replace('ANT', ant) for ant in antennas] \
+            if name.startswith('ANT') else [name]
+    # Antenna position sensors are currently the only high-frequency sensors
+    # that update too regularly to be treated as event sensors
+    strategy = 'period 0.4' if name.find('_pos_') > 0 else 'event'
+    for sensor_name in names:
+        sensor_list.append((sensor_name, desc, strategy))
 logger.info('Listening to %d attributes and %d sensors selected from %d %s ones' %
             (len(attributes), len(sensor_list),
              len([k for k in vars(all_sensors) if k.find('_') > 0]),

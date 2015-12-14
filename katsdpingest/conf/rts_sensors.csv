@@ -1,28 +1,16 @@
 # name, description, unit, type
-m024_activity, Combined state of the antenna proxy, , discrete
-m024_pos_actual_scan_azim, Actual azimuth after scan offset, deg, float
-m024_pos_actual_scan_elev, Actual elevation after scan offset, deg, float
-m024_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
-m024_pos_request_scan_elev, Requested elevation after scan offset, deg, float
-m024_target, Current target, , string
-m024_dig_noise_diode, Noise diode flag, , boolean
-m024_rsc_rxl_serial_number, L-band RX Cryostat serial number, serial_number, integer
-m024_rsc_rxs_serial_number, S-band RX Cryostat serial number, serial_number, integer
-m024_rsc_rxu_serial_number, UHF-band RX Cryostat serial number, serial_number, integer
-m024_rsc_rxx_serial_number, X-band RX Cryostat serial number, serial_number, integer
-m024_ap_indexer_position, The current receiver indexer position as a discrete mapped to the receiver band it is at., , discrete
-m025_activity, Combined state of the antenna proxy, , discrete
-m025_pos_actual_scan_azim, Actual azimuth after scan offset, deg, float
-m025_pos_actual_scan_elev, Actual elevation after scan offset, deg, float
-m025_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
-m025_pos_request_scan_elev, Requested elevation after scan offset, deg, float
-m025_target, Current target, , string
-m025_dig_noise_diode, Noise diode flag, , boolean
-m025_rsc_rxl_serial_number, L-band RX Cryostat serial number, serial_number, integer
-m025_rsc_rxs_serial_number, S-band RX Cryostat serial number, serial_number, integer
-m025_rsc_rxu_serial_number, UHF-band RX Cryostat serial number, serial_number, integer
-m025_rsc_rxx_serial_number, X-band RX Cryostat serial number, serial_number, integer
-m025_ap_indexer_position, The current receiver indexer position as a discrete mapped to the receiver band it is at., , discrete
+ANT_activity, Combined state of the antenna proxy, , discrete
+ANT_pos_actual_scan_azim, Actual azimuth after scan offset, deg, float
+ANT_pos_actual_scan_elev, Actual elevation after scan offset, deg, float
+ANT_pos_request_scan_azim, Requested azimuth after scan offset, deg, float
+ANT_pos_request_scan_elev, Requested elevation after scan offset, deg, float
+ANT_target, Current target, , string
+ANT_dig_noise_diode, Noise diode flag, , boolean
+ANT_rsc_rxl_serial_number, L-band RX Cryostat serial number, serial_number, integer
+ANT_rsc_rxs_serial_number, S-band RX Cryostat serial number, serial_number, integer
+ANT_rsc_rxu_serial_number, UHF-band RX Cryostat serial number, serial_number, integer
+ANT_rsc_rxx_serial_number, X-band RX Cryostat serial number, serial_number, integer
+ANT_ap_indexer_position, The current receiver indexer position as a discrete mapped to the receiver band it is at., , discrete
 data_rts_auto_delay_enabled, Whether automatic delay parameter sending is on., , boolean
 data_rts_target, Current target, , string
 anc_asc_air_pressure, Air pressure, mbar, float
