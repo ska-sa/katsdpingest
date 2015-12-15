@@ -1,4 +1,5 @@
 # name, description, unit, type
+# If name starts with ANT it will be replaced by actual receptor names in subarray
 ANT_observer, Antenna observer information, , string
 ANT_activity, Combined state of the antenna proxy, , discrete
 ANT_pos_actual_scan_azim, Actual azimuth after scan offset, deg, float

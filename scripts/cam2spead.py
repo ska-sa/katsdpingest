@@ -76,13 +76,13 @@ else:
     attributes = {}
 
 # Load names of sensors to be streamed
-sensors = np.loadtxt(opts.sensor_list, delimiter=',', skiprows=1, dtype=np.str)
+sensors = np.loadtxt(opts.sensor_list, delimiter=',', dtype=np.str)
 sensor_names = [line[0].strip() for line in sensors]
 sensor_descriptions = [line[1].strip() for line in sensors]
 sensor_list = []
 for name, desc in zip(sensor_names, sensor_descriptions):
     # Unpack antenna sensors with actual antenna names
-    names = [name.replace('ANT', ant) for ant in antennas] \
+    names = [name.replace('ANT', ant, 1) for ant in antennas] \
             if name.startswith('ANT') else [name]
     # Antenna position sensors are currently the only high-frequency sensors
     # that update too regularly to be treated as event sensors
