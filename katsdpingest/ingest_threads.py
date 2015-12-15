@@ -528,12 +528,18 @@ class CBFIngest(threading.Thread):
         """Initialise variables on reception of the first usable dump."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'].value)
         # Configure the masking and reordering of baselines
+        orig_bls_ordering = self.cbf_attr['bls_ordering'].value
         permutation, self.cbf_attr['bls_ordering'].value = \
                 self.baseline_permutation(self.cbf_attr['bls_ordering'].value, self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'].value)
         channels = self.cbf_attr['n_chans'].value
         n_accs = self.cbf_attr['n_accs'].value
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'].value)
+        if baselines <= 0:
+            raise ValueError('No baselines (bls_ordering={}, antenna_mask = {})'.format(
+                orig_bls_ordering, self.antenna_mask))
+        if channels <= 0:
+            raise ValueError('No channels')
 
          # we need to create the raw datasets.
         data_item = ig_cbf['xeng_raw']
