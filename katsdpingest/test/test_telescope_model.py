@@ -20,8 +20,9 @@ class TelescopeModelTestCases(unittest.TestCase):
         m062 = tm.AntennaPositioner(name='m062')
         cbf = tm.CorrelatorBeamformer(name='data_rts')
         env = tm.Enviro(name='anc_asc')
+        anc = tm.Ancillary(name='anc')
         obs = tm.Observation(name='obs')
-        self.components = [m063, m062, cbf, env, obs]
+        self.components = [m063, m062, cbf, env, anc, obs]
         self.model = tm.TelescopeModel()
 
     def _build_fake_model(self, model):

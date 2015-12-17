@@ -338,7 +338,9 @@ class AntennaPositioner(TelescopeComponent):
         self._critical_sensors = ['observer','activity','target','pos_actual_scan_elev','pos_request_scan_elev','pos_actual_scan_azim','pos_request_scan_azim']
         self._std_sensors = ['dig_noise_diode', 'rsc_rxl_serial_number',
                              'rsc_rxs_serial_number', 'rsc_rxu_serial_number',
-                             'rsc_rxx_serial_number', 'ap_indexer_position']
+                             'rsc_rxx_serial_number', 'ap_indexer_position',
+                             'ap_point_error_tiltmeter_enabled',
+                             'ap_tilt_corr_azim', 'ap_tilt_corr_elev']
         self._build()
 
 class CorrelatorBeamformer(TelescopeComponent):
@@ -353,6 +355,12 @@ class Enviro(TelescopeComponent):
     def __init__(self, *args, **kwargs):
         super(Enviro, self).__init__(*args, **kwargs)
         self._std_sensors = ['air_pressure','air_relative_humidity','air_temperature','wind_speed','wind_direction']
+        self._build()
+
+class Ancillary(TelescopeComponent):
+    def __init__(self, *args, **kwargs):
+        super(Enviro, self).__init__(*args, **kwargs)
+        self._std_sensors = ['siggen_ku_frequency']
         self._build()
 
 class Digitiser(TelescopeComponent):

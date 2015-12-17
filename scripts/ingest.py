@@ -29,7 +29,7 @@ from katsdpingest.ingest_threads import CAMIngest, CBFIngest
 
  # import model components. In the future this may be done by the sdp_proxy and the 
  # complete model passed in.
-from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, TelescopeModel, Observation
+from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, Ancillary, TelescopeModel, Observation
 
 # import katconf
 
@@ -164,9 +164,10 @@ class IngestDeviceServer(DeviceServer):
         # for RTS we build a standard model. Normally this would be provided by the sdp_proxy
         cbf = CorrelatorBeamformer(name='data_rts')
         env = Enviro(name='anc_asc')
+        anc = Ancillary(name='anc')
         self.obs = Observation(name='obs')
         self.model = TelescopeModel()
-        self.model.add_components([cbf,env,self.obs])
+        self.model.add_components([cbf, env, anc, self.obs])
 
         for a in self.antennas.split(","):
             self.model.add_components([AntennaPositioner(name=a)])
