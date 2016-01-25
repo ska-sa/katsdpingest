@@ -23,6 +23,22 @@ def get_existing(cli, image):
     finally:
         cli.remove_container(container_id)
 
+
+def split_tag(path):
+    """Split an image or image:tag string into image and tag parts. Docker
+    doesn't seem to have a spec for this, so we assume that anything after the
+    last colon is a tag, *unless* it contains a slash. The exception is so that
+    a port number on a registry isn't mistaken for a tag.
+    """
+    last_slash = path.rfind('/')
+    last_colon = path.rfind(':')
+    if last_colon > last_slash:
+        return path[:last_colon], path[last_colon + 1:]
+    else:
+        # No tag
+        return path, ''
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image')
@@ -74,7 +90,8 @@ def main():
                 result = cli.wait(container_id)
                 if result == 0:
                     msg = 'Autotuning run at {}'.format(datetime.datetime.now().isoformat())
-                    cli.commit(container_id, args.image, '', msg)
+                    image, tag = split_tag(args.image)
+                    cli.commit(container_id, image, tag, msg)
                     print('Committed to', args.image)
                     return 0
                 else:
