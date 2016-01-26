@@ -711,7 +711,7 @@ class CBFIngest(threading.Thread):
             elif endpoint.host != '':
                 self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
         thread_pool = spead2.ThreadPool(4)
-        rx = spead2.recv.Stream(thread_pool, bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        rx = spead2.recv.Stream(thread_pool)
         rx.add_udp_reader(self.cbf_spead_endpoints[0].port, buffer_size=32 * 1024 * 1024)
         self.rx = rx
         self.tx_spectral = spead2.send.UdpStream(
