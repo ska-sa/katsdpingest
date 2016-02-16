@@ -52,6 +52,9 @@ def main():
     args = parser.parse_args()
 
     if args.tls:
+        # docker-py doesn't support using tcp:// in the URL
+        if args.host.startswith('tcp://'):
+            args.host = 'https://' + args.host[6:]
         tls_config = docker.tls.TLSConfig(
             client_cert=(os.path.expanduser('~/.docker/cert.pem'), 
                          os.path.expanduser('~/.docker/key.pem')),
