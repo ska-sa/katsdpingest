@@ -11,7 +11,7 @@ import katpoint
 from katsdpdisp import CorrProdRef
 from .vanvleck import create_correction
 from .antsol import stefcal
-from .__init__ import __version__ as revision
+from . import __version__ as revision
 import katsdpsigproc.rfi.host
 import katsdpsigproc.rfi.device
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
