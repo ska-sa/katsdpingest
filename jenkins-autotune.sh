@@ -11,7 +11,7 @@ if [ "$LABEL" = "master" ]; then
 fi
 IMAGE="$DOCKER_REGISTRY/katsdpingest_$GPU:$LABEL"
 BASE_IMAGE="$DOCKER_REGISTRY/katsdpingest:$LABEL"
-pip install docker-py==1.6.0
+pip install docker-py==1.7.0
 docker pull "$BASE_IMAGE"
 scripts/autotune_mkimage.py -H $DOCKER_HOST --tls "$IMAGE" "$BASE_IMAGE"
 docker push "$IMAGE"
