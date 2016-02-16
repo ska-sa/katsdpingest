@@ -11,6 +11,7 @@ import datetime
 import sys
 import tempfile
 import os
+import os.path
 
 def get_existing(cli, image):
     container = cli.create_container(image=image)
@@ -47,9 +48,17 @@ def main():
     parser.add_argument('--copy-from', type=str, metavar='IMAGE', help='Specify alternative image from which to obtain existing results (implies --copy)')
     parser.add_argument('--skip', action='store_true', help='Only copy, do not run tuning check afterwards')
     parser.add_argument('--host', '-H', type=str, default='unix:///var/run/docker.sock', help='Docker host')
+    parser.add_argument('--tls', action='store_true', help='Use TLS to connect to Docker daemon')
     args = parser.parse_args()
 
-    cli = docker.Client(args.host)
+    if args.tls:
+        tls_config = docker.tls.TLSConfig(
+            client_cert=(os.path.expanduser('~/.docker/cert.pem'), 
+                         os.path.expanduser('~/.docker/key.pem')),
+            verify=os.path.expanduser('~/.docker/ca.pem'))
+        cli = docker.Client(args.host, tls=tls_config)
+    else:
+        cli = docker.Client(args.host)
 
     old = None
     if args.copy or args.copy_from is not None:
