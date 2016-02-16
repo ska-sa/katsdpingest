@@ -14,6 +14,7 @@ setup (
         "scripts/ingest_autotune.py"
         ],
     install_requires = [
+        'manhole',
         'numpy',
         'scipy',
         'scikits.fitting',
