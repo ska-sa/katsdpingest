@@ -731,6 +731,8 @@ class CBFIngest(threading.Thread):
         idx = 0
         self.status_sensor.set_value("idle")
         prev_ts = -1
+        ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
+        ts_wrap_period = 2**48
         datasets = {}
         datasets_index = {}
         current_dbe_target = ''
@@ -759,11 +761,22 @@ class CBFIngest(threading.Thread):
             if 'timestamp' not in updated:
                 self.logger.warning("No timestamp received for current data frame - discarding")
                 continue
-            data_ts = ig_cbf['timestamp'].value
+            data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
             data_item = ig_cbf['xeng_raw']
             if data_ts <= prev_ts:
-                self.logger.warning("Data timestamps have gone backwards (%d <= %d), dropping heap", data_ts, prev_ts)
-                continue
+                # This happens either because packets ended up out-of-order (in
+                # which case we just discard the heap that arrived too late),
+                # or because the CBF timestamp wrapped. Out-of-order should
+                # jump backwards a tiny amount while wraps should jump back by
+                # close to ts_wrap_period. If both happen at the same time
+                # then things will go wrong.
+                if data_ts < prev_ts - ts_wrap_period // 2:
+                    ts_wrap_offset += ts_wrap_period
+                    data_ts += ts_wrap_period
+                    self.logger.warning('Data timestamps wrapped')
+                else:
+                    self.logger.warning("Data timestamps have gone backwards (%d <= %d), dropping heap", data_ts, prev_ts)
+                    continue
             prev_ts = data_ts
              # we have new data...
 
