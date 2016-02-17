@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 from setuptools import setup, find_packages
 
-setup (
-    name = "katsdpingest",
-    version = "trunk",
-    description = "Karoo Array Telescope Data Capture",
-    author = "Simon Ratcliffe",
-    packages = find_packages(),
-    package_data={'': ['conf/*', 'ingest_kernels/*.mako']},
-    include_package_data = True,
-    scripts = [
+setup(
+    name="katsdpingest",
+    description="Karoo Array Telescope Data Capture",
+    author="Simon Ratcliffe",
+    packages=find_packages(),
+    package_data={'': ['ingest_kernels/*.mako']},
+    include_package_data=True,
+    scripts=[
         "scripts/ingest.py",
         "scripts/ingest_autotune.py"
-        ],
-    install_requires = [
+    ],
+    setup_requires=['katversion'],
+    install_requires=[
         'manhole',
         'numpy',
         'scipy',
@@ -25,5 +25,6 @@ setup (
         'katsdpdisp',
         'katsdptelstate'
     ],
-    zip_safe = False,
+    zip_safe=False,
+    use_katversion=True
 )
