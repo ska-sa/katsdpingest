@@ -36,19 +36,19 @@ sdisp_ips = {}
 CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
  # CBF SPEAD metadata items that should be stored as sensors rather than attributes
  # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
-
+# Attributes that are required for data to be correctly ingested
+CBF_CRITICAL_ATTRS = frozenset([
+    'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
+    'bandwidth', 'sync_time', 'int_time', 'scale_factor_timestamp'])
 
 class CAMIngest(threading.Thread):
     """The CAM Ingest class receives meta-data updates in the form
     of sensor information from the CAM via SPEAD. It uses these to
-    update a model of the telescope that is specific to the current
-    ingest configuration (subarray)."""
-    def __init__(self, spead_endpoints, h5_file, telstate, model, logger):
+    update the telescope state."""
+    def __init__(self, spead_endpoints, telstate, logger):
         self.logger = logger
         self.spead_endpoints = spead_endpoints
         self.telstate = telstate
-        self.h5_file = h5_file
-        self.model = model
         self.ig = None
         threading.Thread.__init__(self)
 
@@ -99,7 +99,6 @@ class CAMIngest(threading.Thread):
 
         for heap in rx_md:
             updated = self.ig.update(heap)
-            self.model.update(updated)
             self._update_telstate(updated)
 
         self.logger.info("CAM ingest thread complete at %f" % time.time())
@@ -135,11 +134,11 @@ class _TimeAverage(object):
         All timestamps in the current group. Empty only if no dumps have ever been seen
     """
     def __init__(self, cbf_attr, int_time):
-        self.ratio = max(1, int(round(int_time / cbf_attr['int_time'].value)))
-        self.int_time = self.ratio * cbf_attr['int_time'].value
+        self.ratio = max(1, int(round(int_time / cbf_attr['int_time'])))
+        self.int_time = self.ratio * cbf_attr['int_time']
         # Interval in ADC clock cycles
-        clocks = 2 * cbf_attr['n_chans'].value * cbf_attr['n_accs'].value * self.ratio
-        self.interval = int(round(clocks * cbf_attr['scale_factor_timestamp'].value / cbf_attr['adc_sample_rate'].value))
+        clocks = 2 * cbf_attr['n_chans'] * cbf_attr['n_accs'] * self.ratio
+        self.interval = int(round(clocks * cbf_attr['scale_factor_timestamp'] / cbf_attr['adc_sample_rate']))
         self._start_ts = None
         self._ts = []
 
@@ -278,7 +277,7 @@ class CBFIngest(threading.Thread):
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
 
     def __init__(self, opts, proc_template,
-            h5_file, my_sensors, telstate, model, cbf_name, logger):
+            my_sensors, telstate, cbf_name, logger):
         ## TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.cbf_spead_endpoints = opts.cbf_spead
@@ -297,16 +296,12 @@ class CBFIngest(threading.Thread):
         else:
             self.antenna_mask = None
         self.proc_template = proc_template
-        self.h5_file = h5_file
         self.telstate = telstate
-        self.model = model
         self.cbf_name = cbf_name
-        self.cbf_component = self.model.components[self.cbf_name]
-        self.cbf_attr = self.cbf_component.attributes
+        self.cbf_attr = {}
 
         self.maskedsum_weightedmask=[]
 
-        self._process_log_idx = 0
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
         self.status_sensor = self._my_sensors['status']
@@ -322,11 +317,6 @@ class CBFIngest(threading.Thread):
         #### Initialise processing blocks used
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = None    # Instantiation of the template delayed until data shape is known (TODO: can do it here)
-        self.flags_description = zip(self.proc_template.flag_names, self.proc_template.flag_descriptions)
-         # an array describing the flags produced by the rfi flagger
-        if self.h5_file is not None:
-            self.h5_file['/Data'].create_dataset('flags_description',data=self.flags_description)
-         # insert flags descriptions into output file
         #### Done with blocks
         threading.Thread.__init__(self)
 
@@ -375,13 +365,13 @@ class CBFIngest(threading.Thread):
             shape=(),dtype=None,format=[('f', 64)], value=self.center_freq)
         self.ig_sd.add_item(name=('sd_timestamp'), id=0x3502, description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
             shape=(),dtype=None,format=inline_format)
-        bls_ordering = np.asarray(self.cbf_attr['bls_ordering'].value)
+        bls_ordering = np.asarray(self.cbf_attr['bls_ordering'])
         self.ig_sd.add_item(name=('bls_ordering'), id=0x100C, description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         self.ig_sd.add_item(name="bandwidth",id=0x1013, description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'].value)
+            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'])
         self.ig_sd.add_item(name="n_chans",id=0x1009, description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'].value)
+            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
         return self.ig_sd.get_heap()
 
     @classmethod
@@ -436,44 +426,6 @@ class CBFIngest(threading.Thread):
             for tx in self.sdisp_ips.itervalues():
                 tx.send_heap(heap)
 
-    def write_process_log(self, process, args, revision):
-        """Write an entry into the process log."""
-        if self.h5_file is not None:
-            if self._process_log_idx > 0:
-                self.h5_file['/History/process_log'].resize(self._process_log_idx+1, axis=0)
-            self.h5_file['/History/process_log'][self._process_log_idx] = (process, args, revision)
-            self._process_log_idx += 1
-        self.logger.info("Processing element: %s (%s) %d", process, args, revision)
-
-    def write_timestamps(self):
-        """Write the accumulated timestamps into a dataset.
-        Previously these timestamps were written alongside each received data frame, but this
-        results in a highly fragmented timestamp array. This in turns leads to exceptionally long load
-        times for this dataset, even though it contains very little data. By deferring writing, we can
-        instead locate the timestamp data contiguously on disk and thus obviate the read overhead.
-
-        As this MUST be called before the file is closed, it may get called multiple times as security to
-        ensure that it is done - it is therefore safe to call multiple times."""
-        if self.h5_file is not None:
-            if timestamps_dataset not in self.h5_file:
-            # explicit check for existence of timestamp dataset - we could rely on h5py exceptions, but these change
-            # regularly - hence this check.
-                if self.timestamps:
-                    ds = self.h5_file.create_dataset(timestamps_dataset,data=np.array(self.timestamps))
-                    ds.attrs['timestamp_reference'] = 'centroid'
-                    # create timestamp array before closing file. This means that it will be contiguous and hence much faster to read than if it was
-                    # distributed across the entire file.
-                else:
-                    self.logger.warning("H5 file contains no data and hence no timestamps")
-                    # exception if there is no data (and hence no timestamps) in the file.
-        else: self.logger.warning("Write timestamps called, but h5 file already closed. No timestamps will be written.")
-
-    def finalise(self):
-        """Write any final information to file and mark file as not current."""
-        if self.h5_file is not None:
-            self.write_timestamps()
-        self.h5_file = None
-
     def drop_sdisp_ip(self, ip):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
         del self.sdisp_ips[ip]
@@ -506,35 +458,17 @@ class CBFIngest(threading.Thread):
         ig['timestamp'].value = ts_rel
         tx.send_heap(ig.get_heap())
 
-    def _append_visibilities(self, vis, flags, ts):
-        # resize datasets
-        h5_cbf = self.h5_file[cbf_data_dataset]
-        h5_flags = self.h5_file[flags_dataset]
-        idx = h5_cbf.shape[0]
-        h5_cbf.resize(idx+1, axis=0)
-        h5_flags.resize(idx+1, axis=0)
-
-        # Complex values are written to file as an extra dimension of size 2,
-        # rather than as structs. Revisit this later to see if either the HDF5
-        # file format can be changed to store complex data (rather than
-        # having a real/imag axis for reals).
-        vis = _split_array(vis, np.float32)
-        h5_cbf[idx] = vis
-        h5_flags[idx] = flags
-        self.timestamps.append(ts)
-        self.h5_file.flush()
-
     def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
-        cbf_baselines = len(self.cbf_attr['bls_ordering'].value)
+        cbf_baselines = len(self.cbf_attr['bls_ordering'])
         # Configure the masking and reordering of baselines
-        orig_bls_ordering = self.cbf_attr['bls_ordering'].value
-        permutation, self.cbf_attr['bls_ordering'].value = \
-                self.baseline_permutation(self.cbf_attr['bls_ordering'].value, self.antenna_mask)
-        baselines = len(self.cbf_attr['bls_ordering'].value)
-        channels = self.cbf_attr['n_chans'].value
-        n_accs = self.cbf_attr['n_accs'].value
-        self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'].value)
+        orig_bls_ordering = self.cbf_attr['bls_ordering']
+        permutation, self.cbf_attr['bls_ordering'] = \
+                self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
+        baselines = len(self.cbf_attr['bls_ordering'])
+        channels = self.cbf_attr['n_chans']
+        n_accs = self.cbf_attr['n_accs']
+        self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
             raise ValueError('No baselines (bls_ordering={}, antenna_mask = {})'.format(
                 orig_bls_ordering, self.antenna_mask))
@@ -546,9 +480,6 @@ class CBFIngest(threading.Thread):
         new_shape = list(data_item.shape)
         new_shape[-2] = baselines
         self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(str(new_shape),np.float32))
-        if self.h5_file is not None:
-            self.h5_file.create_dataset(cbf_data_dataset, [0] + new_shape, maxshape=[None] + new_shape, dtype=np.float32)
-            self.h5_file.create_dataset(flags_dataset, [0] + new_shape[:-1], maxshape=[None] + new_shape[:-1], dtype=np.uint8)
 
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
@@ -561,7 +492,7 @@ class CBFIngest(threading.Thread):
         self.logger.info("Averaging {0} input dumps per signal display dump".format(self._sd_avg.ratio))
 
         # configure the signal processing blocks
-        collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'].value)[0]
+        collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'])[0]
         percentile_ranges = []
         for p in collection_products:
             if p:
@@ -584,10 +515,6 @@ class CBFIngest(threading.Thread):
         self.proc.start_sum()
         self.proc.start_sd_sum()
 
-        # TODO: configure van_vleck once implemented
-        for description in self.proc.descriptions():
-            self.write_process_log(*description)
-
         # initialise the signal display metadata
         self.send_sd_metadata()
 
@@ -599,14 +526,12 @@ class CBFIngest(threading.Thread):
         cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
         cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
 
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
+        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         # Shift to the centre of the dump
-        ts_rel += 0.5 * self.cbf_attr['int_time'].value
-        ts = self.cbf_attr['sync_time'].value + ts_rel
+        ts_rel += 0.5 * self.cbf_attr['int_time']
+        ts = self.cbf_attr['sync_time'] + ts_rel
         self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
         self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
-        if self.h5_file is not None:
-            self._append_visibilities(spec_vis, spec_flags, ts)
 
         self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
@@ -623,8 +548,8 @@ class CBFIngest(threading.Thread):
         self.proc.buffer('timeseries_weights').set(self.command_queue, self.maskedsum_weightedmask)
 
         self.proc.end_sd_sum()
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp'].value
-        ts = self.cbf_attr['sync_time'].value + ts_rel
+        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+        ts = self.cbf_attr['sync_time'] + ts_rel
         cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
         cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
         spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
@@ -679,6 +604,18 @@ class CBFIngest(threading.Thread):
             if item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
                 self._set_telstate_entry(item_name, item.value, attribute=(item_name not in CBF_SPEAD_SENSORS))
                  # store as an attribute unless item is in CBF_SPEAD_SENSORS (e.g. flags_xeng_raw)
+
+    def _update_cbf_attr(self, updated):
+        """Updates the internal cbf_attr dictionary from new values in the item group."""
+        for item_name, item in updated.iteritems():
+            if (item_name not in ['timestamp', 'xeng_raw'] and
+                 item_name not in CBF_SPEAD_SENSORS and
+                 item.value is not None):
+                if item_name not in self.cbf_attr:
+                    self.cbf_attr[item_name] = item.value
+                else:
+                    self.logger.warning('Item %s is already set to %s, not setting to %s',
+                        item_name, self.cbf_attr[item_name], item.value)
 
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
@@ -748,13 +685,10 @@ class CBFIngest(threading.Thread):
             if idx == 0:
                 self.status_sensor.set_value("capturing")
 
-            #### Update the telescope model
-
+            #### Update the telescope state and local cbf_attr cache
             updated = ig_cbf.update(heap)
-            self.model.update(updated, proxy_path=self.cbf_name)
             self._update_telstate(updated)
-             # any interesting attributes will now end up in the model
-             # this means we are only really interested in actual data now
+            self._update_cbf_attr(updated)
             if 'xeng_raw' not in updated:
                 self.logger.warning("CBF Data received but either no metadata or xeng_raw group is present")
                 continue
@@ -780,9 +714,9 @@ class CBFIngest(threading.Thread):
             prev_ts = data_ts
              # we have new data...
 
-             # check to see if our CBF model is valid
+             # check to see if our CBF attributes are complete
              # i.e. make sure any attributes marked as critical are present
-            if not self.cbf_component.is_valid(check_sensors=False):
+            if not CBF_CRITICAL_ATTRS.issubset(self.cbf_attr.keys()):
                 self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
                 continue
 
@@ -794,8 +728,8 @@ class CBFIngest(threading.Thread):
             self._sd_avg.add_timestamp(data_ts)
 
             ##### Generate timestamps
-            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp'].value
-            current_ts = self.cbf_attr['sync_time'].value + current_ts_rel
+            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
+            current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
             ##### Perform data processing
