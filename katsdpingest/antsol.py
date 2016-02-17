@@ -7,8 +7,9 @@ import numpy as np
 logger = logging.getLogger("kat.katsdpingest.antsol")
 
 
-def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, init_gain=None):
-    """Solve for antenna gains using StefCal (array dot product version).
+def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=30, ref_ant=-1,
+            init_gain=None, conv_thresh=0.0001):
+    """Solve for antenna gains using StEFCal (array dot product version).
 
     The observed visibilities are provided in a NumPy array of any shape and
     dimension, as long as the last dimension represents baselines. The gains
@@ -38,11 +39,12 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
     num_iters : int, optional
         Number of iterations
     ref_ant : int, optional
-        Reference antenna whose gain will be forced to be 1.0. Alternatively,
-        if *ref_ant* is -1, the average gain magnitude will be 1 and the median
-        gain phase will be 0.
+        Reference antenna for which phase will be forced to 0.0. Alternatively,
+        if *ref_ant* is -1, the median gain phase will be 0.
     init_gain : array of complex, shape(num_ants,) or None, optional
         Initial gain vector (all equal to 1.0 by default)
+    conv_thresh : float, optional
+        Convergence threshold (max relative l_2 norm of change in gain vector)
 
     Returns
     -------
@@ -56,6 +58,12 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
     The algorithm is iterative but should converge in a small number of
     iterations (10 to 30).
 
+    References
+    ----------
+    .. [1] Salvini, Wijnholds, "Fast gain calibration in radio astronomy using
+       alternating direction implicit methods: Analysis and applications," 2014,
+       preprint at `<http://arxiv.org/abs/1410.2101>`_
+
     """
     # Each row of this array contains the indices of baselines with the same antA
     baselines_per_antA = np.array([(antA == m).nonzero()[0] for m in range(num_ants)])
@@ -66,30 +74,40 @@ def stefcal(vis, num_ants, antA, antB, weights=1.0, num_iters=10, ref_ant=-1, in
     # Initial estimate of gain vector
     gain_shape = tuple(list(vis.shape[:-1]) + [num_ants])
     g_curr = np.ones(gain_shape, dtype=np.complex) if init_gain is None else init_gain
-    logger.debug("StefCal solving for %s gains from vis with shape %s" %
+    logger.debug("StEFCal solving for %s gains from vis with shape %s" %
                  ('x'.join(str(gs) for gs in gain_shape), vis.shape))
     for n in range(num_iters):
         # Basis vector (collection) represents gain_B* times model (assumed 1)
         g_basis = g_curr[..., antB_per_antA]
         # Do scalar least-squares fit of basis vector to vis vector for whole collection in parallel
         g_new = (g_basis * weighted_vis).sum(axis=-1) / (g_basis.conj() * g_basis).sum(axis=-1)
-        # Normalise g_new to match g_curr so that taking their average and
-        # difference make sense (without copy the elements of g_new are mangled up)
-        g_new /= (g_new[..., ref_ant][..., np.newaxis].copy() if ref_ant >= 0 else
-                  g_new[..., 0][..., np.newaxis].copy())
+        # Get gains for reference antenna (or first one, if none given)
+        g_ref = g_new[..., max(ref_ant, 0)][..., np.newaxis].copy()
+        # Force reference gain to have zero phase
+        g_new *= np.abs(g_ref) / g_ref
         logger.debug("Iteration %d: mean absolute gain change = %f" %
                      (n + 1, 0.5 * np.abs(g_new - g_curr).mean()))
-        # Avoid getting stuck during iteration
-        g_curr = 0.5 * (g_new + g_curr)
+        # Salvini & Wijnholds tweak gains every *even* iteration but their counter starts at 1
+        if n % 2:
+            # Check for convergence of relative l_2 norm of change in gain vector
+            error = np.linalg.norm(g_new - g_curr, axis=-1) / np.linalg.norm(g_new, axis=-1)
+            if np.max(error) < conv_thresh:
+                g_curr = g_new
+                break
+            else:
+                # Avoid getting stuck bouncing between two gain vectors by going halfway in between
+                g_curr = 0.5 * (g_new + g_curr)
+        else:
+            # Normal update every *odd* iteration
+            g_curr = g_new
     if ref_ant < 0:
-        avg_amp = np.mean(np.abs(g_curr), axis=-1)
         middle_angle = np.arctan2(np.median(g_curr.imag, axis=-1),
                                   np.median(g_curr.real, axis=-1))
-        g_curr /= (avg_amp * np.exp(1j * middle_angle))[..., np.newaxis]
+        g_curr *= np.exp(-1j * middle_angle)[..., np.newaxis]
     return g_curr
 
 
-# Quick test of StefCal by running this as a script
+# Quick test of StEFCal by running this as a script
 if __name__ == '__main__':
 
     logging.basicConfig(level=logging.DEBUG)
@@ -129,11 +147,11 @@ if __name__ == '__main__':
         # Extract cross-correlations from covariance matrix and stack them into vector
         vis[m] = V[(antA, antB)]
 
-    print 'Testing StefCal:\n----------------'
-    g_estm = stefcal(vis, N, antA, antB, num_iters=10, ref_ant=ref_ant)
+    print 'Testing StEFCal:\n----------------'
+    g_estm = stefcal(vis, N, antA, antB, num_iters=100, ref_ant=ref_ant)
     compare = '\n'.join([("%+5.3f%+5.3fj -> %+5.3f%+5.3fj" %
                           (gt.real, gt.imag, ge.real, ge.imag))
                          for gt, ge in np.c_[g_norm, g_estm.mean(axis=0)]])
     print '\nOriginal gain -> Mean estimated gain vector:\n' + compare
-    print 'StefCal mean absolute gain error = %f' % \
+    print 'StEFCal mean absolute gain error = %f' % \
           (np.abs(g_estm.mean(axis=0) - g_norm).mean(),)
