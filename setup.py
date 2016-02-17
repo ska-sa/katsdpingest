@@ -12,6 +12,7 @@ setup(
         "scripts/ingest.py",
         "scripts/ingest_autotune.py"
     ],
+    setup_requires=['katversion'],
     install_requires=[
         'manhole',
         'numpy',
