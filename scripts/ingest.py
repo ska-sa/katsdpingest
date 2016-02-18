@@ -251,6 +251,8 @@ class IngestDeviceServer(DeviceServer):
         self.cam_thread = None
 
         self._my_sensors["capture-active"].set_value(0)
+        # Error states were associated with the threads, which are now dead.
+        self._my_sensors["device-status"].set_value("ok")
         logger.info("capture complete")
         return ("ok", "capture complete")
 
