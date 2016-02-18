@@ -297,6 +297,7 @@ class CBFIngest(threading.Thread):
             self.antenna_mask = None
         self.proc_template = proc_template
         self.telstate = telstate
+        self.telstate_name = opts.name
         self.cbf_name = cbf_name
         self.cbf_attr = {}
 
@@ -514,6 +515,11 @@ class CBFIngest(threading.Thread):
         self.proc.buffer('permutation').set(self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
+        # Record information about the processing in telstate
+        if self.telstate_name is not None and self.telstate is not None:
+            descriptions = list(self.proc.descriptions())
+            attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
+            self.telstate.add(attribute_name, descriptions, immutable=True)
 
         # initialise the signal display metadata
         self.send_sd_metadata()
