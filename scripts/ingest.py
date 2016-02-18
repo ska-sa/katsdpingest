@@ -82,8 +82,8 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
-
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
+        self._my_sensors["device-status"] = Sensor.discrete("device-status", "Health status", "", ["ok", "degraded", "fail"])
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 
@@ -96,6 +96,7 @@ class IngestDeviceServer(DeviceServer):
                 self._my_sensors[sensor].set_value(0)
              # take care of basic defaults to ensure sensor status is 'nominal'
         self._my_sensors["status"].set_value("init")
+        self._my_sensors["device-status"].set_value("ok")
 
     @return_reply(Str())
     def request_sd_metadata_issue(self, req, msg):
@@ -157,7 +158,7 @@ class IngestDeviceServer(DeviceServer):
                 self._my_sensors, opts.telstate, 'cbf', cbf_logger)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead, opts.telstate, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead, self._my_sensors, opts.telstate, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
