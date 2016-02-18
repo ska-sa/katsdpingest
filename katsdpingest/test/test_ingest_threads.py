@@ -3,21 +3,18 @@
 import numpy as np
 from katsdpingest import ingest_threads
 from katsdpsigproc.test.test_accel import device_test
-import collections
 import unittest
 import mock
 from nose.tools import *
 
-FakeValue = collections.namedtuple('FakeValue', ['value'])
-
 class TestTimeAverage(object):
     def setup(self):
         self.cbf_attr = {
-            'scale_factor_timestamp': FakeValue(1712000000.0),
-            'adc_sample_rate': FakeValue(1712000000),
-            'n_accs': FakeValue(123456),
-            'n_chans': FakeValue(4096),
-            'int_time': FakeValue(0.75)
+            'scale_factor_timestamp': 1712000000.0,
+            'adc_sample_rate': 1712000000,
+            'n_accs': 123456,
+            'n_chans': 4096,
+            'int_time': 0.75
         }
         self.input_interval = 123456 * 4096 * 2
 

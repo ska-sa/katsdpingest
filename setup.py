@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 from setuptools import setup, find_packages
 
+tests_require = ['mock', 'nose']
+
 setup(
     name="katsdpingest",
     description="Karoo Array Telescope Data Capture",
@@ -16,15 +18,14 @@ setup(
     install_requires=[
         'manhole',
         'numpy',
-        'scipy',
-        'scikits.fitting',
         'spead2>=0.3.0',
         'katcp',
-        'katpoint',
         'katsdpsigproc',
         'katsdpdisp',
         'katsdptelstate'
     ],
+    tests_require=tests_require,
+    extras_require={'test': tests_require},
     zip_safe=False,
     use_katversion=True
 )
