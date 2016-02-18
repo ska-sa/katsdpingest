@@ -20,6 +20,7 @@ import katsdpsigproc.accel as accel
 import katsdpsigproc.rfi.device as rfi
 from katsdpsigproc import percentile
 from katsdpsigproc import maskedsum
+from katcp import Sensor
 import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
@@ -45,10 +46,11 @@ class CAMIngest(threading.Thread):
     """The CAM Ingest class receives meta-data updates in the form
     of sensor information from the CAM via SPEAD. It uses these to
     update the telescope state."""
-    def __init__(self, spead_endpoints, telstate, logger):
+    def __init__(self, spead_endpoints, my_sensors, telstate, logger):
         self.logger = logger
         self.spead_endpoints = spead_endpoints
         self.telstate = telstate
+        self._my_sensors = my_sensors
         self.ig = None
         threading.Thread.__init__(self)
 
@@ -82,6 +84,19 @@ class CAMIngest(threading.Thread):
                 self.telstate.add(item_name, sensor_value, value_time)
 
     def run(self):
+        """Thin wrapper around :meth:`_run` which handles exceptions."""
+        try:
+            self._run()
+        except Exception:
+            self.logger.error('CAMIngest thread threw an exception', exc_info=True)
+            status_sensor = self._my_sensors['device-status']
+            if status_sensor.value() != 'fail':
+                # If we were already in fail state, then don't raise the level to
+                # warning.
+                self._my_sensors['device-status'].set_value('degraded', Sensor.WARN)
+
+    def _run(self):
+        print(self.does_not_exist)
         self.ig = spead2.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}".format([str(x) for x in self.spead_endpoints]))
@@ -626,20 +641,24 @@ class CBFIngest(threading.Thread):
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
 
-        # PyCUDA has a bug/limitation regarding cleanup
-        # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
-        # to cause device objects and `HostArray`s to leak. To prevent it,
-        # we need to ensure that references are dropped (and hence objects
-        # are deleted) with the context being current.
-        with self.proc_template.context:
-            try:
-                self._run()
-            finally:
-                # These have references to self, causing circular references
-                self._output_avg = None
-                self._sd_avg = None
-                # Drop last references to all the objects
-                self.proc = None
+        try:
+            # PyCUDA has a bug/limitation regarding cleanup
+            # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
+            # to cause device objects and `HostArray`s to leak. To prevent it,
+            # we need to ensure that references are dropped (and hence objects
+            # are deleted) with the context being current.
+            with self.proc_template.context:
+                try:
+                    self._run()
+                finally:
+                    # These have references to self, causing circular references
+                    self._output_avg = None
+                    self._sd_avg = None
+                    # Drop last references to all the objects
+                    self.proc = None
+        except Exception:
+            self.logger.error('CBFIngest thread threw an uncaught exception', exc_info=True)
+            self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
     def _run(self):
         """Real implementation of `run`."""
