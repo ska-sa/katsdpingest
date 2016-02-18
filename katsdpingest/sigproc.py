@@ -800,21 +800,14 @@ class IngestOperation(accel.OperationSequence):
     def descriptions(self):
         """Generate descriptions of all the components.
 
-        Each description is a 3-tuple consisting of a component name, a
-        string describing the parameters, and a version string."""
+        Each description is a 2-tuple consisting of a component name and
+        a dictionary of parameters describing the operation."""
         def generate(operation, name):
-            try:
-                revision = operation.__class__.__module__.__version__
-            except AttributeError:
-                revision = '0.0+unknown'
             parameters = dict(operation.parameters())
             parameters['class'] = operation.__class__.__module__ + '.' + operation.__class__.__name__
-            yield (
-                name,
-                ', '.join(['%s=%s' % x for x in sorted(parameters.iteritems())]),
-                revision)
+            yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
                 for child_name, child_op in operation.operations.iteritems():
                     for d in generate(child_op, child_name):
-                        yield (name + ':' + d[0], d[1], d[2])
+                        yield (name + ':' + d[0], d[1])
         return list(generate(self, 'ingest'))
