@@ -24,7 +24,6 @@ from katcp import Sensor
 import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
-import socket
 import struct
 
 
@@ -100,16 +99,9 @@ class CAMIngest(threading.Thread):
         self.ig = spead2.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}".format([str(x) for x in self.spead_endpoints]))
-        # Socket only used for multicast subscription
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for endpoint in self.spead_endpoints:
-            if endpoint.multicast_subscribe(sock):
-                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
-            elif endpoint.host != '':
-                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
         rx_md = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        rx_md.add_udp_reader(self.spead_endpoints[0].port)
+        for endpoint in self.spead_endpoints:
+            rx_md.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
         self.rx = rx_md
 
         for heap in rx_md:
@@ -664,17 +656,10 @@ class CBFIngest(threading.Thread):
         """Real implementation of `run`."""
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}".format([str(x) for x in self.cbf_spead_endpoints]))
-        # Socket only used for multicast subscription
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for endpoint in self.cbf_spead_endpoints:
-            if endpoint.multicast_subscribe(sock):
-                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
-            elif endpoint.host != '':
-                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
         thread_pool = spead2.ThreadPool(4)
         rx = spead2.recv.Stream(thread_pool)
-        rx.add_udp_reader(self.cbf_spead_endpoints[0].port, buffer_size=32 * 1024 * 1024)
+        for endpoint in self.cbf_spead_endpoints:
+            rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
         self.rx = rx
         self.tx_spectral = spead2.send.UdpStream(
             thread_pool,
