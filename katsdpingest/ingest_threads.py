@@ -317,6 +317,7 @@ class CBFIngest(threading.Thread):
         self.cbf_attr = {}
 
         self.maskedsum_weightedmask=[]
+        self.custom_signals_indices=np.array([],dtype=np.uint32)
 
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
@@ -356,11 +357,13 @@ class CBFIngest(threading.Thread):
         self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
          # we need to clear the descriptor so as not to accidently send a signal display frame twice...
         self.ig_sd.add_item(name=('sd_data'),id=(0x3501), description="Combined raw data from all x engines.",
-            **_slot_shape(self.proc.buffer('sd_spec_vis'), np.float32))
+            format=[('f',32)],shape=(np.shape(self.proc.buffer('sd_spec_vis'))[0],None,2))
+        self.ig_sd.add_item(name=('sd_data_index'),id=(0x3509), description="Indices for transmitted sd_data.",
+            format=[('u',32)],shape=(None,))
         self.ig_sd.add_item(name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
             **_slot_shape(self.proc.buffer('sd_cont_vis'), np.float32))
         self.ig_sd.add_item(name=('sd_flags'),id=(0x3503), description="8bit packed flags for each data point.",
-            **_slot_shape(self.proc.buffer('sd_spec_flags')))
+            format=[('u',8)],shape=(np.shape(self.proc.buffer('sd_spec_flags'))[0],None))
         self.ig_sd.add_item(name=('sd_blmxflags'),id=(0x3508), description="Reduced data flags for baseline matrix.",
             **_slot_shape(self.proc.buffer('sd_cont_flags')))
         self.ig_sd.add_item(name=('sd_timeseries'),id=(0x3504), description="Computed timeseries.",
@@ -458,6 +461,10 @@ class CBFIngest(threading.Thread):
     def set_timeseries_mask(self,maskstr):
         self.logger.info("Setting timeseries mask to %s" % (maskstr))
         self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(maskstr,self.channels)[1]
+
+    def set_custom_signals(self,customsignalsstr):
+        self.logger.info("Setting custom signals to %s" % (customsignalsstr))
+        self.custom_signals_indices=np.array(customsignalsstr.split(','),dtype=np.uint32)
 
     def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
         # Create items on first use. This is simpler than figuring out the
@@ -589,8 +596,9 @@ class CBFIngest(threading.Thread):
 
         #populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'].value = int(ts * 100)
-        self.ig_sd['sd_data'].value = _split_array(spec_vis, np.float32)
-        self.ig_sd['sd_flags'].value = spec_flags
+        self.ig_sd['sd_data'].value = _split_array(spec_vis, np.float32)[:,self.custom_signals_indices,:]
+        self.ig_sd['sd_data_index'].value = self.custom_signals_indices
+        self.ig_sd['sd_flags'].value = spec_flags[:,self.custom_signals_indices]
         self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
         self.ig_sd['sd_blmxflags'].value = cont_flags
         self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
