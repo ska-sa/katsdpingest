@@ -31,8 +31,6 @@ import struct
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
-sdisp_ips = {}
- # dict storing the configured signal destination ip addresses
 
 CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
  # CBF SPEAD metadata items that should be stored as sensors rather than attributes
@@ -777,6 +775,8 @@ class CBFIngest(threading.Thread):
         self.tx_spectral = None
         self.tx_continuum.send_heap(self.ig_continuum.get_end())
         self.tx_continuum = None
+        for tx in self.sdisp_ips.itervalues():
+            tx.send_heap(self.ig_sd.get_end())
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
