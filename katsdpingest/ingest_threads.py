@@ -342,7 +342,7 @@ class CBFIngest(threading.Thread):
         # Copy the list to protect against modifications during the loop
         sdisp_ips = self.sdisp_ips.values()
         for tx in sdisp_ips:
-            tx.send_heap(data)
+            tx.send_heap(heap)
 
     def send_sd_data(self, data):
         self.send_sd_heap(data)
