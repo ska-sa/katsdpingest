@@ -21,7 +21,7 @@ pytools
 redis
 scipy
 six
-spead2
+spead2==0.6.0
 traceback2
 Twisted
 unittest2

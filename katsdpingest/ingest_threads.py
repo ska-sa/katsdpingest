@@ -338,14 +338,14 @@ class CBFIngest(threading.Thread):
         if debug: self.logger.setLevel(logging.DEBUG)
         else: self.logger.setLevel(logging.INFO)
 
-    def send_sd_data(self, data):
-        #if self._sd_count % 10 == 0:
-        #    logger.debug("Sending metadata heartbeat...")
-        #    self.send_sd_metadata()
-
-        for tx in self.sdisp_ips.itervalues():
+    def send_sd_heap(self, heap):
+        # Copy the list to protect against modifications during the loop
+        sdisp_ips = self.sdisp_ips.values()
+        for tx in sdisp_ips:
             tx.send_heap(data)
 
+    def send_sd_data(self, data):
+        self.send_sd_heap(data)
         self._sd_count += 1
 
     def _update_sd_metadata(self):
@@ -437,11 +437,11 @@ class CBFIngest(threading.Thread):
         heap = self._update_sd_metadata()
         self._sd_metadata = heap
         if heap is not None:
-            for tx in self.sdisp_ips.itervalues():
-                tx.send_heap(heap)
+            self.send_sd_heap(heap)
 
     def drop_sdisp_ip(self, ip):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
+        self.sdisp_ips[ip].send_heap(self.ig_sd.get_end())
         del self.sdisp_ips[ip]
 
     def add_sdisp_ip(self, ip, port):
@@ -450,6 +450,7 @@ class CBFIngest(threading.Thread):
         self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip,port))
         self.sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
         if self._sd_metadata is not None:
+            self.sdisp_ips[ip].send_heap(self.ig_sd.get_start())
             self.sdisp_ips[ip].send_heap(self._sd_metadata)
              # new connection requires headers...
 
@@ -535,6 +536,7 @@ class CBFIngest(threading.Thread):
             self.telstate.add(attribute_name, descriptions, immutable=True)
 
         # initialise the signal display metadata
+        self.send_sd_heap(self.ig_sd.get_start())
         self.send_sd_metadata()
 
     def _flush_output(self, timestamps):
@@ -595,7 +597,6 @@ class CBFIngest(threading.Thread):
         self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
 
-         # In the future this will need to be rate limited to some extent
         self.send_sd_data(self.ig_sd.get_heap())
         self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
@@ -775,8 +776,7 @@ class CBFIngest(threading.Thread):
         self.tx_spectral = None
         self.tx_continuum.send_heap(self.ig_continuum.get_end())
         self.tx_continuum = None
-        for tx in self.sdisp_ips.itervalues():
-            tx.send_heap(self.ig_sd.get_end())
+        self.send_sd_heap(self.ig_sd.get_end())
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
