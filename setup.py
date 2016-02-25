@@ -18,7 +18,7 @@ setup(
     install_requires=[
         'manhole',
         'numpy',
-        'spead2>=0.3.0',
+        'spead2>=0.5.0',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
