@@ -12,6 +12,7 @@ setup(
     include_package_data=True,
     scripts=[
         "scripts/ingest.py",
+        "scripts/bf_ingest.py",
         "scripts/ingest_autotune.py"
     ],
     setup_requires=['katversion'],
