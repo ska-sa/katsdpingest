@@ -18,11 +18,12 @@ setup(
     install_requires=[
         'manhole',
         'numpy',
-        'spead2>=0.3.0',
+        'spead2>=0.6.0',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
-        'katsdptelstate'
+        'katsdptelstate',
+        'trollius'
     ],
     tests_require=tests_require,
     extras_require={'test': tests_require},
