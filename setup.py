@@ -17,6 +17,7 @@ setup(
     ],
     setup_requires=['katversion'],
     install_requires=[
+        'h5py',
         'manhole',
         'numpy',
         'spead2>=0.6.0',
