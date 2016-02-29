@@ -2,9 +2,11 @@ appdirs
 backports-abc
 backports.ssl-match-hostname
 certifi
+Cython
 decorator
 funcsigs
 futures
+h5py
 linecache2
 Mako
 manhole
