@@ -100,6 +100,8 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
 
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
+        self._my_sensors["input_rate"] = Sensor(Sensor.INTEGER, "input_rate","Input data rate in Bps averaged over the last 10 dumps","Bps",default=0)
+        self._my_sensors["output_rate"] = Sensor(Sensor.INTEGER, "output_rate","Output data rate in Bps averaged over the last 10 dumps","Bps",default=0)
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 

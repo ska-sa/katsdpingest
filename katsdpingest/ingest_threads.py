@@ -308,6 +308,10 @@ class CBFIngest(threading.Thread):
         self._process_log_idx = 0
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
+        self.input_rate_sensor = self._my_sensors['input_rate']
+        self.input_bytes = 0
+        self.output_rate_sensor = self._my_sensors['output_rate']
+        self.output_bytes = 0
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self._sd_metadata = None
@@ -596,6 +600,7 @@ class CBFIngest(threading.Thread):
         # Shift to the centre of the dump
         ts_rel += 0.5 * self.cbf_attr['int_time'].value
         ts = self.cbf_attr['sync_time'].value + ts_rel
+        self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
         self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
         self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
         if self.h5_file is not None:
@@ -722,6 +727,7 @@ class CBFIngest(threading.Thread):
         self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
         ig_cbf = spead2.ItemGroup()
         idx = 0
+        rate_timer = 0
         self.status_sensor.set_value("idle")
         prev_ts = -1
         datasets = {}
@@ -753,7 +759,7 @@ class CBFIngest(threading.Thread):
                 self.logger.warning("No timestamp received for current data frame - discarding")
                 continue
             data_ts = ig_cbf['timestamp'].value
-            data_item = ig_cbf['xeng_raw']
+            data_item = ig_cbf['xeng_raw'].value
             if data_ts <= prev_ts:
                 self.logger.warning("Data timestamps have gone backwards (%d <= %d), dropping heap", data_ts, prev_ts)
                 continue
@@ -768,6 +774,7 @@ class CBFIngest(threading.Thread):
 
             ##### Configure datasets and other items now that we have complete metadata
             if idx == 0:
+                rate_timer = time.time()
                 self._initialise(ig_cbf)
 
             self._output_avg.add_timestamp(data_ts)
@@ -779,12 +786,19 @@ class CBFIngest(threading.Thread):
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
             ##### Perform data processing
-            self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
+            self.input_bytes += data_item.nbytes
+            self.proc.buffer('vis_in').set(self.command_queue, data_item)
             self.proc()
 
             #### Done with reading this frame
             idx += 1
             self.pkt_sensor.set_value(idx)
+            if idx > 0 and idx % 10 == 0:
+                self.input_rate_sensor.set_value(int(self.input_bytes / (time.time() - rate_timer)))
+                self.output_rate_sensor.set_value(int(self.output_bytes / (time.time() - rate_timer)))
+                self.input_bytes = 0
+                self.output_bytes = 0
+                rate_timer = time.time()
             tt = time.time() - st
             self.logger.info("Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)" % (current_ts, tt+st, tt, idx))
 
