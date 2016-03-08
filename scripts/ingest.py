@@ -70,7 +70,7 @@ class IngestDeviceServer(DeviceServer):
          # reference to the Telescope Manager thread
         self.obs = None
          # the observation component for holding observation attributes
-        self.sdisp_ips = {'192.168.6.52':7149}
+        self.sdisp_ips = {} #{'192.168.6.52':7149} # for testing on m.kat.ac.za
         for endpoint in sdisp_endpoints:
             self.sdisp_ips[endpoint.host] = endpoint.port
          # add default or user specified endpoints
