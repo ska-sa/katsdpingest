@@ -70,7 +70,7 @@ class IngestDeviceServer(DeviceServer):
          # reference to the Telescope Manager thread
         self.obs = None
          # the observation component for holding observation attributes
-        self.sdisp_ips = {} #{'192.168.6.52':7149} # for testing on m.kat.ac.za
+        self.sdisp_ips = {}
         for endpoint in sdisp_endpoints:
             self.sdisp_ips[endpoint.host] = endpoint.port
          # add default or user specified endpoints
@@ -213,10 +213,10 @@ class IngestDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
-    def request_set_custom_signals(self, req, customsignalsstr):
-        """Sets custom signals"""
+    def request_set_custom_signals(self, req, custom_signals_str):
+        """Sets custom signals: custom_signals_str is a comma-separated list of indices into the baseline ordering"""
         if self.cbf_thread is not None:
-            self.cbf_thread.set_custom_signals(customsignalsstr)
+            self.cbf_thread.set_custom_signals(custom_signals_str)
             return ("ok","custom signals updated")
         return ("fail","No active capture thread.")
 
