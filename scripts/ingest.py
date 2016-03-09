@@ -205,11 +205,11 @@ class IngestDeviceServer(DeviceServer):
         ip = ipp[0]
         if len(ipp) > 1: port = int(ipp[1])
         else: port = 7149
-        if self.sdisp_ips.has_key(ip): return ("ok","The supplied IP is already in the active list of recipients.")
+        if self.sdisp_ips.has_key(ip): return ("ok", "The supplied IP is already in the active list of recipients.")
         self.sdisp_ips[ip] = port
         if self.cbf_thread is not None:
             self.cbf_thread.add_sdisp_ip(ip, port)
-        return ("ok","Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
+        return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
 
     @request(Str())
     @return_reply(Str())
@@ -217,8 +217,8 @@ class IngestDeviceServer(DeviceServer):
         """Sets custom signals: custom_signals_str is a comma-separated list of indices into the baseline ordering"""
         if self.cbf_thread is not None:
             self.cbf_thread.set_custom_signals(custom_signals_str)
-            return ("ok","custom signals updated")
-        return ("fail","No active capture thread.")
+            return ("ok", "custom signals updated")
+        return ("fail", "No active capture thread.")
 
     @request(Str())
     @return_reply(Str())
@@ -226,8 +226,8 @@ class IngestDeviceServer(DeviceServer):
         """Sets the spectral mask used for the timeseries calculation."""
         if self.cbf_thread is not None:
             self.cbf_thread.set_timeseries_mask(maskstr)
-            return ("ok","mask is updated")
-        return ("fail","No active capture thread.")
+            return ("ok", "mask is updated")
+        return ("fail", "No active capture thread.")
 
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
@@ -239,7 +239,7 @@ class IngestDeviceServer(DeviceServer):
     def request_capture_done(self, req, msg):
         """Closes the current capture file and renames it for use by augment."""
         if self.cbf_thread is None:
-            return ("fail","No existing capture session.")
+            return ("fail", "No existing capture session.")
 
          # if the observation framework is behaving correctly
          # then these threads will be dead before capture_done
