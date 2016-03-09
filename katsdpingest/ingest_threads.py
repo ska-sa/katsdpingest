@@ -91,7 +91,6 @@ class CAMIngest(threading.Thread):
                 self._my_sensors['device-status'].set_value('degraded', Sensor.WARN)
 
     def _run(self):
-        print(self.does_not_exist)
         self.ig = spead2.ItemGroup()
         self.logger.debug("Initalising SPEAD transports at %f" % time.time())
         self.logger.info("CAM SPEAD stream reception on {0}".format(
