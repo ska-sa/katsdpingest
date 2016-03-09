@@ -25,8 +25,6 @@ import socket
 timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
-# dict storing the configured signal destination ip addresses
-sdisp_ips = {}
 
 # CBF SPEAD metadata items that should be stored as sensors rather than attributes
 # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
@@ -50,6 +48,10 @@ class CAMIngest(threading.Thread):
         threading.Thread.__init__(self)
 
     def enable_debug(self, debug):
+        """Enable/disable debugging in the internal logger.
+
+        This function is thread-safe (because the logging module is).
+        """
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     def _update_telstate(self, updated):
@@ -293,6 +295,17 @@ class CBFIngest(threading.Thread):
 
     def __init__(self, opts, proc_template,
                  my_sensors, telstate, cbf_name, logger):
+        self._maskedsum_weightedmask = []
+        self._custom_signals_indices = np.array([], dtype=np.uint32)
+        self._sdisp_ips = {}
+        self._sd_metadata_requested = False   #: To trigger a signal display metadata update
+        self._center_freq = 0
+
+        # Lock used to synchronise access between the katcp device server
+        # thread and this thread. It protects all attributes declared above
+        # this point.
+        self._lock = threading.Lock()
+
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
         self.cbf_spead_endpoints = opts.cbf_spead
@@ -316,17 +329,11 @@ class CBFIngest(threading.Thread):
         self.cbf_name = cbf_name
         self.cbf_attr = {}
 
-        self.maskedsum_weightedmask = []
-        self.custom_signals_indices = np.array([], dtype=np.uint32)
-
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self._sd_metadata = None
-        self.sdisp_ips = {}
-        self._sd_count = 0
-        self.center_freq = 0
         self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
         # Initialise processing blocks used
@@ -334,6 +341,28 @@ class CBFIngest(threading.Thread):
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.proc = None
         # Done with blocks
+
+        self.logger.debug("Initialising SPEAD transports at %f" % time.time())
+        self.logger.info("CBF SPEAD stream reception on {0}".format(
+            [str(x) for x in self.cbf_spead_endpoints]))
+        thread_pool = spead2.ThreadPool(4)
+        self.rx = spead2.recv.Stream(thread_pool)
+        for endpoint in self.cbf_spead_endpoints:
+            self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+        self.tx_spectral = spead2.send.UdpStream(
+            thread_pool,
+            self.spectral_spead_endpoint.host,
+            self.spectral_spead_endpoint.port,
+            spead2.send.StreamConfig(max_packet_size=9172, rate=self.spectral_spead_rate / 8))
+        self.tx_continuum = spead2.send.UdpStream(
+            thread_pool,
+            self.continuum_spead_endpoint.host,
+            self.continuum_spead_endpoint.port,
+            spead2.send.StreamConfig(max_packet_size=9172, rate=self.continuum_spead_rate / 8))
+        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
+        self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
+
         threading.Thread.__init__(self)
 
     def enable_debug(self, debug):
@@ -342,17 +371,25 @@ class CBFIngest(threading.Thread):
         else:
             self.logger.setLevel(logging.INFO)
 
-    def send_sd_data(self, data):
-        for tx in self.sdisp_ips.itervalues():
-            tx.send_heap(data)
+    def _send_sd_data(self, data):
+        """Send a heap to all signal display servers.
 
-        self._sd_count += 1
+        This method is thread-safe.
+        """
+        # The actual sending is blocking, so first make a copy so that we can
+        # drop the lock quickly.
+        with self._lock:
+            sdisp_ips = self._sdisp_ips.values()
+        for tx in sdisp_ips:
+            tx.send_heap(data)
 
     def _update_sd_metadata(self):
         """Update the itemgroup for the signal display metadata to include any
         changes since last sent.
         """
         inline_format = [('u', self.sd_flavour.heap_address_bits)]
+        with self._lock:
+            center_freq = self._center_freq
         # we need to clear the descriptor so as not to accidently send a signal
         # display frame twice...
         self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
@@ -394,7 +431,7 @@ class CBFIngest(threading.Thread):
         self.ig_sd.add_item(
             name="center_freq", id=0x1011,
             description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.center_freq)
+            shape=(), dtype=None, format=[('f', 64)], value=center_freq)
         self.ig_sd.add_item(
             name=('sd_timestamp'), id=0x3502,
             description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
@@ -459,33 +496,89 @@ class CBFIngest(threading.Thread):
             permutation[reordered[i][0]] = i
         return permutation, np.array([x[1] for x in reordered])
 
-    def send_sd_metadata(self):
+    def _send_sd_metadata(self):
         heap = self._update_sd_metadata()
         self._sd_metadata = heap
         if heap is not None:
-            for tx in self.sdisp_ips.itervalues():
-                tx.send_heap(heap)
+            self._send_sd_data(heap)
 
     def drop_sdisp_ip(self, ip):
-        self.logger.info("Removing ip %s from the signal display list." % (ip))
-        del self.sdisp_ips[ip]
+        """Drop a signal display server from the list.
+
+        Raises
+        ------
+        KeyError
+            if `ip` is not currently in the list
+        """
+        with self._lock:
+            self.logger.info("Removing ip %s from the signal display list." % (ip))
+            del self._sdisp_ips[ip]
 
     def add_sdisp_ip(self, ip, port):
-        # TODO: rate limiting in config
-        config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
-        self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
-        self.sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
-        if self._sd_metadata is not None:
-            # new connection requires headers...
-            self.sdisp_ips[ip].send_heap(self._sd_metadata)
+        """Add a new server to the signal display list.
+
+        Parameters
+        ----------
+        ip : str
+            Hostname or IP address
+        port : int
+            UDP port number
+
+        Raises
+        ------
+        KeyError
+            if `ip` is already in the list (even if on a different port)
+        """
+        with self._lock:
+            if ip in self._sdisp_ips:
+                raise ValueError('{0} is already in the active list of recipients'.format(ip))
+            config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
+            self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
+            self._sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
+            if self._sd_metadata is not None:
+                # new connection requires headers...
+                self._sdisp_ips[ip].send_heap(self._sd_metadata)
+
+    def set_center_freq(self, center_freq):
+        """Change the center frequency reported to signal displays.
+
+        This function is thread-safe, and automatically triggers sending a
+        metadata update.
+        """
+        with self._lock:
+            self._center_freq = center_freq
+            self._sd_metadata_requested = True
+
+    def sd_metadata_issue(self):
+        """Request that metadata is sent before the next signal display
+        data heap.
+
+        This function is thread-safe.
+        """
+        with self._lock:
+            self._sd_metadata_requested = True
 
     def set_timeseries_mask(self, mask_str):
+        """Set a timeseries mask. This function is thread-safe."""
         self.logger.info("Setting timeseries mask to %s" % (mask_str))
-        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask(mask_str, self.channels)[1]
+        mask = sdispdata.parse_timeseries_mask(mask_str, self.channels)[1]
+        # Thread safety depends on the mask only being updated by replacing
+        # the attribute, while the values are immutable. Make the array
+        # read-only to prevent accidents.
+        mask.setflags(write=False)
+        with self._lock:
+            self._maskedsum_weightedmask = mask
 
     def set_custom_signals(self, custom_signals_str):
+        """Set a list of baseline indices to send to signal display servers.
+        This function is thread-safe.
+        """
         self.logger.info("Setting custom signals to %s" % (custom_signals_str))
-        self.custom_signals_indices = np.array(custom_signals_str.split(','), dtype=np.uint32)
+        indices = np.array(custom_signals_str.split(','), dtype=np.uint32)
+        # See comment in set_timeseries_mask
+        indices.setflags(write=False)
+        with self._lock:
+            self._custom_signals_indices = indices
 
     def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
         # Create items on first use. This is simpler than figuring out the
@@ -549,7 +642,7 @@ class CBFIngest(threading.Thread):
                 percentile_ranges.append((start, end))
             else:
                 percentile_ranges.append((0, 0))
-        self.maskedsum_weightedmask = sdispdata.parse_timeseries_mask('', channels)[1]
+        self.set_timeseries_mask('')
 
         self.proc = self.proc_template.instantiate(
                 self.command_queue, channels, (0, channels), cbf_baselines, baselines,
@@ -568,7 +661,7 @@ class CBFIngest(threading.Thread):
             self.telstate.add(attribute_name, descriptions, immutable=True)
 
         # initialise the signal display metadata
-        self.send_sd_metadata()
+        self._send_sd_metadata()
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
@@ -593,10 +686,21 @@ class CBFIngest(threading.Thread):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
 
-        # TODO: this currently gets done every time because it wouldn't be thread-safe
-        # to poke the value directly in response to the katcp command. Once the code
-        # is redesigned to be single-threaded, push the value directly
-        self.proc.buffer('timeseries_weights').set(self.command_queue, self.maskedsum_weightedmask)
+        if self._sd_metadata_requested:
+            self._send_sd_metadata()
+            self.logger.info("SD Metadata update sent")
+            self._sd_metadata_requested = False
+
+        with self._lock:
+            mask = self._maskedsum_weightedmask
+            custom_signals_indices = self._custom_signals_indices
+
+        # TODO: this currently gets done every time because it wouldn't be
+        # thread-safe to poke the value directly in response to the katcp
+        # command (even with the lock held, because the lock doesn't protect
+        # the relevant variables).  Once the code is redesigned to be
+        # single-threaded, push the value directly.
+        self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
 
         self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
@@ -620,16 +724,16 @@ class CBFIngest(threading.Thread):
         # populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'].value = int(ts * 100)
         self.ig_sd['sd_data'].value = \
-            _split_array(spec_vis, np.float32)[:, self.custom_signals_indices, :]
-        self.ig_sd['sd_data_index'].value = self.custom_signals_indices
-        self.ig_sd['sd_flags'].value = spec_flags[:, self.custom_signals_indices]
+            _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+        self.ig_sd['sd_data_index'].value = custom_signals_indices
+        self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
         self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
         self.ig_sd['sd_blmxflags'].value = cont_flags
         self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
 
-        self.send_sd_data(self.ig_sd.get_heap())
+        self._send_sd_data(self.ig_sd.get_heap())
         self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
@@ -694,34 +798,6 @@ class CBFIngest(threading.Thread):
 
     def _run(self):
         """Real implementation of `run`."""
-        self.logger.debug("Initialising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}".format(
-            [str(x) for x in self.cbf_spead_endpoints]))
-        # Socket only used for multicast subscription
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for endpoint in self.cbf_spead_endpoints:
-            if endpoint.multicast_subscribe(sock):
-                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
-            elif endpoint.host != '':
-                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
-        thread_pool = spead2.ThreadPool(4)
-        rx = spead2.recv.Stream(thread_pool)
-        rx.add_udp_reader(self.cbf_spead_endpoints[0].port, buffer_size=32 * 1024 * 1024)
-        self.rx = rx
-        self.tx_spectral = spead2.send.UdpStream(
-            thread_pool,
-            self.spectral_spead_endpoint.host,
-            self.spectral_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.spectral_spead_rate / 8))
-        self.tx_continuum = spead2.send.UdpStream(
-            thread_pool,
-            self.continuum_spead_endpoint.host,
-            self.continuum_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.continuum_spead_rate / 8))
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
-        self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
         ig_cbf = spead2.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
@@ -731,7 +807,7 @@ class CBFIngest(threading.Thread):
         self._output_avg = None
         self._sd_avg = None
 
-        for heap in rx:
+        for heap in self.rx:
             st = time.time()
             if idx == 0:
                 self.status_sensor.set_value("capturing")
