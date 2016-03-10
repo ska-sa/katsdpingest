@@ -102,8 +102,8 @@ class IngestDeviceServer(DeviceServer):
     def request_sd_metadata_issue(self, req, msg):
         """Resend the signal display metadata packets..."""
         if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
-        self.cbf_thread.send_sd_metadata()
-        smsg = "SD Metadata resent"
+        self.cbf_thread.sd_metadata_issue()
+        smsg = "SD Metadata update requested"
         logger.info(smsg)
         return ("ok", smsg)
 
@@ -156,16 +156,16 @@ class IngestDeviceServer(DeviceServer):
 
         self.cbf_thread = CBFIngest(opts, self.proc_template,
                 self._my_sensors, opts.telstate, 'cbf', cbf_logger)
+        # add in existing signal display recipients...
+        for (ip,port) in self.sdisp_ips.iteritems():
+            self.cbf_thread.add_sdisp_ip(ip,port)
         self.cbf_thread.start()
 
         self.cam_thread = CAMIngest(opts.cam_spead, self._my_sensors, opts.telstate, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
-         # add in existing signal display recipients...
-        for (ip,port) in self.sdisp_ips.iteritems():
-            self.cbf_thread.add_sdisp_ip(ip,port)
-        smsg =  "Capture initialised at %s" % time.ctime()
+        smsg = "Capture initialised at %s" % time.ctime()
         logger.info(smsg)
         return ("ok", smsg)
 
@@ -179,23 +179,25 @@ class IngestDeviceServer(DeviceServer):
         center_freq_hz : int
             The current system center frequency in hz
         """
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
-        self.cbf_thread.center_freq = center_freq_hz
-        self.cbf_thread.send_sd_metadata()
-        smsg = "SD Metadata resent"
-        logger.info(smsg)
-        return ("ok","set")
+        if self.cbf_thread is None:
+            return ("fail","No active capture thread. Please start one using capture_init")
+        self.cbf_thread.set_center_freq(center_freq_hz)
+        logger.info("SD Metadata update requested")
+        return ("ok", "set")
 
     @request(Str())
     @return_reply(Str())
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
+        try:
+            del self.sdisp_ips[ip]
+        except KeyError:
+            return ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip))
         if self.cbf_thread is not None:
-            if not self.sdisp_ips.has_key(ip):
-                return ("fail","The IP address specified (%s) does not exist in the current list of recipients." % (ip))
+            # drop_sdisp_ip can in theory raise KeyError, but the check against
+            # our own list prevents that.
             self.cbf_thread.drop_sdisp_ip(ip)
-            return ("ok","The IP address has been dropped as a signal display recipient")
-        return ("fail","No active capture thread.")
+        return ("ok","The IP address has been dropped as a signal display recipient")
 
     @request(Str())
     @return_reply(Str())
@@ -205,9 +207,12 @@ class IngestDeviceServer(DeviceServer):
         ip = ipp[0]
         if len(ipp) > 1: port = int(ipp[1])
         else: port = 7149
-        if self.sdisp_ips.has_key(ip): return ("ok", "The supplied IP is already in the active list of recipients.")
+        if self.sdisp_ips.has_key(ip):
+            return ("ok", "The supplied IP is already in the active list of recipients.")
         self.sdisp_ips[ip] = port
         if self.cbf_thread is not None:
+            # add_sdisp_ip can in theory raise KeyError, but the check against
+            # our own list prevents that.
             self.cbf_thread.add_sdisp_ip(ip, port)
         return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
 
@@ -245,6 +250,8 @@ class IngestDeviceServer(DeviceServer):
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
+            # This doesn't take the lock on cbf_thread, but it's safe because
+            # the stop method is itself thread-safe.
             self.cbf_thread.rx.stop()
             time.sleep(1)
 
