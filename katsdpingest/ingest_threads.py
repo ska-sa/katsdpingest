@@ -658,7 +658,7 @@ class CBFIngest(threading.Thread):
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
             attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
-            self.telstate.add(attribute_name, descriptions, immutable=True)
+            self._set_telstate_entry(attribute_name, descriptions, add_cbf_prefix=False)
 
         # initialise the signal display metadata
         self._send_sd_metadata()
