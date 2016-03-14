@@ -512,7 +512,9 @@ class CBFIngest(threading.Thread):
         """
         with self._lock:
             self.logger.info("Removing ip %s from the signal display list." % (ip))
+            stream = self._sdisp_ips[ip]
             del self._sdisp_ips[ip]
+        stream.send_heap(self.ig_sd.get_end())
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -661,6 +663,7 @@ class CBFIngest(threading.Thread):
             self._set_telstate_entry(attribute_name, descriptions, add_cbf_prefix=False)
 
         # initialise the signal display metadata
+        self._send_sd_data(self.ig_sd.get_start())
         self._send_sd_metadata()
 
     def _flush_output(self, timestamps):
@@ -884,6 +887,7 @@ class CBFIngest(threading.Thread):
         self.tx_spectral = None
         self.tx_continuum.send_heap(self.ig_continuum.get_end())
         self.tx_continuum = None
+        self._send_sd_data(self.ig_sd.get_end())
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
