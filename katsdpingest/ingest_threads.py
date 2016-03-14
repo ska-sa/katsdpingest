@@ -757,7 +757,7 @@ class CBFIngest(threading.Thread):
     def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
         for item_name, item in updated.iteritems():
-            # bls_ordering is set later by _initialize, after permuting it.
+            # bls_ordering is set later by _initialise, after permuting it.
             # The other items are data rather than metadata, and so do not
             # live in the telescope state.
             if item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
