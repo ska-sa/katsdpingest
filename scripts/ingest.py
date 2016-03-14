@@ -46,7 +46,7 @@ def parse_opts():
     parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
-    parser.add_argument('--sd-spead-rate', type=float, default=100000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
+    parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
@@ -100,10 +100,10 @@ class IngestDeviceServer(DeviceServer):
 
     @return_reply(Str())
     def request_sd_metadata_issue(self, req, msg):
-        """Resend the signal display metadata packets..."""
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
-        self.cbf_thread.sd_metadata_issue()
-        smsg = "SD Metadata update requested"
+        """No-op, maintained for backwards compatibility."""
+        if self.cbf_thread is None:
+            return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
+        smsg = "Received legacy sd-metadata-issue command, ignoring it"
         logger.info(smsg)
         return ("ok", smsg)
 
@@ -182,7 +182,7 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_thread is None:
             return ("fail","No active capture thread. Please start one using capture_init")
         self.cbf_thread.set_center_freq(center_freq_hz)
-        logger.info("SD Metadata update requested")
+        logger.info("Center frequency set to %f Hz", center_freq_hz)
         return ("ok", "set")
 
     @request(Str())
