@@ -12,17 +12,20 @@ setup(
     include_package_data=True,
     scripts=[
         "scripts/ingest.py",
+        "scripts/bf_ingest.py",
         "scripts/ingest_autotune.py"
     ],
     setup_requires=['katversion'],
     install_requires=[
+        'h5py',
         'manhole',
         'numpy',
         'spead2>=0.6.0',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
-        'katsdptelstate'
+        'katsdptelstate',
+        'trollius'
     ],
     tests_require=tests_require,
     extras_require={'test': tests_require},
