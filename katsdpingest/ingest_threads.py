@@ -670,20 +670,22 @@ class CBFIngest(threading.Thread):
         # custom signals, but telstate takes precedence.
         if self.telstate is not None:
             try:
-                custom_signals_indices = self.telstate.get('sdp_sdisp_custom_signals')
+                custom_signals_indices = np.array(
+                    self.telstate['sdp_sdisp_custom_signals'],
+                    dtype=np.uint32, copy=False)
             except KeyError:
                 pass
             try:
-                mask = self.telstate.get('sdp_sdisp_timeseries_mask')
+                mask = np.array(
+                    self.telstate['sdp_sdisp_timeseries_mask'],
+                    dtype=np.float32, copy=False)
             except KeyError:
                 pass
 
-        # TODO: this currently gets done every time because it wouldn't be
-        # thread-safe to poke the value directly in response to the katcp
-        # command (even with the lock held, because the lock doesn't protect
-        # the relevant variables).  Once the code is redesigned to be
-        # single-threaded, push the value directly.
-        self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+        try:
+            self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+        except Exception:
+            self.logger.warn('Failed to set timeseries_weights', exc_info=True)
 
         self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
@@ -706,10 +708,14 @@ class CBFIngest(threading.Thread):
 
         # populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'].value = int(ts * 100)
-        self.ig_sd['sd_data'].value = \
-            _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
-        self.ig_sd['sd_data_index'].value = custom_signals_indices
-        self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+        if np.all(custom_signals_indices < spec_vis.shape[1]):
+            self.ig_sd['sd_data'].value = \
+                _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+            self.ig_sd['sd_data_index'].value = custom_signals_indices
+            self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+        else:
+            self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                             custom_signals_indices)
         self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
         self.ig_sd['sd_blmxflags'].value = cont_flags
         self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
