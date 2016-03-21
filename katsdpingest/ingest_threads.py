@@ -298,8 +298,7 @@ class CBFIngest(threading.Thread):
         self._maskedsum_weightedmask = []
         self._custom_signals_indices = np.array([], dtype=np.uint32)
         self._sdisp_ips = {}
-        self._sd_metadata_requested = False   #: To trigger a signal display metadata update
-        self._center_freq = 0
+        self._center_freq = None
 
         # Lock used to synchronise access between the katcp device server
         # thread and this thread. It protects all attributes declared above
@@ -333,7 +332,6 @@ class CBFIngest(threading.Thread):
         self.pkt_sensor = self._my_sensors['packets-captured']
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
-        self._sd_metadata = None
         self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
         # Initialise processing blocks used
@@ -383,74 +381,6 @@ class CBFIngest(threading.Thread):
         for tx in sdisp_ips:
             tx.send_heap(data)
 
-    def _update_sd_metadata(self):
-        """Update the itemgroup for the signal display metadata to include any
-        changes since last sent.
-        """
-        inline_format = [('u', self.sd_flavour.heap_address_bits)]
-        with self._lock:
-            center_freq = self._center_freq
-        # we need to clear the descriptor so as not to accidently send a signal
-        # display frame twice...
-        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
-        self.ig_sd.add_item(
-            name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
-            format=[('f', 32)], shape=(self.proc.buffer('sd_spec_vis').shape[0], None, 2))
-        self.ig_sd.add_item(
-            name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
-            format=[('u', 32)], shape=(None,))
-        self.ig_sd.add_item(
-            name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
-            **_slot_shape(self.proc.buffer('sd_cont_vis'), np.float32))
-        self.ig_sd.add_item(
-            name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
-            format=[('u', 8)], shape=(self.proc.buffer('sd_spec_flags').shape[0], None))
-        self.ig_sd.add_item(
-            name=('sd_blmxflags'), id=(0x3508),
-            description="Reduced data flags for baseline matrix.",
-            **_slot_shape(self.proc.buffer('sd_cont_flags')))
-        self.ig_sd.add_item(
-            name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
-            **_slot_shape(self.proc.buffer('timeseries'), np.float32))
-        n_perc_signals = 0
-        perc_idx = 0
-        while True:
-            try:
-                n_perc_signals += self.proc.buffer('percentile{0}'.format(perc_idx)).shape[0]
-                perc_idx += 1
-            except KeyError:
-                break
-        self.ig_sd.add_item(
-            name=('sd_percspectrum'), id=(0x3505),
-            description="Percentiles of spectrum data.",
-            dtype=np.float32, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
-        self.ig_sd.add_item(
-            name=('sd_percspectrumflags'), id=(0x3506),
-            description="Flags for percentiles of spectrum.",
-            dtype=np.uint8, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
-        self.ig_sd.add_item(
-            name="center_freq", id=0x1011,
-            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-            shape=(), dtype=None, format=[('f', 64)], value=center_freq)
-        self.ig_sd.add_item(
-            name=('sd_timestamp'), id=0x3502,
-            description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
-            shape=(), dtype=None, format=inline_format)
-        bls_ordering = np.asarray(self.cbf_attr['bls_ordering'])
-        self.ig_sd.add_item(
-            name=('bls_ordering'), id=0x100C,
-            description="Mapping of antenna/pol pairs to data output products.",
-            shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
-        self.ig_sd.add_item(
-            name="bandwidth", id=0x1013,
-            description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'])
-        self.ig_sd.add_item(
-            name="n_chans", id=0x1009,
-            description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
-        return self.ig_sd.get_heap()
-
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None):
         """Construct a permutation to place the baselines into the desired
@@ -496,12 +426,6 @@ class CBFIngest(threading.Thread):
             permutation[reordered[i][0]] = i
         return permutation, np.array([x[1] for x in reordered])
 
-    def _send_sd_metadata(self):
-        heap = self._update_sd_metadata()
-        self._sd_metadata = heap
-        if heap is not None:
-            self._send_sd_data(heap)
-
     def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
@@ -512,7 +436,9 @@ class CBFIngest(threading.Thread):
         """
         with self._lock:
             self.logger.info("Removing ip %s from the signal display list." % (ip))
+            stream = self._sdisp_ips[ip]
             del self._sdisp_ips[ip]
+        stream.send_heap(self.ig_sd.get_end())
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -535,28 +461,14 @@ class CBFIngest(threading.Thread):
             config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
             self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
             self._sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
-            if self._sd_metadata is not None:
-                # new connection requires headers...
-                self._sdisp_ips[ip].send_heap(self._sd_metadata)
 
     def set_center_freq(self, center_freq):
         """Change the center frequency reported to signal displays.
 
-        This function is thread-safe, and automatically triggers sending a
-        metadata update.
-        """
-        with self._lock:
-            self._center_freq = center_freq
-            self._sd_metadata_requested = True
-
-    def sd_metadata_issue(self):
-        """Request that metadata is sent before the next signal display
-        data heap.
-
         This function is thread-safe.
         """
         with self._lock:
-            self._sd_metadata_requested = True
+            self._center_freq = center_freq
 
     def set_timeseries_mask(self, mask_str):
         """Set a timeseries mask. This function is thread-safe."""
@@ -594,6 +506,68 @@ class CBFIngest(threading.Thread):
         ig['flags'].value = flags
         ig['timestamp'].value = ts_rel
         tx.send_heap(ig.get_heap())
+
+    def _initialise_ig_sd(self):
+        """Create a item group for signal displays."""
+        sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        inline_format = [('u', sd_flavour.heap_address_bits)]
+        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
+        self.ig_sd.add_item(
+            name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
+            format=[('f', 32)], shape=(self.proc.buffer('sd_spec_vis').shape[0], None, 2))
+        self.ig_sd.add_item(
+            name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
+            format=[('u', 32)], shape=(None,))
+        self.ig_sd.add_item(
+            name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
+            **_slot_shape(self.proc.buffer('sd_cont_vis'), np.float32))
+        self.ig_sd.add_item(
+            name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
+            format=[('u', 8)], shape=(self.proc.buffer('sd_spec_flags').shape[0], None))
+        self.ig_sd.add_item(
+            name=('sd_blmxflags'), id=(0x3508),
+            description="Reduced data flags for baseline matrix.",
+            **_slot_shape(self.proc.buffer('sd_cont_flags')))
+        self.ig_sd.add_item(
+            name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
+            **_slot_shape(self.proc.buffer('timeseries'), np.float32))
+        n_perc_signals = 0
+        perc_idx = 0
+        while True:
+            try:
+                n_perc_signals += self.proc.buffer('percentile{0}'.format(perc_idx)).shape[0]
+                perc_idx += 1
+            except KeyError:
+                break
+        self.ig_sd.add_item(
+            name=('sd_percspectrum'), id=(0x3505),
+            description="Percentiles of spectrum data.",
+            dtype=np.float32, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
+        self.ig_sd.add_item(
+            name=('sd_percspectrumflags'), id=(0x3506),
+            description="Flags for percentiles of spectrum.",
+            dtype=np.uint8, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
+        self.ig_sd.add_item(
+            name="center_freq", id=0x1011,
+            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
+            shape=(), dtype=None, format=[('f', 64)])
+        self.ig_sd.add_item(
+            name=('sd_timestamp'), id=0x3502,
+            description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
+            shape=(), dtype=None, format=inline_format)
+        bls_ordering = np.asarray(self.cbf_attr['bls_ordering'])
+        self.ig_sd.add_item(
+            name=('bls_ordering'), id=0x100C,
+            description="Mapping of antenna/pol pairs to data output products.",
+            shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
+        self.ig_sd.add_item(
+            name="bandwidth", id=0x1013,
+            description="The analogue bandwidth of the digitally processed signal in Hz.",
+            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'])
+        self.ig_sd.add_item(
+            name="n_chans", id=0x1009,
+            description="The total number of frequency channels present in any integration.",
+            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
 
     def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
@@ -658,10 +632,11 @@ class CBFIngest(threading.Thread):
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
             attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
-            self.telstate.add(attribute_name, descriptions, immutable=True)
+            self._set_telstate_entry(attribute_name, descriptions, add_cbf_prefix=False)
 
         # initialise the signal display metadata
-        self._send_sd_metadata()
+        self._initialise_ig_sd()
+        self._send_sd_data(self.ig_sd.get_start())
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
@@ -686,21 +661,31 @@ class CBFIngest(threading.Thread):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
 
-        if self._sd_metadata_requested:
-            self._send_sd_metadata()
-            self.logger.info("SD Metadata update sent")
-            self._sd_metadata_requested = False
-
         with self._lock:
+            center_freq = self._center_freq
             mask = self._maskedsum_weightedmask
             custom_signals_indices = self._custom_signals_indices
 
-        # TODO: this currently gets done every time because it wouldn't be
-        # thread-safe to poke the value directly in response to the katcp
-        # command (even with the lock held, because the lock doesn't protect
-        # the relevant variables).  Once the code is redesigned to be
-        # single-threaded, push the value directly.
-        self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+        # For now, both telstate and katcp can be used to set the mask and
+        # custom signals, but telstate takes precedence.
+        if self.telstate is not None:
+            try:
+                custom_signals_indices = np.array(
+                    self.telstate['sdp_sdisp_custom_signals'],
+                    dtype=np.uint32, copy=False)
+            except KeyError:
+                pass
+            try:
+                mask = np.array(
+                    self.telstate['sdp_sdisp_timeseries_mask'],
+                    dtype=np.float32, copy=False)
+            except KeyError:
+                pass
+
+        try:
+            self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+        except Exception:
+            self.logger.warn('Failed to set timeseries_weights', exc_info=True)
 
         self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
@@ -723,17 +708,23 @@ class CBFIngest(threading.Thread):
 
         # populate new datastructure to supersede sd_data etc
         self.ig_sd['sd_timestamp'].value = int(ts * 100)
-        self.ig_sd['sd_data'].value = \
-            _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
-        self.ig_sd['sd_data_index'].value = custom_signals_indices
-        self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+        if np.all(custom_signals_indices < spec_vis.shape[1]):
+            self.ig_sd['sd_data'].value = \
+                _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+            self.ig_sd['sd_data_index'].value = custom_signals_indices
+            self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+        else:
+            self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                             custom_signals_indices)
         self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
         self.ig_sd['sd_blmxflags'].value = cont_flags
         self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
+        if center_freq is not None:
+            self.ig_sd['center_freq'].value = center_freq
 
-        self._send_sd_data(self.ig_sd.get_heap())
+        self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
         self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
@@ -754,7 +745,7 @@ class CBFIngest(threading.Thread):
     def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
         for item_name, item in updated.iteritems():
-            # bls_ordering is set later by _initialize, after permuting it.
+            # bls_ordering is set later by _initialise, after permuting it.
             # The other items are data rather than metadata, and so do not
             # live in the telescope state.
             if item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
@@ -884,6 +875,7 @@ class CBFIngest(threading.Thread):
         self.tx_spectral = None
         self.tx_continuum.send_heap(self.ig_continuum.get_end())
         self.tx_continuum = None
+        self._send_sd_data(self.ig_sd.get_end())
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
