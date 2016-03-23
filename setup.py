@@ -25,6 +25,7 @@ setup(
         'katsdpsigproc',
         'katsdpdisp',
         'katsdptelstate',
+        'psutil',
         'trollius'
     ],
     tests_require=tests_require,
