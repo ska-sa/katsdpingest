@@ -295,8 +295,6 @@ class CBFIngest(threading.Thread):
 
     def __init__(self, opts, proc_template,
                  my_sensors, telstate, cbf_name, logger):
-        self._maskedsum_weightedmask = []
-        self._custom_signals_indices = np.array([], dtype=np.uint32)
         self._sdisp_ips = {}
         self._center_freq = None
 
@@ -470,28 +468,6 @@ class CBFIngest(threading.Thread):
         with self._lock:
             self._center_freq = center_freq
 
-    def set_timeseries_mask(self, mask_str):
-        """Set a timeseries mask. This function is thread-safe."""
-        self.logger.info("Setting timeseries mask to %s" % (mask_str))
-        mask = sdispdata.parse_timeseries_mask(mask_str, self.channels)[1]
-        # Thread safety depends on the mask only being updated by replacing
-        # the attribute, while the values are immutable. Make the array
-        # read-only to prevent accidents.
-        mask.setflags(write=False)
-        with self._lock:
-            self._maskedsum_weightedmask = mask
-
-    def set_custom_signals(self, custom_signals_str):
-        """Set a list of baseline indices to send to signal display servers.
-        This function is thread-safe.
-        """
-        self.logger.info("Setting custom signals to %s" % (custom_signals_str))
-        indices = np.array(custom_signals_str.split(','), dtype=np.uint32)
-        # See comment in set_timeseries_mask
-        indices.setflags(write=False)
-        with self._lock:
-            self._custom_signals_indices = indices
-
     def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
         # Create items on first use. This is simpler than figuring out the
         # correct shapes ahead of time.
@@ -616,7 +592,6 @@ class CBFIngest(threading.Thread):
                 percentile_ranges.append((start, end))
             else:
                 percentile_ranges.append((0, 0))
-        self.set_timeseries_mask('')
 
         self.proc = self.proc_template.instantiate(
                 self.command_queue, channels, (0, channels), cbf_baselines, baselines,
@@ -663,11 +638,11 @@ class CBFIngest(threading.Thread):
 
         with self._lock:
             center_freq = self._center_freq
-            mask = self._maskedsum_weightedmask
-            custom_signals_indices = self._custom_signals_indices
 
         # For now, both telstate and katcp can be used to set the mask and
         # custom signals, but telstate takes precedence.
+        custom_signals_indices = None
+        mask = None
         if self.telstate is not None:
             try:
                 custom_signals_indices = np.array(
@@ -681,6 +656,11 @@ class CBFIngest(threading.Thread):
                     dtype=np.float32, copy=False)
             except KeyError:
                 pass
+
+        if custom_signals_indices is None:
+            custom_signals_indices = np.array([], dtype=np.uint32)
+        if mask is None:
+            mask = sdispdata.parse_timeseries_mask('', self.channels)
 
         try:
             self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
