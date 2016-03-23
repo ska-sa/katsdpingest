@@ -99,15 +99,6 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["device-status"].set_value("ok")
 
     @return_reply(Str())
-    def request_sd_metadata_issue(self, req, msg):
-        """No-op, maintained for backwards compatibility."""
-        if self.cbf_thread is None:
-            return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
-        smsg = "Received legacy sd-metadata-issue command, ignoring it"
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @return_reply(Str())
     def request_enable_debug(self, req, msg):
         """Enable debugging of the ingest process."""
         self._enable_debug(True)
@@ -215,24 +206,6 @@ class IngestDeviceServer(DeviceServer):
             # our own list prevents that.
             self.cbf_thread.add_sdisp_ip(ip, port)
         return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
-
-    @request(Str())
-    @return_reply(Str())
-    def request_set_custom_signals(self, req, custom_signals_str):
-        """Sets custom signals: custom_signals_str is a comma-separated list of indices into the baseline ordering"""
-        if self.cbf_thread is not None:
-            self.cbf_thread.set_custom_signals(custom_signals_str)
-            return ("ok", "custom signals updated")
-        return ("fail", "No active capture thread.")
-
-    @request(Str())
-    @return_reply(Str())
-    def request_set_timeseries_mask(self, req, maskstr):
-        """Sets the spectral mask used for the timeseries calculation."""
-        if self.cbf_thread is not None:
-            self.cbf_thread.set_timeseries_mask(maskstr)
-            return ("ok", "mask is updated")
-        return ("fail", "No active capture thread.")
 
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
