@@ -18,6 +18,7 @@ numpy
 pbr
 ply
 ProxyTypes
+psutil==4.1.0
 py
 pycuda
 pytest
