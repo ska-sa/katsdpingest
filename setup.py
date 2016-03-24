@@ -20,7 +20,7 @@ setup(
         'h5py',
         'manhole',
         'numpy',
-        'spead2>=0.6.0',
+        'spead2>=0.6.3',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
