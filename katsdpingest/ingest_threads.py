@@ -660,7 +660,7 @@ class CBFIngest(threading.Thread):
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
         if mask is None:
-            mask = sdispdata.parse_timeseries_mask('', self.channels)
+            mask = np.ones(self.channels, np.float32) / self.channels
 
         try:
             self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
