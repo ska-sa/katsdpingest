@@ -1,7 +1,7 @@
 from __future__ import print_function, division, absolute_import
-#import spead2
-#import spead2.recv
-#import spead2.recv.trollius
+import spead2
+import spead2.recv
+import spead2.recv.trollius
 import katcp
 from katcp.kattypes import request, return_reply
 #import h5py
@@ -54,6 +54,7 @@ class _CaptureSession(object):
         Time interval (in ADC clocks) between spectra
     """
     def __init__(self, args, loop):
+        #print "HEY, you loaded the right capture session for PTUSE"
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
@@ -66,7 +67,7 @@ class _CaptureSession(object):
         else:
             self._timestep = None
         self._ig = spead2.ItemGroup()
-        # self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
+        self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
         for endpoint in args.cbf_spead:
             _logger.info('Listening on endpoint {}'.format(endpoint))
             self._endpoints.append(endpoint)
@@ -82,12 +83,12 @@ class _CaptureSession(object):
         numaNode :
             NUMA node to attach dada buffer to
         """
+        print ("create buffer")
         cmd = 'dada_db -k %s -b 268435456 -p -l -n 4 -c %d'%(dadaId, numaNode)
         dada_buffer_process = tornado.process.Subprocess(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-
-        return yield sub_process.wait_for_exit()
+        return sub_process.wait_for_exit()
 
     def _create_dada_dbdisk (self, dadaId = 'dada', numaNode = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
@@ -103,7 +104,7 @@ class _CaptureSession(object):
             outputDir :
                 Location to write captured data
         """
-
+        print ("dada_dbdisk")
         STREAM = tornado.process.Subprocess.STREAM
         cmd = 'numactl -C 1 dada_dbdisk -k %s -D %s -z -s -d;\
                numactl -C 1 dada_dbdisk -k %s -D %s -z -s'%(numaNode, dadaId, outputDir)
@@ -135,6 +136,7 @@ class _CaptureSession(object):
             core2 :
                 core to run capture on
         """
+        print ("capture_process")
         STREAM = tornado.process.Subprocess.STREAM
         cap_env = os.environ.copy()
         cap_env["LD_PRELOAD"] = "libvma.so"
@@ -161,15 +163,16 @@ class _CaptureSession(object):
     @trollius.coroutine
     def _run(self):
         """Does the work of capturing a stream. This is a coroutine."""
+        print ("running")
         result = self._create_dada_buffer()
         _logger.info("Created dada_buffer\n" + result)
-
+        print ("Created dada_buffer\n" + result)
         result, error = yield self._create_dada_dbdisk()
         _logger.info ("dada_dbdisk output :\n %s\n error\n %s"%(result,error))
-
+        print ("dada_dbdisk output :\n %s\n error\n %s"%(result,error)) 
         result, error = yield self._create_capture_process()
         _logger.info ("capture output :\n %s\n error\n %s"%(result,error))
-
+        print ("capture output :\n %s\n error\n %s"%(result,error))
         ret = [self._capture_process.wait_for_exit(),]
 
         ret.append (self._dada_dbdisk_process.wait_for_exit())
