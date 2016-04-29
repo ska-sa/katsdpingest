@@ -54,7 +54,6 @@ class _CaptureSession(object):
         Time interval (in ADC clocks) between spectra
     """
     def __init__(self, args, loop):
-        #print "HEY, you loaded the right capture session for PTUSE"
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
@@ -73,24 +72,25 @@ class _CaptureSession(object):
             self._endpoints.append(endpoint)
         self._run_future = trollius.async(self._run(), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaNode = 1):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers = 64):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
         ----------
         dadaId :
             Dada buffer ID.
-        numaNode :
+        numaCore :
             NUMA node to attach dada buffer to
         """
         print ("create buffer")
-        cmd = 'dada_db -k %s -b 268435456 -p -l -n 4 -c %d'%(dadaId, numaNode)
+        cmd = 'dada_db -k %s;\
+               dada_db -k %s -b 268435456 -p -l -n %d -c %d'%(dadaId, dadaId, nBuffers, numaCore)
         dada_buffer_process = tornado.process.Subprocess(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         return sub_process.wait_for_exit()
 
-    def _create_dada_dbdisk (self, dadaId = 'dada', numaNode = 1, outputDir = '/data'):
+    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
         Must be run after creating the dada_buffer and before the capture process.
         Must have the same NUMA node as the dada_buffer
@@ -99,15 +99,14 @@ class _CaptureSession(object):
             ----------
             dadaId :
                 Dada buffer ID.
-            numaNode :
-                NUMA node to attach dada buffer to
+            cpuCore :
+                CPU core to bind processing to
             outputDir :
                 Location to write captured data
         """
         print ("dada_dbdisk")
         STREAM = tornado.process.Subprocess.STREAM
-        cmd = 'numactl -C 1 dada_dbdisk -k %s -D %s -z -s -d;\
-               numactl -C 1 dada_dbdisk -k %s -D %s -z -s'%(numaNode, dadaId, outputDir)
+        cmd = 'numactl -C %d dada_dbdisk -k %s -D %s -z -s'%(cpuCore, dadaId, outputDir)
         self._dada_dbdisk_process = tornado.process.Subprocess(
         cmd, stdin=STREAM, stdout=STREAM, stderr=STREAM
         )
@@ -137,6 +136,35 @@ class _CaptureSession(object):
                 core to run capture on
         """
         print ("capture_process")
+
+        # capture ADC_SYNC_TIME from the meta-data stream before running capture code
+        pol_h_host  = "10.100.21.5"
+        pol_h_mcast = "239.9.3.2"
+        pol_h_port  = 8890
+        cmd = "meerkat_speadmeta %s %s -p %d"%(pol_h_host, pol_h_mcast, pol_h_port)
+
+        speadmeta_process = tornado.process.Subprocess(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+	# we need to capture the output from this process
+	adc_sync_time, error = yield [
+        Task(self._capture_process.stdout.read_until_close),
+        Task(self._capture_process.stderr.read_until_close)
+	]
+
+        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
+	runtimeConfig = spipConfig + ".live"
+        f_read = open (spipConfig, 'r')
+        f_write = open (spipConfig, 'w')
+        for line in f_read:
+            if line.find("ADC_SYNC_TIME"):
+                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
+            else:
+                f_write.write(line + "\n"
+            f_read.close()
+            f_write.close()
+        
         STREAM = tornado.process.Subprocess.STREAM
         cap_env = os.environ.copy()
         cap_env["LD_PRELOAD"] = "libvma.so"
@@ -145,7 +173,7 @@ class _CaptureSession(object):
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         cap_env["VMA_RING_ALLOCATION_LOGIC_RX"] = "10"
 
-        cmd = "meerkat_udpmergedb %s -f spead -b %d -c %d"%(spipConfig,core1,core2)
+        cmd = "meerkat_udpmergedb %s -f spead -b %d -c %d"%(runtimeConfig,core1,core2)
 
         self._capture_process = tornado.process.Subprocess(
         cmd, stdin=STREAM, stdout=STREAM, stderr=STREAM, env=cap_env
