@@ -1,7 +1,7 @@
-"""Tests for the ingest_threads module"""
+"""Tests for the ingest_session module"""
 
 import numpy as np
-from katsdpingest import ingest_threads
+from katsdpingest import ingest_session
 from katsdpsigproc.test.test_accel import device_test
 import unittest
 import mock
@@ -20,7 +20,7 @@ class TestTimeAverage(object):
         self.input_interval = 123456 * 4096 * 2
 
     def test_constructor(self):
-        avg = ingest_threads._TimeAverage(self.cbf_attr, 2.0)
+        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
         assert_equal(2.25, avg.int_time)
         assert_equal(3, avg.ratio)
         assert_equal(avg.ratio * self.input_interval, avg.interval)
@@ -34,7 +34,7 @@ class TestTimeAverage(object):
             return 1000000000 + idx * self.input_interval
 
     def test_add_timestamp(self):
-        avg = ingest_threads._TimeAverage(self.cbf_attr, 2.0)
+        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
         avg.flush = mock.Mock(name='flush', spec_set=avg.flush)
         avg.add_timestamp(self.make_ts(0))
         avg.add_timestamp(self.make_ts(2))
@@ -65,7 +65,7 @@ def test_split_array():
            1j * np.random.uniform(size=(4, 7))).astype(np.complex64)
     # Create a view which is discontiguous
     src = c64[:3, :5].T
-    actual = ingest_threads._split_array(src, np.float32)
+    actual = ingest_session._split_array(src, np.float32)
     expected = np.zeros((5, 3, 2), np.float32)
     for i in range(5):
         for j in range(3):
@@ -78,23 +78,23 @@ class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_threads.CBFIngest.create_proc_template(context, 8, 4096)
+        template = ingest_session.CBFIngest.create_proc_template(context, 8, 4096)
         template.instantiate(
             queue, 1024, (96, 1024 - 96), 544, 512,
             16, 64, [(0, 4), (500, 512)],
             threshold_args={'n_sigma': 11.0})
 
     def test_tune_next(self):
-        assert_equal(2, ingest_threads.CBFIngest._tune_next(0, [2, 4, 8, 16]))
-        assert_equal(8, ingest_threads.CBFIngest._tune_next(5, [2, 4, 8, 16]))
-        assert_equal(8, ingest_threads.CBFIngest._tune_next(8, [2, 4, 8, 16]))
-        assert_equal(21, ingest_threads.CBFIngest._tune_next(21, [2, 4, 8, 16]))
+        assert_equal(2, ingest_session.CBFIngest._tune_next(0, [2, 4, 8, 16]))
+        assert_equal(8, ingest_session.CBFIngest._tune_next(5, [2, 4, 8, 16]))
+        assert_equal(8, ingest_session.CBFIngest._tune_next(8, [2, 4, 8, 16]))
+        assert_equal(21, ingest_session.CBFIngest._tune_next(21, [2, 4, 8, 16]))
 
     def test_tune_next_antennas(self):
-        assert_equal(2, ingest_threads.CBFIngest._tune_next_antennas(0))
-        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(5))
-        assert_equal(8, ingest_threads.CBFIngest._tune_next_antennas(8))
-        assert_equal(32, ingest_threads.CBFIngest._tune_next_antennas(21))
+        assert_equal(2, ingest_session.CBFIngest._tune_next_antennas(0))
+        assert_equal(8, ingest_session.CBFIngest._tune_next_antennas(5))
+        assert_equal(8, ingest_session.CBFIngest._tune_next_antennas(8))
+        assert_equal(32, ingest_session.CBFIngest._tune_next_antennas(21))
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([
@@ -124,7 +124,7 @@ class TestCBFIngest(unittest.TestCase):
             ['m000h', 'm001v'],
             ['m000v', 'm001h']])
 
-        permutation, new_ordering = ingest_threads.CBFIngest.baseline_permutation(orig_ordering)
+        permutation, new_ordering = ingest_session.CBFIngest.baseline_permutation(orig_ordering)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], permutation)
 
@@ -150,6 +150,6 @@ class TestCBFIngest(unittest.TestCase):
         antenna_mask = set(['m001'])
 
         permutation, new_ordering = \
-            ingest_threads.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
+            ingest_session.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], permutation)

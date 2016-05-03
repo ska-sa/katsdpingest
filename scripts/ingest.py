@@ -19,7 +19,7 @@ from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest
 import katsdpingest.sigproc as sp
-from katsdpingest.ingest_threads import CBFIngest
+from katsdpingest.ingest_session import CBFIngest
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
 import katsdptelstate
