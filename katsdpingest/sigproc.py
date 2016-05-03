@@ -79,9 +79,10 @@ class PrepareTemplate(object):
         self.block = tuning['block']
         self.vtx = tuning['vtx']
         self.vty = tuning['vty']
-        program = accel.build(context, 'ingest_kernels/prepare.mako',
-                {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
-                extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        program = accel.build(
+            context, 'ingest_kernels/prepare.mako',
+            {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('prepare')
 
     @classmethod
@@ -99,10 +100,12 @@ class PrepareTemplate(object):
         weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
         vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
         permutation.set(queue, np.arange(baselines).astype(np.int16))
+
         def generate(block, vtx, vty):
             local_mem = (block * vtx + 1) * (block * vty) * 8
             if local_mem > 32768:
-                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+                # Skip configurations using lots of lmem
+                raise RuntimeError('too much local memory')
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
@@ -110,10 +113,11 @@ class PrepareTemplate(object):
             fn.bind(vis_in=vis_in, vis_out=vis_out,
                     permutation=permutation, weights=weights)
             return tune.make_measure(queue, fn)
-        return tune.autotune(generate,
-                block=[8, 16, 32],
-                vtx=[1, 2, 3, 4],
-                vty=[1, 2, 3, 4])
+        return tune.autotune(
+            generate,
+            block=[8, 16, 32],
+            vtx=[1, 2, 3, 4],
+            vty=[1, 2, 3, 4])
 
     def instantiate(self, command_queue, channels, channel_range, in_baselines, out_baselines):
         return Prepare(self, command_queue, channels, channel_range, in_baselines, out_baselines)
@@ -148,7 +152,8 @@ class Prepare(accel.Operation):
     out_baselines : int
         Number of baselines in the output
     """
-    def __init__(self, template, command_queue, channels, channel_range, in_baselines, out_baselines):
+    def __init__(self, template, command_queue, channels, channel_range,
+                 in_baselines, out_baselines):
         if in_baselines < out_baselines:
             raise ValueError('Baselines can only be discarded, not amplified')
         super(Prepare, self).__init__(command_queue)
@@ -203,8 +208,8 @@ class Prepare(accel.Operation):
                     np.int32(self.in_baselines),
                     np.float32(self.scale)
                 ],
-                global_size = (xblocks * block, yblocks * block),
-                local_size = (block, block))
+                global_size=(xblocks * block, yblocks * block),
+                local_size=(block, block))
 
     def parameters(self):
         return {
@@ -245,7 +250,8 @@ class AccumTemplate(object):
         self.vtx = tuning['vtx']
         self.vty = tuning['vty']
         self.outputs = outputs
-        program = accel.build(context, 'ingest_kernels/accum.mako',
+        program = accel.build(
+            context, 'ingest_kernels/accum.mako',
             {
                 'block': self.block,
                 'vtx': self.vtx,
@@ -269,28 +275,35 @@ class AccumTemplate(object):
         out = {}
         for i in range(outputs):
             suffix = str(i)
-            out['vis_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.complex64)
-            out['weights_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.float32)
-            out['flags_out' + suffix] = accel.DeviceArray(context, (kept_channels, baselines), np.uint8)
+            out['vis_out' + suffix] = accel.DeviceArray(
+                context, (kept_channels, baselines), np.complex64)
+            out['weights_out' + suffix] = accel.DeviceArray(
+                context, (kept_channels, baselines), np.float32)
+            out['flags_out' + suffix] = accel.DeviceArray(
+                context, (kept_channels, baselines), np.uint8)
 
         rs = np.random.RandomState(seed=1)
         vis_in.set(queue, np.ones(vis_in.shape, np.complex64))
         weights_in.set(queue, np.ones(weights_in.shape, np.float32))
-        flags_in.set(queue, rs.choice([0, 16], size=flags_in.shape, p=[0.95, 0.05]).astype(np.uint8))
+        flags_in.set(queue, rs.choice([0, 16], size=flags_in.shape,
+                     p=[0.95, 0.05]).astype(np.uint8))
+
         def generate(block, vtx, vty):
             local_mem = (block * vtx + 1) * (block * vty) * 13
             if local_mem > 32768:
-                raise RuntimeError('too much local memory') # Skip configurations using lots of lmem
+                # Skip configurations using lots of lmem
+                raise RuntimeError('too much local memory')
             fn = cls(context, outputs, {
                 'block': block,
                 'vtx': vtx,
                 'vty': vty}).instantiate(queue, channels, channel_range, baselines)
             fn.bind(vis_in=vis_in, weights_in=weights_in, flags_in=flags_in, **out)
             return tune.make_measure(queue, fn)
-        return tune.autotune(generate,
-                block=[8, 16, 32],
-                vtx=[1, 2, 3, 4],
-                vty=[1, 2, 3, 4])
+        return tune.autotune(
+            generate,
+            block=[8, 16, 32],
+            vtx=[1, 2, 3, 4],
+            vty=[1, 2, 3, 4])
 
     def instantiate(self, command_queue, channels, channel_range, baselines):
         return Accum(self, command_queue, channels, channel_range, baselines)
@@ -343,8 +356,9 @@ class Accum(accel.Operation):
         kept_channels = channel_range[1] - channel_range[0]
         padded_kept_channels = accel.Dimension(kept_channels, tilex)
         padded_baselines = accel.Dimension(baselines, tiley)
-        padded_channels = accel.Dimension(channels,
-                min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range[0]))
+        padded_channels = accel.Dimension(
+            channels,
+            min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range[0]))
         self.slots['vis_in'] = accel.IOSlot(
                 (padded_baselines, padded_channels), np.complex64)
         self.slots['weights_in'] = accel.IOSlot(
@@ -383,8 +397,8 @@ class Accum(accel.Operation):
         self.command_queue.enqueue_kernel(
                 self.template.kernel,
                 args,
-                global_size = (xblocks * block, yblocks * block),
-                local_size = (block, block))
+                global_size=(xblocks * block, yblocks * block),
+                local_size=(block, block))
 
     def parameters(self):
         return {
@@ -420,7 +434,8 @@ class PostprocTemplate(object):
         self.context = context
         self.wgsx = tuning['wgsx']
         self.wgsy = tuning['wgsy']
-        program = accel.build(context, 'ingest_kernels/postproc.mako',
+        program = accel.build(
+            context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,
                 'wgsy': self.wgsy,
@@ -437,26 +452,28 @@ class PostprocTemplate(object):
         cont_factor = 16
         cont_channels = channels // cont_factor
 
-        vis =     accel.DeviceArray(context, (channels, baselines), np.complex64)
+        vis = accel.DeviceArray(context, (channels, baselines), np.complex64)
         weights = accel.DeviceArray(context, (channels, baselines), np.float32)
-        flags =   accel.DeviceArray(context, (channels, baselines), np.uint8)
-        cont_vis =     accel.DeviceArray(context, (cont_channels, baselines), np.complex64)
+        flags = accel.DeviceArray(context, (channels, baselines), np.uint8)
+        cont_vis = accel.DeviceArray(context, (cont_channels, baselines), np.complex64)
         cont_weights = accel.DeviceArray(context, (cont_channels, baselines), np.float32)
-        cont_flags =   accel.DeviceArray(context, (cont_channels, baselines), np.uint8)
+        cont_flags = accel.DeviceArray(context, (cont_channels, baselines), np.uint8)
 
         rs = np.random.RandomState(seed=1)
         vis.set(queue, np.ones(vis.shape, np.complex64))
         weights.set(queue, rs.uniform(1e-5, 4.0, weights.shape).astype(np.float32))
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
+
         def generate(**tuning):
             fn = cls(context, tuning=tuning).instantiate(
                     queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
             return tune.make_measure(queue, fn)
-        return tune.autotune(generate,
-                wgsx=[8, 16, 32],
-                wgsy=[8, 16, 32])
+        return tune.autotune(
+            generate,
+            wgsx=[8, 16, 32],
+            wgsy=[8, 16, 32])
 
     def instantiate(self, context, channels, baselines, cont_factor):
         return Postproc(self, context, channels, baselines, cont_factor)
@@ -515,12 +532,12 @@ class Postproc(accel.Operation):
         cont_dims = (
             accel.Dimension(cont_channels, template.wgsy),
             spectral_dims[1])
-        self.slots['vis'] =     accel.IOSlot(spectral_dims, np.complex64)
+        self.slots['vis'] = accel.IOSlot(spectral_dims, np.complex64)
         self.slots['weights'] = accel.IOSlot(spectral_dims, np.float32)
-        self.slots['flags'] =   accel.IOSlot(spectral_dims, np.uint8)
-        self.slots['cont_vis'] =     accel.IOSlot(cont_dims, np.complex64)
+        self.slots['flags'] = accel.IOSlot(spectral_dims, np.uint8)
+        self.slots['cont_vis'] = accel.IOSlot(cont_dims, np.complex64)
         self.slots['cont_weights'] = accel.IOSlot(cont_dims, np.float32)
-        self.slots['cont_flags'] =   accel.IOSlot(cont_dims, np.uint8)
+        self.slots['cont_flags'] = accel.IOSlot(cont_dims, np.uint8)
 
     def _run(self):
         buffer_names = ['vis', 'weights', 'flags', 'cont_vis', 'cont_weights', 'cont_flags']
@@ -559,7 +576,8 @@ class IngestTemplate(object):
         and there must be one that is at least big enough.
     """
 
-    flag_names = ['reserved0','static','cam','reserved3','ingest_rfi','predicted_rfi','cal_rfi','reserved7']
+    flag_names = ['reserved0', 'static', 'cam', 'reserved3', 'ingest_rfi',
+                  'predicted_rfi', 'cal_rfi', 'reserved7']
 
     def __init__(self, context, flagger, percentile_sizes):
         self.context = context
@@ -571,16 +589,20 @@ class IngestTemplate(object):
         self.accum = AccumTemplate(context, 2)
         self.postproc = PostprocTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.percentiles = [percentile.Percentile5Template(context, max(size, 1), False) for size in percentile_sizes]
-        self.percentiles_flags = reduce.HReduceTemplate(context, np.uint8, 'unsigned char', 'a | b', '0')
+        self.percentiles = [percentile.Percentile5Template(
+            context, max(size, 1), False) for size in percentile_sizes]
+        self.percentiles_flags = reduce.HReduceTemplate(
+            context, np.uint8, 'unsigned char', 'a | b', '0')
         # These last two are used when the input is empty (zero baselines)
         self.nan_percentiles = fill.FillTemplate(context, np.float32, 'float')
         self.zero_percentiles_flags = fill.FillTemplate(context, np.uint8, 'unsigned char')
 
-    def instantiate(self, command_queue, channels, channel_range,
+    def instantiate(
+            self, command_queue, channels, channel_range,
             cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
-        return IngestOperation(self, command_queue, channels, channel_range,
+        return IngestOperation(
+                self, command_queue, channels, channel_range,
                 cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
                 background_args, noise_est_args, threshold_args)
 
@@ -652,7 +674,8 @@ class IngestOperation(accel.OperationSequence):
     threshold_args : dict, optional
         Extra keyword arguments to pass to the threshold instantiation
     """
-    def __init__(self, template, command_queue, channels, channel_range,
+    def __init__(
+            self, template, command_queue, channels, channel_range,
             cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
@@ -687,15 +710,19 @@ class IngestOperation(accel.OperationSequence):
                         if ptemplate is None or t.max_columns < ptemplate.max_columns:
                             ptemplate = t
                 if ptemplate is None:
-                    raise ValueError('Baseline range {0} is too large for any template'.format(prange))
+                    raise ValueError(
+                        'Baseline range {0} is too large for any template'.format(prange))
                 self.percentiles.append(
                     ptemplate.instantiate(command_queue, (kept_channels, baselines), prange))
                 self.percentiles_flags.append(
-                    template.percentiles_flags.instantiate(command_queue, (kept_channels, baselines), prange))
+                    template.percentiles_flags.instantiate(
+                        command_queue, (kept_channels, baselines), prange))
             else:
-                self.percentiles.append(template.nan_percentiles.instantiate(command_queue, (5, kept_channels)))
+                self.percentiles.append(
+                    template.nan_percentiles.instantiate(command_queue, (5, kept_channels)))
                 self.percentiles[-1].set_value(np.nan)
-                self.percentiles_flags.append(template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,)))
+                self.percentiles_flags.append(
+                    template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,)))
                 self.percentiles_flags[-1].set_value(0)
 
         # The order of these does not matter, since the actual sequencing is
@@ -733,12 +760,14 @@ class IngestOperation(accel.OperationSequence):
                 'cont_vis':     ['postproc:cont_vis'],
                 'cont_weights': ['postproc:cont_weights'],
                 'cont_flags':   ['postproc:cont_flags'],
-                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'sd_postproc:vis', 'timeseries:src'],
-                'sd_spec_weights': ['accum:weights_out1', 'zero_sd_spec:weights', 'sd_postproc:weights'],
-                'sd_spec_flags':['accum:flags_out1', 'zero_sd_spec:flags', 'sd_postproc:flags'],
+                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis',
+                                 'sd_postproc:vis', 'timeseries:src'],
+                'sd_spec_weights': ['accum:weights_out1', 'zero_sd_spec:weights',
+                                    'sd_postproc:weights'],
+                'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags', 'sd_postproc:flags'],
                 'sd_cont_vis':  ['sd_postproc:cont_vis'],
                 'sd_cont_weights': ['sd_postproc:cont_weights'],
-                'sd_cont_flags':['sd_postproc:cont_flags'],
+                'sd_cont_flags': ['sd_postproc:cont_flags'],
                 'timeseries_weights': ['timeseries:mask'],
                 'timeseries':   ['timeseries:dest']
         }
@@ -804,7 +833,8 @@ class IngestOperation(accel.OperationSequence):
         a dictionary of parameters describing the operation."""
         def generate(operation, name):
             parameters = dict(operation.parameters())
-            parameters['class'] = operation.__class__.__module__ + '.' + operation.__class__.__name__
+            parameters['class'] = (operation.__class__.__module__ + '.' +
+                                   operation.__class__.__name__)
             yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
                 for child_name, child_op in operation.operations.iteritems():

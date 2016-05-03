@@ -4,11 +4,12 @@
 import mock
 import numpy as np
 from katsdpingest import sigproc
-from katsdpsigproc import accel, tune
+from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
 from nose.tools import *
+
 
 def reduce_flags(flags, axis):
     """Reduction by logical AND along an axis. This is necessary because
@@ -19,11 +20,13 @@ def reduce_flags(flags, axis):
     return np.bitwise_not(
             np.bitwise_or.reduce(np.bitwise_not(flags), axis))
 
+
 def reduceat_flags(flags, indices, axis):
     """Segmented reduction by logical AND along an axis. See
     :func:`reduce_flags` for an explanation of why this is needed."""
     return np.bitwise_not(
             np.bitwise_or.reduceat(np.bitwise_not(flags), indices, axis))
+
 
 class TestPrepare(object):
     """Test :class:`katsdpingest.sigproc.Prepare`"""
@@ -74,6 +77,7 @@ class TestPrepare(object):
     def test_autotune(self, context, queue):
         sigproc.PrepareTemplate(context)
 
+
 class TestAccum(object):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
@@ -119,23 +123,29 @@ class TestAccum(object):
         outputs = 2
         rs = np.random.RandomState(1)
 
-        vis_in = (rs.standard_normal((baselines, channels)) + rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
+        vis_in = (rs.standard_normal((baselines, channels)) +
+                  rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
         flags_in = rs.choice(4, (baselines, channels), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
         vis_out = []
         weights_out = []
         flags_out = []
         for i in range(outputs):
-            vis_out.append((rs.standard_normal((kept_channels, baselines)) + rs.standard_normal((kept_channels, baselines)) * 1j).astype(np.complex64))
+            vis_out.append((rs.standard_normal((kept_channels, baselines)) +
+                            rs.standard_normal((kept_channels, baselines)) * 1j)
+                           .astype(np.complex64))
             weights_out.append(rs.uniform(size=(kept_channels, baselines)).astype(np.float32))
-            flags_out.append(rs.choice(4, (kept_channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8))
+            flags_out.append(rs.choice(4, (kept_channels, baselines),
+                             p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8))
 
         template = sigproc.AccumTemplate(context, outputs)
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
-        for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in), ('flags_in', flags_in)]:
+        for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in),
+                              ('flags_in', flags_in)]:
             fn.buffer(name).set(queue, value)
-        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
+        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
+                              ('flags_out', flags_out)]:
             for i in range(outputs):
                 fn.buffer(name + str(i)).set(queue, value[i])
         fn()
@@ -150,7 +160,8 @@ class TestAccum(object):
             flags_out[i] = np.bitwise_and(flags_out[i], kept_flags.T)
 
         # Verify results
-        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out), ('flags_out', flags_out)]:
+        for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
+                              ('flags_out', flags_out)]:
             for i in range(outputs):
                 actual = fn.buffer(name + str(i)).get(queue)
                 np.testing.assert_allclose(value[i], actual, 1e-5)
@@ -159,6 +170,7 @@ class TestAccum(object):
     @force_autotune
     def test_autotune(self, context, queue):
         sigproc.AccumTemplate(context, 2)
+
 
 class TestPostproc(object):
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
@@ -175,9 +187,9 @@ class TestPostproc(object):
         channels = 1024
         baselines = 512
         cont_factor = 16
-        cont_channels = channels // cont_factor
         rs = np.random.RandomState(1)
-        vis_in = (rs.standard_normal((channels, baselines)) + rs.standard_normal((channels, baselines)) * 1j).astype(np.complex64)
+        vis_in = (rs.standard_normal((channels, baselines)) +
+                  rs.standard_normal((channels, baselines)) * 1j).astype(np.complex64)
         weights_in = rs.uniform(0.5, 2.0, (channels, baselines)).astype(np.float32)
         flags_in = rs.choice(4, (channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
         # Ensure that we test the case of none flagged and all flagged when
@@ -195,7 +207,8 @@ class TestPostproc(object):
 
         # Compute expected spectral values
         expected_vis = vis_in / weights_in
-        expected_weights = weights_in * (flags_in == 0) # Flagged visibilities have their weights set to zero
+        # Flagged visibilities have their weights set to zero
+        expected_weights = weights_in * (flags_in == 0)
 
         # Compute expected continuum values.
         indices = range(0, channels, cont_factor)
@@ -215,6 +228,7 @@ class TestPostproc(object):
     @force_autotune
     def test_autotune(self, context, queue):
         sigproc.PostprocTemplate(context)
+
 
 class TestIngestOperation(object):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
@@ -238,7 +252,8 @@ class TestIngestOperation(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12])
-        fn = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
+        fn = template.instantiate(
+                command_queue, channels, channel_range, cbf_baselines, baselines,
                 8, 16, [(0, 8), (10, 22)],
                 threshold_args={'n_sigma': 11.0})
 
@@ -355,7 +370,8 @@ class TestIngestOperation(object):
             'cont_flags': cont_flags
         }
 
-    def run_host(self, vis, n_vis, n_sd_vis, scale, permutation,
+    def run_host(
+            self, vis, n_vis, n_sd_vis, scale, permutation,
             cont_factor, sd_cont_factor, channel_range,
             n_sigma, timeseries_weights, percentile_ranges):
         """Simple CPU implementation. All inputs and outputs are channel-major.
@@ -398,24 +414,28 @@ class TestIngestOperation(object):
             - timeseries
             - percentileN (where N is a non-negative integer)
         """
-        expected = self.run_host_basic(vis[:n_vis], scale, permutation, cont_factor, channel_range, n_sigma)
-        sd_expected = self.run_host_basic(vis[:n_sd_vis], scale, permutation, sd_cont_factor, channel_range, n_sigma)
+        expected = self.run_host_basic(
+            vis[:n_vis], scale, permutation, cont_factor, channel_range, n_sigma)
+        sd_expected = self.run_host_basic(
+            vis[:n_sd_vis], scale, permutation, sd_cont_factor, channel_range, n_sigma)
         for (name, value) in sd_expected.iteritems():
             expected['sd_' + name] = value
 
         # Time series
-        expected['timeseries'] = np.sum(expected['sd_spec_vis'] * timeseries_weights[..., np.newaxis], axis=0)
+        expected['timeseries'] = \
+            np.sum(expected['sd_spec_vis'] * timeseries_weights[..., np.newaxis], axis=0)
 
         # Percentiles
-        percentiles = []
         for i, (start, end) in enumerate(percentile_ranges):
             if start != end:
                 percentile = np.percentile(
-                        np.abs(expected['sd_spec_vis'][..., start:end]), [0, 100, 25, 75, 50], axis=1, interpolation='lower')
+                    np.abs(expected['sd_spec_vis'][..., start:end]),
+                    [0, 100, 25, 75, 50], axis=1, interpolation='lower')
                 flags = np.bitwise_or.reduce(
-                        expected['sd_spec_flags'][..., start:end], axis=1)
+                    expected['sd_spec_flags'][..., start:end], axis=1)
             else:
-                percentile = np.tile(np.nan, (5, expected['sd_spec_vis'].shape[0])).astype(np.float32)
+                percentile = \
+                    np.tile(np.nan, (5, expected['sd_spec_vis'].shape[0])).astype(np.float32)
                 flags = np.zeros(expected['sd_spec_flags'].shape[0], np.uint8)
             expected['percentile{0}'.format(i)] = percentile
             expected['percentile{0}_flags'.format(i)] = flags
@@ -441,7 +461,8 @@ class TestIngestOperation(object):
         n_sigma = -1.0
 
         rs = np.random.RandomState(seed=1)
-        vis_in = rs.random_integers(-1000, 1000, (dumps, channels, cbf_baselines, 2)).astype(np.int32)
+        vis_in = \
+            rs.random_integers(-1000, 1000, (dumps, channels, cbf_baselines, 2)).astype(np.int32)
         permutation = rs.permutation(cbf_baselines).astype(np.int16)
         permutation[permutation >= baselines] = -1
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
@@ -456,7 +477,8 @@ class TestIngestOperation(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12])
-        fn = template.instantiate(queue, channels, channel_range, cbf_baselines, baselines,
+        fn = template.instantiate(
+                queue, channels, channel_range, cbf_baselines, baselines,
                 cont_factor, sd_cont_factor, percentile_ranges,
                 threshold_args={'n_sigma': n_sigma})
         fn.ensure_all_bound()
@@ -464,10 +486,11 @@ class TestIngestOperation(object):
         fn.buffer('permutation').set(queue, permutation)
         fn.buffer('timeseries_weights').set(queue, timeseries_weights)
 
-        data_keys = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
+        data_keys = ['spec_vis', 'spec_weights', 'spec_flags',
+                     'cont_vis', 'cont_weights', 'cont_flags']
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
-                'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
-                'timeseries']
+                   'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
+                   'timeseries']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))
@@ -487,7 +510,8 @@ class TestIngestOperation(object):
                 for name in sd_keys:
                     actual[name] = fn.buffer(name).get(queue)
 
-        expected = self.run_host(vis_in, dumps, sd_dumps, scale, permutation,
+        expected = self.run_host(
+                vis_in, dumps, sd_dumps, scale, permutation,
                 cont_factor, sd_cont_factor, channel_range, n_sigma,
                 timeseries_weights, percentile_ranges)
 

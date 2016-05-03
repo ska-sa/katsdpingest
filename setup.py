@@ -12,18 +12,22 @@ setup(
     include_package_data=True,
     scripts=[
         "scripts/ingest.py",
+        "scripts/bf_ingest.py",
         "scripts/ingest_autotune.py",
         "scripts/cam2telstate.py"
     ],
     setup_requires=['katversion'],
     install_requires=[
+        'h5py',
         'manhole',
         'numpy',
-        'spead2>=0.3.0',
+        'spead2>=0.8.0',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
-        'katsdptelstate'
+        'katsdptelstate',
+        'psutil',
+        'trollius'
     ],
     extras_require = {
         'cam2telstate': ['katportalclient', 'tornado>=4.0', 'six'],
