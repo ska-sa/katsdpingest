@@ -196,9 +196,6 @@ class Client(object):
         else:
             self.process_update(msg)
 
-    def close_handler(self, sig, frame):
-        self._loop.add_callback_from_signal(self.close)
-
     @tornado.gen.coroutine
     def close(self):
         yield self._portal_client.unsubscribe(self._args.namespace)
