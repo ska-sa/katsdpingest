@@ -8,10 +8,11 @@
 # Details on these are provided in the class documentation
 
 import numpy as np
-import threading
 import spead2
 import spead2.send
 import spead2.recv
+import spead2.send.trollius
+import spead2.recv.trollius
 import time
 import katsdpingest.sigproc as sp
 import katsdpsigproc.rfi.device as rfi
@@ -20,6 +21,8 @@ import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
 import socket
+import trollius
+from trollius import From
 
 
 timestamps_dataset = '/Data/timestamps'
@@ -75,6 +78,7 @@ class _TimeAverage(object):
         self._start_ts = None
         self._ts = []
 
+    @trollius.coroutine
     def add_timestamp(self, timestamp):
         """Record that a dump with a given timestamp has arrived and is about to
         be processed. This may call :func:`flush`."""
@@ -84,7 +88,7 @@ class _TimeAverage(object):
             self._start_ts = timestamp
 
         if timestamp >= self._start_ts + self.interval:
-            self.flush(self._ts)
+            yield From(self.flush(self._ts))
             skip_groups = (timestamp - self._start_ts) // self.interval
             self._ts = []
             self._start_ts += skip_groups * self.interval
@@ -93,10 +97,11 @@ class _TimeAverage(object):
     def flush(self, timestamps):
         raise NotImplementedError
 
+    @trollius.coroutine
     def finish(self):
         """Flush if not empty, and reset to initial state"""
         if self._ts:
-            self.flush(self._ts)
+            yield From(self.flush(self._ts))
         self._start_ts = None
         self._ts = []
 
@@ -154,7 +159,7 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
-class CBFIngest(threading.Thread):
+class CBFIngest(object):
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
@@ -216,11 +221,7 @@ class CBFIngest(threading.Thread):
                  my_sensors, telstate, cbf_name, logger):
         self._sdisp_ips = {}
         self._center_freq = None
-
-        # Lock used to synchronise access between the katcp device server
-        # thread and this thread. It protects all attributes declared above
-        # this point.
-        self._lock = threading.Lock()
+        self._run_future = None
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
@@ -260,17 +261,16 @@ class CBFIngest(threading.Thread):
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}".format(
             [str(x) for x in self.cbf_spead_endpoints]))
-        thread_pool = spead2.ThreadPool(4)
-        self.rx = spead2.recv.Stream(thread_pool)
+        self.rx = spead2.recv.trollius.Stream(spead2.ThreadPool())
         for endpoint in self.cbf_spead_endpoints:
             self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
-        self.tx_spectral = spead2.send.UdpStream(
-            thread_pool,
+        self.tx_spectral = spead2.send.trollius.UdpStream(
+            spead2.ThreadPool(),
             self.spectral_spead_endpoint.host,
             self.spectral_spead_endpoint.port,
             spead2.send.StreamConfig(max_packet_size=9172, rate=self.spectral_spead_rate / 8))
-        self.tx_continuum = spead2.send.UdpStream(
-            thread_pool,
+        self.tx_continuum = spead2.send.trollius.UdpStream(
+            spead2.ThreadPool(),
             self.continuum_spead_endpoint.host,
             self.continuum_spead_endpoint.port,
             spead2.send.StreamConfig(max_packet_size=9172, rate=self.continuum_spead_rate / 8))
@@ -278,25 +278,19 @@ class CBFIngest(threading.Thread):
         self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
         self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
 
-        threading.Thread.__init__(self)
-
     def enable_debug(self, debug):
         if debug:
             self.logger.setLevel(logging.DEBUG)
         else:
             self.logger.setLevel(logging.INFO)
 
+    @trollius.coroutine
     def _send_sd_data(self, data):
-        """Send a heap to all signal display servers.
-
-        This method is thread-safe.
-        """
-        # The actual sending is blocking, so first make a copy so that we can
-        # drop the lock quickly.
-        with self._lock:
-            sdisp_ips = self._sdisp_ips.values()
+        """Send a heap to all signal display servers."""
+        # The list may change the moment we yield, so first make a copy.
+        sdisp_ips = self._sdisp_ips.values()
         for tx in sdisp_ips:
-            tx.send_heap(data)
+            yield From(tx.async_send_heap(data))
 
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None):
@@ -343,6 +337,7 @@ class CBFIngest(threading.Thread):
             permutation[reordered[i][0]] = i
         return permutation, np.array([x[1] for x in reordered])
 
+    @trollius.coroutine
     def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
@@ -351,11 +346,10 @@ class CBFIngest(threading.Thread):
         KeyError
             if `ip` is not currently in the list
         """
-        with self._lock:
-            self.logger.info("Removing ip %s from the signal display list." % (ip))
-            stream = self._sdisp_ips[ip]
-            del self._sdisp_ips[ip]
-        stream.send_heap(self.ig_sd.get_end())
+        self.logger.info("Removing ip %s from the signal display list." % (ip))
+        stream = self._sdisp_ips[ip]
+        del self._sdisp_ips[ip]
+        yield From(stream.async_send_heap(self.ig_sd.get_end()))
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -372,21 +366,17 @@ class CBFIngest(threading.Thread):
         KeyError
             if `ip` is already in the list (even if on a different port)
         """
-        with self._lock:
-            if ip in self._sdisp_ips:
-                raise ValueError('{0} is already in the active list of recipients'.format(ip))
-            config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
-            self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
-            self._sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
+        if ip in self._sdisp_ips:
+            raise ValueError('{0} is already in the active list of recipients'.format(ip))
+        config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
+        self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
+        self._sdisp_ips[ip] = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
 
     def set_center_freq(self, center_freq):
-        """Change the center frequency reported to signal displays.
+        """Change the center frequency reported to signal displays."""
+        self._center_freq = center_freq
 
-        This function is thread-safe.
-        """
-        with self._lock:
-            self._center_freq = center_freq
-
+    @trollius.coroutine
     def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
         # Create items on first use. This is simpler than figuring out the
         # correct shapes ahead of time.
@@ -400,7 +390,7 @@ class CBFIngest(threading.Thread):
         ig['correlator_data'].value = vis
         ig['flags'].value = flags
         ig['timestamp'].value = ts_rel
-        tx.send_heap(ig.get_heap())
+        yield From(tx.async_send_heap(ig.get_heap()))
 
     def _initialise_ig_sd(self):
         """Create a item group for signal displays."""
@@ -464,6 +454,7 @@ class CBFIngest(threading.Thread):
             description="The total number of frequency channels present in any integration.",
             shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
 
+    @trollius.coroutine
     def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
@@ -530,8 +521,9 @@ class CBFIngest(threading.Thread):
 
         # initialise the signal display metadata
         self._initialise_ig_sd()
-        self._send_sd_data(self.ig_sd.get_start())
+        yield From(self._send_sd_data(self.ig_sd.get_start()))
 
+    @trollius.coroutine
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         self.proc.end_sum()
@@ -543,20 +535,18 @@ class CBFIngest(threading.Thread):
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         # Shift to the centre of the dump
         ts_rel += 0.5 * self.cbf_attr['int_time']
-        self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
-        self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
+        yield From(self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel))
+        yield From(self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel))
 
         self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
         self.proc.start_sum()
 
+    @trollius.coroutine
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
-
-        with self._lock:
-            center_freq = self._center_freq
 
         # For now, both telstate and katcp can be used to set the mask and
         # custom signals, but telstate takes precedence.
@@ -620,10 +610,10 @@ class CBFIngest(threading.Thread):
         self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
         self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
         self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-        if center_freq is not None:
-            self.ig_sd['center_freq'].value = center_freq
+        if self._center_freq is not None:
+            self.ig_sd['center_freq'].value = self._center_freq
 
-        self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
+        yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
         self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
@@ -664,6 +654,18 @@ class CBFIngest(threading.Thread):
                     self.logger.warning('Item %s is already set to %s, not setting to %s',
                                         item_name, self.cbf_attr[item_name], item.value)
 
+    def start(self):
+        assert self._run_future is None
+        self._run_future = trollius.async(self.run())
+
+    @trollius.coroutine
+    def stop(self):
+        if self._run_future:
+            self.rx.stop()
+            yield From(self._run_future)
+            self._run_future = None
+
+    @trollius.coroutine
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
 
@@ -675,7 +677,7 @@ class CBFIngest(threading.Thread):
             # are deleted) with the context being current.
             with self.proc_template.context:
                 try:
-                    self._run()
+                    yield From(self._run())
                 finally:
                     # These have references to self, causing circular references
                     self._output_avg = None
@@ -683,9 +685,10 @@ class CBFIngest(threading.Thread):
                     # Drop last references to all the objects
                     self.proc = None
         except Exception:
-            self.logger.error('CBFIngest thread threw an uncaught exception', exc_info=True)
+            self.logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
+    @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
         ig_cbf = spead2.ItemGroup()
@@ -697,7 +700,12 @@ class CBFIngest(threading.Thread):
         self._output_avg = None
         self._sd_avg = None
 
-        for heap in self.rx:
+        while True:
+            try:
+                heap = yield From(self.rx.get())
+            except spead2.Stopped:
+                break
+
             st = time.time()
             if idx == 0:
                 self.status_sensor.set_value("capturing")
@@ -742,10 +750,10 @@ class CBFIngest(threading.Thread):
 
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                self._initialise(ig_cbf)
+                yield From(self._initialise(ig_cbf))
 
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
+            yield From(self._output_avg.add_timestamp(data_ts))
+            yield From(self._sd_avg.add_timestamp(data_ts))
 
             # Generate timestamps
             current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
@@ -767,14 +775,14 @@ class CBFIngest(threading.Thread):
         # Stop received.
 
         if self._output_avg is not None:  # Could be None if no heaps arrived
-            self._output_avg.finish()
-            self._sd_avg.finish()
+            yield From(self._output_avg.finish())
+            yield From(self._sd_avg.finish())
         self.logger.info("CBF ingest complete at %f" % time.time())
-        self.tx_spectral.send_heap(self.ig_spectral.get_end())
+        yield From(self.tx_spectral.async_send_heap(self.ig_spectral.get_end()))
         self.tx_spectral = None
-        self.tx_continuum.send_heap(self.ig_continuum.get_end())
+        yield From(self.tx_continuum.async_send_heap(self.ig_continuum.get_end()))
         self.tx_continuum = None
-        self._send_sd_data(self.ig_sd.get_end())
+        yield From(self._send_sd_data(self.ig_sd.get_end()))
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived

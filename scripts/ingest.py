@@ -11,7 +11,8 @@ import signal
 import os
 import trollius
 from trollius import From
-from tornado.platform.asyncio import AsyncIOMainLoop, to_asyncio_future
+import tornado.gen
+from tornado.platform.asyncio import AsyncIOMainLoop, to_asyncio_future, to_tornado_future
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
@@ -64,15 +65,15 @@ def parse_opts():
 
 class IngestDeviceServer(DeviceServer):
     """Serves the ingest katcp interface.
-    Top level holder of the ingest threads and the owner of any output files."""
+    Top level holder of the ingest session and the owner of any output files."""
 
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
     def __init__(self, logger, sdisp_endpoints, antennas, channels, *args, **kwargs):
         self.logger = logger
-        self.cbf_thread = None
-         # reference to the CBF ingest thread
+        self.cbf_session = None
+         # reference to the CBF ingest session
         self.sdisp_ips = {}
         for endpoint in sdisp_endpoints:
             self.sdisp_ips[endpoint.host] = endpoint.port
@@ -82,9 +83,9 @@ class IngestDeviceServer(DeviceServer):
         self.proc_template = CBFIngest.create_proc_template(context, antennas, channels)
 
         self._my_sensors = {}
-        self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
+        self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture session.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
-        self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
+        self._my_sensors["status"] = Sensor.string("status", "The current status of the capture session.","")
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
         self._my_sensors["device-status"] = Sensor.discrete("device-status", "Health status", "", ["ok", "degraded", "fail"])
 
@@ -114,7 +115,7 @@ class IngestDeviceServer(DeviceServer):
         return ("ok", "Debug logging disabled.")
 
     def _enable_debug(self, debug):
-        if self.cbf_thread is not None: self.cbf_thread.enable_debug(debug)
+        if self.cbf_session is not None: self.cbf_session.enable_debug(debug)
 
     @request(Str(),Str())
     @return_reply(Str())
@@ -132,17 +133,17 @@ class IngestDeviceServer(DeviceServer):
 
     @return_reply(Str())
     def request_capture_init(self, req, msg):
-        """Spawns ingest threads to capture suitable data and meta-data to produce
+        """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
-        if self.cbf_thread is not None:
+        if self.cbf_session is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
 
-        self.cbf_thread = CBFIngest(opts, self.proc_template,
+        self.cbf_session = CBFIngest(opts, self.proc_template,
                 self._my_sensors, opts.telstate, 'cbf', cbf_logger)
         # add in existing signal display recipients...
         for (ip,port) in self.sdisp_ips.iteritems():
-            self.cbf_thread.add_sdisp_ip(ip,port)
-        self.cbf_thread.start()
+            self.cbf_session.add_sdisp_ip(ip,port)
+        self.cbf_session.start()
 
         self._my_sensors["capture-active"].set_value(1)
         smsg = "Capture initialised at %s" % time.ctime()
@@ -159,9 +160,9 @@ class IngestDeviceServer(DeviceServer):
         center_freq_hz : int
             The current system center frequency in hz
         """
-        if self.cbf_thread is None:
-            return ("fail","No active capture thread. Please start one using capture_init")
-        self.cbf_thread.set_center_freq(center_freq_hz)
+        if self.cbf_session is None:
+            return ("fail","No active capture session. Please start one using capture_init")
+        self.cbf_session.set_center_freq(center_freq_hz)
         logger.info("Center frequency set to %f Hz", center_freq_hz)
         return ("ok", "set")
 
@@ -173,14 +174,15 @@ class IngestDeviceServer(DeviceServer):
             del self.sdisp_ips[ip]
         except KeyError:
             return ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip))
-        if self.cbf_thread is not None:
+        if self.cbf_session is not None:
             # drop_sdisp_ip can in theory raise KeyError, but the check against
             # our own list prevents that.
-            self.cbf_thread.drop_sdisp_ip(ip)
+            self.cbf_session.drop_sdisp_ip(ip)
         return ("ok","The IP address has been dropped as a signal display recipient")
 
     @request(Str())
     @return_reply(Str())
+    @tornado.gen.coroutine
     def request_add_sdisp_ip(self, req, ip):
         """Add the supplied ip and port (ip[:port]) to the list of signal display data recipients.If not port is supplied default of 7149 is used."""
         ipp = ip.split(":")
@@ -190,13 +192,13 @@ class IngestDeviceServer(DeviceServer):
         else:
             port = 7149
         if self.sdisp_ips.has_key(ip):
-            return ("ok", "The supplied IP is already in the active list of recipients.")
+            raise tornado.gen.Return(("ok", "The supplied IP is already in the active list of recipients."))
         self.sdisp_ips[ip] = port
-        if self.cbf_thread is not None:
+        if self.cbf_session is not None:
             # add_sdisp_ip can in theory raise KeyError, but the check against
             # our own list prevents that.
-            self.cbf_thread.add_sdisp_ip(ip, port)
-        return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
+            yield to_tornado_future(trollius.async(self.cbf_session.add_sdisp_ip(ip, port)))
+        raise tornado.gen.Return(("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port)))
 
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
@@ -205,30 +207,20 @@ class IngestDeviceServer(DeviceServer):
         self.request_capture_done("","")
 
     @return_reply(Str())
+    @tornado.gen.coroutine
     def request_capture_done(self, req, msg):
         """Closes the current capture file and renames it for use by augment."""
-        if self.cbf_thread is None:
-            return ("fail", "No existing capture session.")
+        if self.cbf_session is None:
+            raise tornado.gen.Return(("fail", "No existing capture session."))
 
-         # if the observation framework is behaving correctly
-         # then these threads will be dead before capture_done
-         # is called. If not, then we take more drastic action.
-        if self.cbf_thread.is_alive():
-            # This doesn't take the lock on cbf_thread, but it's safe because
-            # the stop method is itself thread-safe.
-            self.cbf_thread.rx.stop()
-            time.sleep(1)
-
-        self.cbf_thread.join()
-         # we really dont want these lurking around
-        self.cbf_thread = None
-         # we are done with the capture thread
+        yield to_tornado_future(trollius.async(self.cbf_session.stop()))
+        self.cbf_session = None
 
         self._my_sensors["capture-active"].set_value(0)
-        # Error states were associated with the threads, which are now dead.
+        # Error states were associated with the session, which is now dead.
         self._my_sensors["device-status"].set_value("ok")
         logger.info("capture complete")
-        return ("ok", "capture complete")
+        raise tornado.gen.Return(("ok", "capture complete"))
 
 
 def on_shutdown(server):
