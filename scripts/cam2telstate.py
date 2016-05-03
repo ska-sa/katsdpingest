@@ -17,10 +17,10 @@ class Sensor(object):
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
     """
-    def __init__(self, cam_name, sp_name=None, sampling_strategy='event', immutable=False):
+    def __init__(self, cam_name, sp_name=None, sampling_strategy_and_params='event', immutable=False):
         self.cam_name = cam_name
         self.sp_name = sp_name or cam_name
-        self.sampling_strategy = sampling_strategy
+        self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
 
     def prefix(self, cam_prefix, sp_prefix=None):
@@ -33,7 +33,7 @@ class Sensor(object):
             sp_prefix = cam_prefix
         return Sensor(cam_prefix + '_' + self.cam_name,
                       sp_prefix + '_' + self.sp_name,
-                      self.sampling_strategy,
+                      self.sampling_strategy_and_params,
                       self.immutable)
 
 
@@ -41,10 +41,10 @@ class Sensor(object):
 RECEPTOR_SENSORS = [
     Sensor('activity'),
     Sensor('target'),
-    Sensor('pos_request_scan_azim', sampling_strategy='period 0.4'),
-    Sensor('pos_request_scan_elev', sampling_strategy='period 0.4'),
-    Sensor('pos_actual_scan_azim', sampling_strategy='period 0.4'),
-    Sensor('pos_actual_scan_elev', sampling_strategy='period 0.4'),
+    Sensor('pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('dig_noise_diode'),
     Sensor('ap_indexer_position'),
     Sensor('rsc_rxl_serial_number'),
@@ -139,27 +139,33 @@ class Client(object):
 
     @tornado.gen.coroutine
     def start(self):
-        self._portal_client = katportalclient.KATPortalClient(
-            self._args.url, self.update_callback, logger=self._logger)
-        yield self._portal_client.connect()
-        status = yield self._portal_client.subscribe(
-            self._args.namespace, self._sensors.keys())
-        self._logger.info("Subscribed to %d channels", status)
-        for sensor in six.itervalues(self._sensors):
-            status = yield self._portal_client.set_sampling_strategy(
-                self._args.namespace, sensor.cam_name, sensor.sampling_strategy)
-            result = status[sensor.cam_name]
-            if result[u'success']:
-                self._logger.info("Set sampling strategy on %s to %s",
-                    sensor.cam_name, sensor.sampling_strategy)
-            else:
-                self._logger.warn("Failed to set sampling strategy on %s: %s",
-                    sensor.cam_name, result[u'info'])
-        for signal_number in [signal.SIGINT, signal.SIGTERM]:
-            signal.signal(
-                signal_number,
-                lambda sig, frame: self._loop.add_callback_from_signal(self.close))
-            self._logger.debug('Set signal handler for %s', signal_number)
+        try:
+            self._portal_client = katportalclient.KATPortalClient(
+                self._args.url, self.update_callback, logger=self._logger)
+            yield self._portal_client.connect()
+            status = yield self._portal_client.subscribe(
+                self._args.namespace, self._sensors.keys())
+            self._logger.info("Subscribed to %d channels", status)
+            for sensor in six.itervalues(self._sensors):
+                status = yield self._portal_client.set_sampling_strategy(
+                    self._args.namespace, sensor.cam_name, sensor.sampling_strategy_and_params)
+                result = status[sensor.cam_name]
+                if result[u'success']:
+                    self._logger.info("Set sampling strategy on %s to %s",
+                        sensor.cam_name, sensor.sampling_strategy_and_params)
+                else:
+                    raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
+                        sensor.cam_name, result[u'info']))
+            for signal_number in [signal.SIGINT, signal.SIGTERM]:
+                signal.signal(
+                    signal_number,
+                    lambda sig, frame: self._loop.add_callback_from_signal(self.close))
+                self._logger.debug('Set signal handler for %s', signal_number)
+        except Exception:
+            self._logger.error("Exception during startup", exc_info=True)
+            self._loop.stop()
+        else:
+            self._logger.info("Startup complete")
 
     def process_update(self, item):
         self._logger.debug("Received update %s", pprint.pformat(item))
@@ -173,7 +179,7 @@ class Client(object):
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
         if status == 'unknown':
-            self._logger.debug("Sensor {} received update '{}' with status 'unknown' (ignored)"
+            self._logger.warn("Sensor {} received update '{}' with status 'unknown' (ignored)"
                     .format(name, value))
         elif name in self._sensors:
             sensor = self._sensors[name]
