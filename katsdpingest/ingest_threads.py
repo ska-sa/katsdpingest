@@ -3,7 +3,7 @@
 # Threads for ingesting data and meta-data in order to produce a complete HDF5 file for further
 # processing.
 #
-# Currently has a CBFIngest and CAMIngest class
+# Currently has a CBFIngest class
 #
 # Details on these are provided in the class documentation
 
@@ -33,87 +33,6 @@ CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
 CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
     'bandwidth', 'sync_time', 'int_time', 'scale_factor_timestamp'])
-
-
-class CAMIngest(threading.Thread):
-    """The CAM Ingest class receives meta-data updates in the form
-    of sensor information from the CAM via SPEAD. It uses these to
-    update the telescope state."""
-    def __init__(self, spead_endpoints, my_sensors, telstate, logger):
-        self.logger = logger
-        self.spead_endpoints = spead_endpoints
-        self.telstate = telstate
-        self._my_sensors = my_sensors
-        self.ig = None
-        threading.Thread.__init__(self)
-
-    def enable_debug(self, debug):
-        """Enable/disable debugging in the internal logger.
-
-        This function is thread-safe (because the logging module is).
-        """
-        self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
-
-    def _update_telstate(self, updated):
-        for item_name, item in updated.iteritems():
-            self.logger.debug("Sensor update: {} == {}".format(item_name, item.value))
-            try:
-                (value_time, status, sensor_value) = item.value.split(" ", 2)
-                value_time = float(value_time)
-                sensor_value = np.safe_eval(sensor_value)
-            except ValueError:
-                # our update is not a classical sensor triplet of time / status / value
-                # fake up a realistic looking sensor
-                sensor_value = item.value
-                value_time = time.time()
-                status = "nominal"
-                if sensor_value == '':
-                    # TODO: once fixed in numpy remove this check
-                    self.logger.error("Not inserting empty string into sensor {} due to existing numpy/pickle bug"
-                                      .format(item_name))
-                    continue
-            if status == 'unknown':
-                self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
-                                  .format(item_name, item.value))
-            elif self.telstate is not None:
-                # XXX Nasty hack to get SDP onto cbf name for AR1 integration
-                item_name = item_name.replace('data_1_', 'cbf_')
-                self.telstate.add(item_name, sensor_value, value_time)
-
-    def run(self):
-        """Thin wrapper around :meth:`_run` which handles exceptions."""
-        try:
-            self._run()
-        except Exception:
-            self.logger.error('CAMIngest thread threw an exception', exc_info=True)
-            status_sensor = self._my_sensors['device-status']
-            if status_sensor.value() != 'fail':
-                # If we were already in fail state, then don't raise the level to
-                # warning.
-                self._my_sensors['device-status'].set_value('degraded', Sensor.WARN)
-
-    def _run(self):
-        self.ig = spead2.ItemGroup()
-        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("CAM SPEAD stream reception on {0}".format(
-            [str(x) for x in self.spead_endpoints]))
-        # Socket only used for multicast subscription
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for endpoint in self.spead_endpoints:
-            if endpoint.multicast_subscribe(sock):
-                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
-            elif endpoint.host != '':
-                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
-        rx_md = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        rx_md.add_udp_reader(self.spead_endpoints[0].port)
-        self.rx = rx_md
-
-        for heap in rx_md:
-            updated = self.ig.update(heap)
-            self._update_telstate(updated)
-
-        self.logger.info("CAM ingest thread complete at %f" % time.time())
 
 
 class _TimeAverage(object):

@@ -5,22 +5,29 @@
 import spead2
 import time
 import argparse
-import Queue
 import logging
 import manhole
 import signal
 import os
+import trollius
+from trollius import From
+from tornado.platform.asyncio import AsyncIOMainLoop, to_asyncio_future
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
 
+import katsdpingest
 import katsdpingest.sigproc as sp
-from katsdpingest.ingest_threads import CAMIngest, CBFIngest
+from katsdpingest.ingest_threads import CBFIngest
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
 import katsdptelstate
 
-# import katconf
+
+logger = logging.getLogger("katsdpingest.ingest")
+cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
+opts = None
+
 
 def comma_list(type_):
     """Return a function which splits a string on commas and converts each element to
@@ -30,11 +37,11 @@ def comma_list(type_):
         return [type_(x) for x in arg.split(',')]
     return convert
 
+
 def parse_opts():
     parser = katsdptelstate.ArgumentParser()
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148, single_port=True), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
-    parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--l0-spectral-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit spectral L0 output. [default=%(default)s]', metavar='RATE')
     parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINT')
@@ -60,16 +67,12 @@ class IngestDeviceServer(DeviceServer):
     Top level holder of the ingest threads and the owner of any output files."""
 
     VERSION_INFO = ("sdp-ingest", 0, 1)
-    BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
+    BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
     def __init__(self, logger, sdisp_endpoints, antennas, channels, *args, **kwargs):
         self.logger = logger
         self.cbf_thread = None
          # reference to the CBF ingest thread
-        self.cam_thread = None
-         # reference to the Telescope Manager thread
-        self.obs = None
-         # the observation component for holding observation attributes
         self.sdisp_ips = {}
         for endpoint in sdisp_endpoints:
             self.sdisp_ips[endpoint.host] = endpoint.port
@@ -112,7 +115,6 @@ class IngestDeviceServer(DeviceServer):
 
     def _enable_debug(self, debug):
         if self.cbf_thread is not None: self.cbf_thread.enable_debug(debug)
-        if self.cam_thread is not None: self.cam_thread.enable_debug(debug)
 
     @request(Str(),Str())
     @return_reply(Str())
@@ -129,21 +131,11 @@ class IngestDeviceServer(DeviceServer):
         return ("ok", "Log level set to {}".format(level))
 
     @return_reply(Str())
-    def request_capture_start(self, req, msg):
-        """Dummy capture start command - calls capture init."""
-        self.request_capture_init(req, msg)
-        smsg = "Capture initialised at %s" % time.ctime()
-        logger.info(smsg)
-        return ("ok", smsg)
-
-    @return_reply(Str())
     def request_capture_init(self, req, msg):
         """Spawns ingest threads to capture suitable data and meta-data to produce
         the L0 output stream."""
         if self.cbf_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
-             # this should be enough of an indicator as to session activity, but it 
-             # may be worth expanding the scope to checking the CAM thread as well
 
         self.cbf_thread = CBFIngest(opts, self.proc_template,
                 self._my_sensors, opts.telstate, 'cbf', cbf_logger)
@@ -151,9 +143,6 @@ class IngestDeviceServer(DeviceServer):
         for (ip,port) in self.sdisp_ips.iteritems():
             self.cbf_thread.add_sdisp_ip(ip,port)
         self.cbf_thread.start()
-
-        self.cam_thread = CAMIngest(opts.cam_spead, self._my_sensors, opts.telstate, cam_logger)
-        self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
         smsg = "Capture initialised at %s" % time.ctime()
@@ -196,8 +185,10 @@ class IngestDeviceServer(DeviceServer):
         """Add the supplied ip and port (ip[:port]) to the list of signal display data recipients.If not port is supplied default of 7149 is used."""
         ipp = ip.split(":")
         ip = ipp[0]
-        if len(ipp) > 1: port = int(ipp[1])
-        else: port = 7149
+        if len(ipp) > 1:
+            port = int(ipp[1])
+        else:
+            port = 7149
         if self.sdisp_ips.has_key(ip):
             return ("ok", "The supplied IP is already in the active list of recipients.")
         self.sdisp_ips[ip] = port
@@ -228,16 +219,10 @@ class IngestDeviceServer(DeviceServer):
             self.cbf_thread.rx.stop()
             time.sleep(1)
 
-        if self.cam_thread.is_alive():
-            self.cam_thread.rx.stop()
-            time.sleep(1)
-
         self.cbf_thread.join()
-        self.cam_thread.join()
          # we really dont want these lurking around
         self.cbf_thread = None
          # we are done with the capture thread
-        self.cam_thread = None
 
         self._my_sensors["capture-active"].set_value(0)
         # Error states were associated with the threads, which are now dead.
@@ -246,73 +231,60 @@ class IngestDeviceServer(DeviceServer):
         return ("ok", "capture complete")
 
 
-if __name__ == '__main__':
+def on_shutdown(server):
+    # Disable the signal handlers, to avoid being unable to kill if there
+    # is an exception in the shutdown path.
+    for sig in [signal.SIGINT, signal.SIGTERM]:
+        trollius.get_event_loop().remove_signal_handler(sig)
+        trollius.get_event_loop().remove_signal_handler(sig)
+    logger = logging.getLogger("katsdpingest.ingest")
+    logger.info("Shutting down katsdpingest server...")
+    server.handle_interrupt()
+    yield From(to_asyncio_future(server.stop()))
+    trollius.get_event_loop().stop()
+
+
+def main():
+    global opts
     opts = parse_opts()
 
-    # Setup configuration source
-    #katconf.set_config(katconf.environ(opts.sysconfig))
-    # set up Python logging
-    #katconf.configure_logging(opts.logging)
-
-    if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
+    if len(logging.root.handlers) > 0:
+        logging.root.removeHandler(logging.root.handlers[0])
     formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
 
-    logger = logging.getLogger("katsdpingest.ingest")
     logger.setLevel(logging.INFO)
 
     logging.getLogger('spead2').setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
 
-    cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
     cbf_logger.setLevel(logging.INFO)
     cbf_logger.info("CBF ingest logging started")
 
-    cam_logger = logging.getLogger("katsdpingest.cam_ingest")
-    cam_logger.setLevel(logging.INFO)
-    cam_logger.info("CAM ingest logging started")
-
-    restart_queue = Queue.Queue()
+    ioloop = AsyncIOMainLoop()
+    ioloop.install()
     antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
     server = IngestDeviceServer(logger, opts.sdisp_spead, antennas, opts.cbf_channels,
             opts.host, opts.port)
-    server.set_restart_queue(restart_queue)
-    server.start()
-    logger.info("Started katsdpingest server.")
-
+    server.set_concurrency_options(thread_safe=False, handler_thread=False)
+    server.set_ioloop(ioloop)
     manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
      # allow remote debug connections and expose server and opts
 
-    def graceful_exit(_signo=None, _stack_frame=None):
-        logger.info("Exiting ingest on SIGTERM")
-        os.kill(os.getpid(), signal.SIGINT)
-         # rely on the interrupt handler around the katcp device server
-         # to peform graceful shutdown. this preserves the command
-         # line Ctrl-C shutdown.
+    trollius.get_event_loop().add_signal_handler(
+        signal.SIGINT, lambda: trollius.async(on_shutdown(server)))
+    trollius.get_event_loop().add_signal_handler(
+        signal.SIGTERM, lambda: trollius.async(on_shutdown(server)))
+    ioloop.add_callback(server.start)
+    logger.info("Started katsdpingest server.")
+    trollius.get_event_loop().run_forever()
+    server.start()
+    logger.info("Shutdown complete")
 
-    signal.signal(signal.SIGTERM, graceful_exit)
-     # mostly needed for Docker use since this process runs as PID 1
-     # and does not get passed sigterm unless it has a custom listener
 
-    try:
-        while True:
-            try:
-                device = restart_queue.get(timeout=0.5)
-            except Queue.Empty:
-                device = None
-            if device is not None:
-                logger.info("Stopping")
-                device.stop()
-                device.join()
-                logger.info("Restarting")
-                device.start()
-                logger.info("Started")
-    except KeyboardInterrupt:
-        logger.info("Shutting down katsdpingest server...")
-        logger.info("Activity logging stopped")
-        server.handle_interrupt()
-        server.stop()
-        server.join()
+if __name__ == '__main__':
+    main()
+
