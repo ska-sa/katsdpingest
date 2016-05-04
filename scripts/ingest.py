@@ -200,11 +200,12 @@ class IngestDeviceServer(DeviceServer):
             yield to_tornado_future(trollius.async(self.cbf_session.add_sdisp_ip(ip, port)))
         raise tornado.gen.Return(("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port)))
 
+    @tornado.gen.coroutine
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
         interrupts. Basically calls capture done."""
         logger.warning("External interrupt called - attempting graceful shutdown.")
-        self.request_capture_done("","")
+        yield self.request_capture_done("","")
 
     @return_reply(Str())
     @tornado.gen.coroutine
@@ -231,7 +232,7 @@ def on_shutdown(server):
         trollius.get_event_loop().remove_signal_handler(sig)
     logger = logging.getLogger("katsdpingest.ingest")
     logger.info("Shutting down katsdpingest server...")
-    server.handle_interrupt()
+    yield From(to_asyncio_future(server.handle_interrupt()))
     yield From(to_asyncio_future(server.stop()))
     trollius.get_event_loop().stop()
 
