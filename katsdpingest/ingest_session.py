@@ -78,7 +78,6 @@ class _TimeAverage(object):
         self._start_ts = None
         self._ts = []
 
-    @trollius.coroutine
     def add_timestamp(self, timestamp):
         """Record that a dump with a given timestamp has arrived and is about to
         be processed. This may call :func:`flush`."""
@@ -88,7 +87,7 @@ class _TimeAverage(object):
             self._start_ts = timestamp
 
         if timestamp >= self._start_ts + self.interval:
-            yield From(self.flush(self._ts))
+            self.flush(self._ts)
             skip_groups = (timestamp - self._start_ts) // self.interval
             self._ts = []
             self._start_ts += skip_groups * self.interval
@@ -97,11 +96,10 @@ class _TimeAverage(object):
     def flush(self, timestamps):
         raise NotImplementedError
 
-    @trollius.coroutine
     def finish(self):
         """Flush if not empty, and reset to initial state"""
         if self._ts:
-            yield From(self.flush(self._ts))
+            self.flush(self._ts)
         self._start_ts = None
         self._ts = []
 
@@ -284,13 +282,10 @@ class CBFIngest(object):
         else:
             self.logger.setLevel(logging.INFO)
 
-    @trollius.coroutine
     def _send_sd_data(self, data):
-        """Send a heap to all signal display servers."""
-        # The list may change the moment we yield, so first make a copy.
-        sdisp_ips = self._sdisp_ips.values()
-        for tx in sdisp_ips:
-            yield From(tx.async_send_heap(data))
+        """Send a heap to all signal display servers, asynchronously."""
+        for tx in self._sdisp_ips.itervalues():
+            trollius.async(tx.async_send_heap(data))
 
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None):
@@ -338,6 +333,14 @@ class CBFIngest(object):
         return permutation, np.array([x[1] for x in reordered])
 
     @trollius.coroutine
+    def _stop_stream(self, stream, ig):
+        """Send a stop packet to a stream. To ensure that it won't be lost
+        on the sending side, the stream is first flushed, then the stop
+        heap is sent and waited for."""
+        yield From(stream.async_flush())
+        yield From(stream.async_send_heap(ig.get_end()))
+
+    @trollius.coroutine
     def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
@@ -349,7 +352,7 @@ class CBFIngest(object):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
-        yield From(stream.async_send_heap(self.ig_sd.get_end()))
+        yield From(self._stop_stream(stream, self.ig_sd))
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -376,7 +379,6 @@ class CBFIngest(object):
         """Change the center frequency reported to signal displays."""
         self._center_freq = center_freq
 
-    @trollius.coroutine
     def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
         # Create items on first use. This is simpler than figuring out the
         # correct shapes ahead of time.
@@ -390,7 +392,7 @@ class CBFIngest(object):
         ig['correlator_data'].value = vis
         ig['flags'].value = flags
         ig['timestamp'].value = ts_rel
-        yield From(tx.async_send_heap(ig.get_heap()))
+        return trollius.async(tx.async_send_heap(ig.get_heap()))
 
     def _initialise_ig_sd(self):
         """Create a item group for signal displays."""
@@ -454,7 +456,6 @@ class CBFIngest(object):
             description="The total number of frequency channels present in any integration.",
             shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
 
-    @trollius.coroutine
     def _initialise(self, ig_cbf):
         """Initialise variables on reception of the first usable dump."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
@@ -521,9 +522,8 @@ class CBFIngest(object):
 
         # initialise the signal display metadata
         self._initialise_ig_sd()
-        yield From(self._send_sd_data(self.ig_sd.get_start()))
+        self._send_sd_data(self.ig_sd.get_start())
 
-    @trollius.coroutine
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         self.proc.end_sum()
@@ -535,15 +535,14 @@ class CBFIngest(object):
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         # Shift to the centre of the dump
         ts_rel += 0.5 * self.cbf_attr['int_time']
-        yield From(self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel))
-        yield From(self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel))
+        self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
+        self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
 
         self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
         self.proc.start_sum()
 
-    @trollius.coroutine
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
@@ -613,7 +612,7 @@ class CBFIngest(object):
         if self._center_freq is not None:
             self.ig_sd['center_freq'].value = self._center_freq
 
-        yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
+        self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
         self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
             timestamps, time.time()))
         # Prepare for the next group
@@ -750,10 +749,10 @@ class CBFIngest(object):
 
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                yield From(self._initialise(ig_cbf))
+                self._initialise(ig_cbf)
 
-            yield From(self._output_avg.add_timestamp(data_ts))
-            yield From(self._sd_avg.add_timestamp(data_ts))
+            self._output_avg.add_timestamp(data_ts)
+            self._sd_avg.add_timestamp(data_ts)
 
             # Generate timestamps
             current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
@@ -775,14 +774,15 @@ class CBFIngest(object):
         # Stop received.
 
         if self._output_avg is not None:  # Could be None if no heaps arrived
-            yield From(self._output_avg.finish())
-            yield From(self._sd_avg.finish())
+            self._output_avg.finish()
+            self._sd_avg.finish()
         self.logger.info("CBF ingest complete at %f" % time.time())
-        yield From(self.tx_spectral.async_send_heap(self.ig_spectral.get_end()))
+        yield From(self._stop_stream(self.tx_spectral, self.ig_spectral))
         self.tx_spectral = None
-        yield From(self.tx_continuum.async_send_heap(self.ig_continuum.get_end()))
+        yield From(self._stop_stream(self.tx_continuum, self.ig_continuum))
         self.tx_continuum = None
-        yield From(self._send_sd_data(self.ig_sd.get_end()))
+        for tx in self._sdisp_ips.itervalues():
+            yield From(self._stop_stream(tx, self.ig_sd))
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
