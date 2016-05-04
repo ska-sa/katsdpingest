@@ -3,9 +3,39 @@
 import numpy as np
 from katsdpingest import ingest_session
 from katsdpsigproc.test.test_accel import device_test
+import trollius
+from trollius import From, Return
 import unittest
 import mock
 from nose.tools import *
+
+
+class TimeAverageSync(ingest_session._TimeAverage):
+    """Synchronous wrapper around the asynchronous
+    :class:`~katsdpingest.ingest_session._TimeAverage`, to make it easier to
+    test.
+    """
+    def add_timestamp(self, timestamp):
+        loop = trollius.get_event_loop_policy().new_event_loop()
+        result = loop.run_until_complete(super(TimeAverageSync, self).add_timestamp(timestamp))
+        loop.close()
+        return result
+
+    def finish(self):
+        loop = trollius.get_event_loop_policy().new_event_loop()
+        result = loop.run_until_complete(super(TimeAverageSync, self).finish())
+        loop.close()
+        return result
+
+    @trollius.coroutine
+    def flush(self, timestamps):
+        # Put in a yield statement so that this becomes a generator
+        if False:
+            yield
+        raise Return(self.flush_sync(timestamps))
+
+    def flush_sync(self, timestamps):
+        raise NotImplementedError()
 
 
 class TestTimeAverage(object):
@@ -20,7 +50,7 @@ class TestTimeAverage(object):
         self.input_interval = 123456 * 4096 * 2
 
     def test_constructor(self):
-        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
+        avg = TimeAverageSync(self.cbf_attr, 2.0)
         assert_equal(2.25, avg.int_time)
         assert_equal(3, avg.ratio)
         assert_equal(avg.ratio * self.input_interval, avg.interval)
@@ -34,27 +64,27 @@ class TestTimeAverage(object):
             return 1000000000 + idx * self.input_interval
 
     def test_add_timestamp(self):
-        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
-        avg.flush = mock.Mock(name='flush', spec_set=avg.flush)
+        avg = TimeAverageSync(self.cbf_attr, 2.0)
+        avg.flush_sync = mock.Mock(name='flush_sync', spec_set=avg.flush_sync)
         avg.add_timestamp(self.make_ts(0))
         avg.add_timestamp(self.make_ts(2))
         avg.add_timestamp(self.make_ts(1))  # Test time reordering
-        assert not avg.flush.called
+        assert not avg.flush_sync.called
 
         avg.add_timestamp(self.make_ts(4))  # Skip first packet in the group
-        avg.flush.assert_called_once_with(self.make_ts([0, 2, 1]))
-        avg.flush.reset_mock()
+        avg.flush_sync.assert_called_once_with(self.make_ts([0, 2, 1]))
+        avg.flush_sync.reset_mock()
         assert_equal(self.make_ts(3), avg._start_ts)
         assert_equal([self.make_ts(4)], avg._ts)
 
         avg.add_timestamp(self.make_ts(12))  # Skip some whole groups
-        avg.flush.assert_called_once_with(self.make_ts([4]))
-        avg.flush.reset_mock()
+        avg.flush_sync.assert_called_once_with(self.make_ts([4]))
+        avg.flush_sync.reset_mock()
         assert_equal(self.make_ts(12), avg._start_ts)
         assert_equal([self.make_ts(12)], avg._ts)
 
         avg.finish()
-        avg.flush.assert_called_once_with(self.make_ts([12]))
+        avg.flush_sync.assert_called_once_with(self.make_ts([12]))
         assert_is(None, avg._start_ts)
         assert_equal([], avg._ts)
 
