@@ -223,7 +223,10 @@ class Client(object):
                         .format(name, value))
             elif name in self._sensors:
                 sensor = self._sensors[name]
-                self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
+                try:
+                    self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
+                except katsdptelstate.ImmutableKeyError as e:
+                    self._logger.error(e)
             else:
                 self._logger.debug("Sensor {} received update '{}' but we didn't subscribe (ignored)"
                         .format(name, value))
