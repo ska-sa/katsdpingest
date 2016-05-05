@@ -269,10 +269,22 @@ class CBFIngest(object):
         else:
             self.logger.setLevel(logging.INFO)
 
+    @trollius.coroutine
+    def _send_heap(self, stream, heap):
+        """Send a heap, and log a warning if it fails"""
+        try:
+            yield From(stream.async_send_heap(heap))
+        except Exception:
+            self.logger.warn("Error sending heap", exc_info=True)
+
+    def _async_send_heap(self, stream, heap):
+        """Send a heap as a fire-and-forget operation"""
+        trollius.async(self._send_heap(stream, heap))
+
     def _send_sd_data(self, data):
         """Send a heap to all signal display servers, asynchronously."""
         for tx in self._sdisp_ips.itervalues():
-            trollius.async(tx.async_send_heap(data))
+            self._async_send_heap(tx, data)
 
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None):
@@ -379,7 +391,7 @@ class CBFIngest(object):
         ig['correlator_data'].value = vis
         ig['flags'].value = flags
         ig['timestamp'].value = ts_rel
-        return trollius.async(tx.async_send_heap(ig.get_heap()))
+        self._async_send_heap(tx, ig.get_heap())
 
     def _initialise_ig_sd(self):
         """Create a item group for signal displays."""
@@ -529,8 +541,8 @@ class CBFIngest(object):
             self.continuum_spead_endpoint.host,
             self.continuum_spead_endpoint.port,
             spead2.send.StreamConfig(max_packet_size=9172, rate=continuum_rate))
-        trollius.async(self.tx_spectral.async_send_heap(self.ig_spectral.get_start()))
-        trollius.async(self.tx_continuum.async_send_heap(self.ig_continuum.get_start()))
+        self._async_send_heap(self.tx_spectral, self.ig_spectral.get_start())
+        self._async_send_heap(self.tx_continuum, self.ig_continuum.get_start())
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
