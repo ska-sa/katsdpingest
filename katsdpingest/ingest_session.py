@@ -1,12 +1,8 @@
 #!/usr/bin/python
 
-# Threads for ingesting data and meta-data in order to produce a complete HDF5 file for further
-# processing.
-#
-# Currently has a CBFIngest class
-#
-# Details on these are provided in the class documentation
+"""Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
+from __future__ import division, print_function, absolute_import
 import numpy as np
 import spead2
 import spead2.send
@@ -225,9 +221,7 @@ class CBFIngest(object):
         self.logger = logger
         self.cbf_spead_endpoints = opts.cbf_spead
         self.spectral_spead_endpoint = opts.l0_spectral_spead
-        self.spectral_spead_rate = opts.l0_spectral_spead_rate
         self.continuum_spead_endpoint = opts.l0_continuum_spead
-        self.continuum_spead_rate = opts.l0_continuum_spead_rate
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -262,16 +256,9 @@ class CBFIngest(object):
         self.rx = spead2.recv.trollius.Stream(spead2.ThreadPool())
         for endpoint in self.cbf_spead_endpoints:
             self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
-        self.tx_spectral = spead2.send.trollius.UdpStream(
-            spead2.ThreadPool(),
-            self.spectral_spead_endpoint.host,
-            self.spectral_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.spectral_spead_rate / 8))
-        self.tx_continuum = spead2.send.trollius.UdpStream(
-            spead2.ThreadPool(),
-            self.continuum_spead_endpoint.host,
-            self.continuum_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.continuum_spead_rate / 8))
+        # Instantiation of the streams delayed until exact integration time is known
+        self.tx_spectral = None
+        self.tx_continuum = None
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
         self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
@@ -465,6 +452,7 @@ class CBFIngest(object):
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
         channels = self.cbf_attr['n_chans']
+        channel_range = (0, channels)
         n_accs = self.cbf_attr['n_accs']
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
@@ -505,7 +493,7 @@ class CBFIngest(object):
                 percentile_ranges.append((0, 0))
 
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, (0, channels), cbf_baselines, baselines,
+                self.command_queue, channels, channel_range, cbf_baselines, baselines,
                 self.cont_factor, self.sd_cont_factor, percentile_ranges,
                 threshold_args={'n_sigma': 11.0})
         self.proc.set_scale(1.0 / n_accs)
@@ -523,6 +511,26 @@ class CBFIngest(object):
         # initialise the signal display metadata
         self._initialise_ig_sd()
         self._send_sd_data(self.ig_sd.get_start())
+
+        # Initialise the output streams
+        kept_channels = channel_range[1] - channel_range[0]
+        spectral_size = kept_channels * baselines * np.dtype(np.complex64).itemsize
+        # Scaling by 1.1 is to account for network overheads and to allow
+        # catchup if we temporarily fall behind the rate.
+        spectral_rate = spectral_size / self._output_avg.int_time * 1.1
+        continuum_rate = spectral_rate / self.cont_factor
+        self.tx_spectral = spead2.send.trollius.UdpStream(
+            spead2.ThreadPool(),
+            self.spectral_spead_endpoint.host,
+            self.spectral_spead_endpoint.port,
+            spead2.send.StreamConfig(max_packet_size=9172, rate=spectral_rate))
+        self.tx_continuum = spead2.send.trollius.UdpStream(
+            spead2.ThreadPool(),
+            self.continuum_spead_endpoint.host,
+            self.continuum_spead_endpoint.port,
+            spead2.send.StreamConfig(max_packet_size=9172, rate=continuum_rate))
+        trollius.async(self.tx_spectral.async_send_heap(self.ig_spectral.get_start()))
+        trollius.async(self.tx_continuum.async_send_heap(self.ig_continuum.get_start()))
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
