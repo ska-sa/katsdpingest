@@ -20,8 +20,10 @@ setup(
     install_requires=[
         'h5py',
         'manhole',
+        'netifaces',
         'numpy',
         'spead2>=0.8.0',
+        'ipaddress',
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
