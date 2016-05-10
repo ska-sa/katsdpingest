@@ -10,7 +10,9 @@ import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
 import time
+from collections import deque
 import katsdpingest.sigproc as sp
+import katsdpsigproc.resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
 import katsdpdisp.data as sdispdata
@@ -706,6 +708,21 @@ class CBFIngest(object):
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
     @trollius.coroutine
+    def _process_frame(self, data_ts, vis_in, acq):
+        with acq as proc:
+            yield From(acq.wait_events())
+            self._output_avg.add_timestamp(data_ts)
+            self._sd_avg.add_timestamp(data_ts)
+
+            # Perform data processing
+            self.proc.buffer('vis_in').set(self.command_queue, vis_in)
+            self.proc()
+            # TODO: we're currently just relying on there only being one
+            # command queue for on-device ordering, as well as on asynchronous
+            # transfers, but we should be explicit with events.
+            acq.ready()
+
+    @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
         ig_cbf = spead2.ItemGroup()
@@ -714,9 +731,10 @@ class CBFIngest(object):
         prev_ts = -1
         ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
         ts_wrap_period = 2**48
+        in_flight = deque()       # Futures for in-flight processing calls
+        proc_resource = katsdpsigproc.resource.Resource(self.proc)
         self._output_avg = None
         self._sd_avg = None
-
         while True:
             try:
                 heap = yield From(self.rx.get())
@@ -765,21 +783,21 @@ class CBFIngest(object):
                 self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
                 continue
 
-            # Configure datasets and other items now that we have complete metadata
-            if idx == 0:
-                self._initialise(ig_cbf)
-
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
-
             # Generate timestamps
             current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
-            # Perform data processing
-            self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
-            self.proc()
+            # Configure datasets and other items now that we have complete metadata
+            if idx == 0:
+                self._initialise(ig_cbf)
+
+            proc_acq = proc_resource.acquire()
+            # If we're not keeping up, limit the queue depth
+            while len(in_flight) >= 2:
+                yield From(in_flight[0])
+                in_flight.popleft()
+            in_flight.append(trollius.async(self._process_frame(data_ts, data_item.value, proc_acq)))
 
             # Done with reading this frame
             idx += 1
@@ -788,12 +806,23 @@ class CBFIngest(object):
             self.logger.info(
                 "Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
                 current_ts, tt+st, tt, idx)
+            # Clear completed processing from in_flight, so that any related
+            # exceptions are thrown as soon as possible.
+            while in_flight and in_flight[0].done():
+                in_flight[0].result()
+                in_flight.popleft()
 
         # Stop received.
-
-        if self._output_avg is not None:  # Could be None if no heaps arrived
-            self._output_avg.finish()
+        while in_flight:
+            yield From(in_flight[0])
+            in_flight.popleft()
+        acq = proc_resource.acquire()
+        with acq:
+            yield From(acq.wait_events())
+            if self._output_avg is not None:  # Could be None if no heaps arrived
+                self._output_avg.finish()
             self._sd_avg.finish()
+            acq.ready()
         self.logger.info("CBF ingest complete at %f" % time.time())
         yield From(self._stop_stream(self.tx_spectral, self.ig_spectral))
         self.tx_spectral = None
