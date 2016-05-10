@@ -567,8 +567,6 @@ class CBFIngest(object):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
 
-        # For now, both telstate and katcp can be used to set the mask and
-        # custom signals, but telstate takes precedence.
         custom_signals_indices = None
         mask = None
         if self.telstate is not None:
