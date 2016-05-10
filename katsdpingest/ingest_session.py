@@ -155,6 +155,34 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
+class JobQueue(object):
+    """Maintains a list of in-flight asynchronous jobs."""
+    def __init__(self):
+        self._jobs = deque()
+
+    def add(self, job):
+        """Append a job to the list. If `job` is a coroutine, it is
+        automatically wrapped in a task."""
+        self._jobs.append(trollius.async(job))
+
+    def clean(self):
+        """Remove completed jobs from the front of the queue."""
+        while self._jobs and self._jobs[0].done():
+            yield From(self._jobs[0])
+            self._jobs.popleft()
+
+    @trollius.coroutine
+    def finish(self, max_remaining=0):
+        """Wait for jobs to finish until there are at most `max_remaining` in
+        the queue.
+
+        This is a coroutine.
+        """
+        while len(self._jobs) > max_remaining:
+            yield From(self._jobs[0])
+            self._jobs.popleft()
+
+
 class CBFIngest(object):
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -250,6 +278,8 @@ class CBFIngest(object):
         self.command_queue = proc_template.context.create_command_queue()
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.proc = None
+        self.proc_resource = None
+        self.jobs = JobQueue()
         # Done with blocks
 
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
@@ -516,6 +546,7 @@ class CBFIngest(object):
             self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
+        self.proc_resource = katsdpsigproc.resource.Resource(self.proc)
         # Record information about the processing in telstate
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
@@ -548,27 +579,34 @@ class CBFIngest(object):
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
-        self.proc.end_sum()
-        spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
-        spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
-        cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
-        cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
+        acq = self.proc_resource.acquire()
+        self.jobs.add(self._flush_output_job(acq, timestamps))
 
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
-        # Shift to the centre of the dump
-        ts_rel += 0.5 * self.cbf_attr['int_time']
-        self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
-        self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
+    @trollius.coroutine
+    def _flush_output_job(self, acq, timestamps):
+        with acq as proc:
+            yield From(acq.wait_events())
+            proc.end_sum()
+            spec_flags = proc.buffer('spec_flags').get(self.command_queue)
+            spec_vis = proc.buffer('spec_vis').get(self.command_queue)
+            cont_flags = proc.buffer('cont_flags').get(self.command_queue)
+            cont_vis = proc.buffer('cont_vis').get(self.command_queue)
 
-        self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
-            timestamps, time.time()))
-        # Prepare for the next group
-        self.proc.start_sum()
+            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+            # Shift to the centre of the dump
+            ts_rel += 0.5 * self.cbf_attr['int_time']
+            self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
+            self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
+
+            self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
+                timestamps, time.time()))
+            # Prepare for the next group
+            proc.start_sum()
+            acq.ready()
 
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
-
         custom_signals_indices = None
         mask = None
         if self.telstate is not None:
@@ -590,53 +628,61 @@ class CBFIngest(object):
         if mask is None:
             mask = np.ones(self.channels, np.float32) / self.channels
 
-        try:
-            self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
-        except Exception:
-            self.logger.warn('Failed to set timeseries_weights', exc_info=True)
+        acq = self.proc_resource.acquire()
+        self.jobs.add(self._flush_sd_job(acq, timestamps, custom_signals_indices, mask))
 
-        self.proc.end_sd_sum()
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
-        ts = self.cbf_attr['sync_time'] + ts_rel
-        cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
-        cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
-        spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
-        spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
-        timeseries = self.proc.buffer('timeseries').get(self.command_queue)
-        percentiles = []
-        percentiles_flags = []
-        for i in range(len(self.proc.percentiles)):
-            name = 'percentile{0}'.format(i)
-            p = self.proc.buffer(name).get(self.command_queue)
-            pflags = self.proc.buffer(name + '_flags').get(self.command_queue)
-            percentiles.append(p)
-            # Signal display server wants flags duplicated to broadcast with
-            # the percentiles
-            percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
+    @trollius.coroutine
+    def _flush_sd_job(self, acq, timestamps, custom_signals_indices, mask):
+        with acq as proc:
+            yield From(acq.wait_events())
+            try:
+                self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+            except Exception:
+                self.logger.warn('Failed to set timeseries_weights', exc_info=True)
 
-        # populate new datastructure to supersede sd_data etc
-        self.ig_sd['sd_timestamp'].value = int(ts * 100)
-        if np.all(custom_signals_indices < spec_vis.shape[1]):
-            self.ig_sd['sd_data'].value = \
-                _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
-            self.ig_sd['sd_data_index'].value = custom_signals_indices
-            self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
-        else:
-            self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
-                             custom_signals_indices)
-        self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
-        self.ig_sd['sd_blmxflags'].value = cont_flags
-        self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
-        self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
-        self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-        if self._center_freq is not None:
-            self.ig_sd['center_freq'].value = self._center_freq
+            proc.end_sd_sum()
+            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+            ts = self.cbf_attr['sync_time'] + ts_rel
+            cont_vis = proc.buffer('sd_cont_vis').get(self.command_queue)
+            cont_flags = proc.buffer('sd_cont_flags').get(self.command_queue)
+            spec_vis = proc.buffer('sd_spec_vis').get(self.command_queue)
+            spec_flags = proc.buffer('sd_spec_flags').get(self.command_queue)
+            timeseries = proc.buffer('timeseries').get(self.command_queue)
+            percentiles = []
+            percentiles_flags = []
+            for i in range(len(proc.percentiles)):
+                name = 'percentile{0}'.format(i)
+                p = proc.buffer(name).get(self.command_queue)
+                pflags = proc.buffer(name + '_flags').get(self.command_queue)
+                percentiles.append(p)
+                # Signal display server wants flags duplicated to broadcast with
+                # the percentiles
+                percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
 
-        self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
-        self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
-            timestamps, time.time()))
-        # Prepare for the next group
-        self.proc.start_sd_sum()
+            # populate new datastructure to supersede sd_data etc
+            self.ig_sd['sd_timestamp'].value = int(ts * 100)
+            if np.all(custom_signals_indices < spec_vis.shape[1]):
+                self.ig_sd['sd_data'].value = \
+                    _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+                self.ig_sd['sd_data_index'].value = custom_signals_indices
+                self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+            else:
+                self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                                 custom_signals_indices)
+            self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
+            self.ig_sd['sd_blmxflags'].value = cont_flags
+            self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
+            self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
+            self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
+            if self._center_freq is not None:
+                self.ig_sd['center_freq'].value = self._center_freq
+
+            self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
+            self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
+                timestamps, time.time()))
+            # Prepare for the next group
+            proc.start_sd_sum()
+            acq.ready()
 
     def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
         if self.telstate is not None:
@@ -708,11 +754,9 @@ class CBFIngest(object):
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
     @trollius.coroutine
-    def _process_frame(self, data_ts, vis_in, acq):
+    def _frame_job(self, data_ts, vis_in, acq):
         with acq as proc:
             yield From(acq.wait_events())
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
 
             # Perform data processing
             self.proc.buffer('vis_in').set(self.command_queue, vis_in)
@@ -731,8 +775,6 @@ class CBFIngest(object):
         prev_ts = -1
         ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
         ts_wrap_period = 2**48
-        in_flight = deque()       # Futures for in-flight processing calls
-        proc_resource = katsdpsigproc.resource.Resource(self.proc)
         self._output_avg = None
         self._sd_avg = None
         while True:
@@ -792,12 +834,13 @@ class CBFIngest(object):
             if idx == 0:
                 self._initialise(ig_cbf)
 
-            proc_acq = proc_resource.acquire()
+            self._output_avg.add_timestamp(data_ts)
+            self._sd_avg.add_timestamp(data_ts)
+
+            proc_acq = self.proc_resource.acquire()
             # If we're not keeping up, limit the queue depth
-            while len(in_flight) >= 2:
-                yield From(in_flight[0])
-                in_flight.popleft()
-            in_flight.append(trollius.async(self._process_frame(data_ts, data_item.value, proc_acq)))
+            yield From(self.jobs.finish(2))
+            self.jobs.add(self._frame_job(data_ts, data_item.value, proc_acq))
 
             # Done with reading this frame
             idx += 1
@@ -808,15 +851,11 @@ class CBFIngest(object):
                 current_ts, tt+st, tt, idx)
             # Clear completed processing from in_flight, so that any related
             # exceptions are thrown as soon as possible.
-            while in_flight and in_flight[0].done():
-                in_flight[0].result()
-                in_flight.popleft()
+            self.jobs.clean()
 
         # Stop received.
-        while in_flight:
-            yield From(in_flight[0])
-            in_flight.popleft()
-        acq = proc_resource.acquire()
+        yield From(self.jobs.finish())
+        acq = self.proc_resource.acquire()
         with acq:
             yield From(acq.wait_events())
             if self._output_avg is not None:  # Could be None if no heaps arrived
