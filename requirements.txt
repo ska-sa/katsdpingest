@@ -37,7 +37,7 @@ ujson==1.35
 unittest2
 zope.interface
 git+ssh://git@github.com/ska-sa/katcp-python#egg=katcp
-git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
+git+ssh://git@github.com/ska-sa/katsdpsigproc@async-resource#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpdisp#egg=katsdpdisp
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
 git+ssh://git@github.com/ska-sa/katportalclient#egg=katportalclient
