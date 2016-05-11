@@ -87,7 +87,7 @@ class _CaptureSession(object):
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
-        return yield sub_process.wait_for_exit()
+        return sub_process.wait_for_exit()
 
     def _create_dada_dbdisk (self, dadaId = 'dada', numaNode = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
