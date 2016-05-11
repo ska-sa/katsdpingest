@@ -12,7 +12,7 @@ import spead2.recv.trollius
 import time
 from collections import deque
 import katsdpingest.sigproc as sp
-import katsdpsigproc.resource
+from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
 import katsdpdisp.data as sdispdata
@@ -155,34 +155,6 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
-class JobQueue(object):
-    """Maintains a list of in-flight asynchronous jobs."""
-    def __init__(self):
-        self._jobs = deque()
-
-    def add(self, job):
-        """Append a job to the list. If `job` is a coroutine, it is
-        automatically wrapped in a task."""
-        self._jobs.append(trollius.async(job))
-
-    def clean(self):
-        """Remove completed jobs from the front of the queue."""
-        while self._jobs and self._jobs[0].done():
-            yield From(self._jobs[0])
-            self._jobs.popleft()
-
-    @trollius.coroutine
-    def finish(self, max_remaining=0):
-        """Wait for jobs to finish until there are at most `max_remaining` in
-        the queue.
-
-        This is a coroutine.
-        """
-        while len(self._jobs) > max_remaining:
-            yield From(self._jobs[0])
-            self._jobs.popleft()
-
-
 class CBFIngest(object):
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -279,7 +251,7 @@ class CBFIngest(object):
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.proc = None
         self.proc_resource = None
-        self.jobs = JobQueue()
+        self.jobs = resource.JobQueue()
         # Done with blocks
 
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
@@ -546,7 +518,7 @@ class CBFIngest(object):
             self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
-        self.proc_resource = katsdpsigproc.resource.Resource(self.proc)
+        self.proc_resource = resource.Resource(self.proc)
         # Record information about the processing in telstate
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
