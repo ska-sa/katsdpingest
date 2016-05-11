@@ -102,12 +102,12 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        print ("create buffer")
-        cmd = 'dada_db -k %s;\
-               dada_db -k %s -b 268435456 -p -l -n %d -c %d'%(dadaId, dadaId, nBuffers, numaCore)
-        dada_buffer_process = tornado.process.Subprocess(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-)
+        cmd = ['dada_db', '-k', dadaId, '-d']
+        dada_buffer_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE
+        )
+        print (dada_buffer_process.communicate())
+        
         dada_buffer_process.wait()
         cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
         dada_buffer_process = subprocess.Popen(
@@ -115,7 +115,7 @@ class _CaptureSession(object):
         )
         dada_buffer_process.wait()
         print ('complete buffer creation')
-        yield dada_buffer_process.communicate()
+        print (dada_buffer_process.communicate())
 
     def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
@@ -156,7 +156,7 @@ class _CaptureSession(object):
         f_read = open (spipConfig, 'r')
 
 
-f_write = open (spipConfig, 'w')
+        f_write = open (spipConfig, 'w')
         for line in f_read:
             if line.find("ADC_SYNC_TIME"):
                 f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
@@ -319,7 +319,7 @@ class CaptureServer(object):
                 print ("Exception caught")
                 #self.stop_capture()
                                                         
-  @trollius.coroutine
+    @trollius.coroutine
     def stop_capture(self):
         """Stop capture to file, if currently running. This is a co-routine."""
         if self._capture is not None:
