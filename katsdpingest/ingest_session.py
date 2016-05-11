@@ -238,8 +238,7 @@ class CBFIngest(object):
         self.pkt_sensor = self._my_sensors['packets-captured']
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
-        self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
+        self.ig_sd = None
         # Initialise processing blocks used
         self.command_queue = proc_template.context.create_command_queue()
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
@@ -349,7 +348,8 @@ class CBFIngest(object):
         self.logger.info("Removing ip %s from the signal display list." % (ip))
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
-        yield From(self._stop_stream(stream, self.ig_sd))
+        if self.ig_sd is not None:
+            yield From(self._stop_stream(stream, self.ig_sd))
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -395,7 +395,7 @@ class CBFIngest(object):
         """Create a item group for signal displays."""
         sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         inline_format = [('u', sd_flavour.heap_address_bits)]
-        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
+        self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
         self.ig_sd.add_item(
             name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
             format=[('f', 32)], shape=(self.proc.buffer('sd_spec_vis').shape[0], None, 2))
@@ -833,8 +833,9 @@ class CBFIngest(object):
         self.tx_spectral = None
         yield From(self._stop_stream(self.tx_continuum, self.ig_continuum))
         self.tx_continuum = None
-        for tx in self._sdisp_ips.itervalues():
-            yield From(self._stop_stream(tx, self.ig_sd))
+        if self.ig_sd is not None:
+            for tx in self._sdisp_ips.itervalues():
+                yield From(self._stop_stream(tx, self.ig_sd))
         self.ig_spectral = None
         self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived

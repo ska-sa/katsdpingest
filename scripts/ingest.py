@@ -175,21 +175,23 @@ class IngestDeviceServer(DeviceServer):
 
     @request(Str())
     @return_reply(Str())
+    @tornado.gen.coroutine
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
         try:
             del self.sdisp_ips[ip]
         except KeyError:
-            return ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip))
+            raise tornado.gen.Return(
+                    ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip)))
         if self.cbf_session is not None:
             # drop_sdisp_ip can in theory raise KeyError, but the check against
             # our own list prevents that.
-            self.cbf_session.drop_sdisp_ip(ip)
-        return ("ok", "The IP address has been dropped as a signal display recipient")
+            yield to_tornado_future(trollius.async(self.cbf_session.drop_sdisp_ip(ip)))
+        raise tornado.gen.Return(
+                ("ok", "The IP address has been dropped as a signal display recipient"))
 
     @request(Str())
     @return_reply(Str())
-    @tornado.gen.coroutine
     def request_add_sdisp_ip(self, req, ip):
         """Add the supplied ip and port (ip[:port]) to the list of signal
         display data recipients.If not port is supplied default of 7149 is
@@ -201,14 +203,13 @@ class IngestDeviceServer(DeviceServer):
         else:
             port = 7149
         if ip in self.sdisp_ips:
-            raise tornado.gen.Return(
-                    ("ok", "The supplied IP is already in the active list of recipients."))
+            return ("ok", "The supplied IP is already in the active list of recipients.")
         self.sdisp_ips[ip] = port
         if self.cbf_session is not None:
             # add_sdisp_ip can in theory raise KeyError, but the check against
             # our own list prevents that.
-            yield to_tornado_future(trollius.async(self.cbf_session.add_sdisp_ip(ip, port)))
-        raise tornado.gen.Return(("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port)))
+            self.cbf_session.add_sdisp_ip(ip, port)
+        return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
 
     @tornado.gen.coroutine
     def handle_interrupt(self):
