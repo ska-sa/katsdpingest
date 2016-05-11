@@ -1,7 +1,7 @@
 from __future__ import print_function, division, absolute_import
-#import spead2
-#import spead2.recv
-#import spead2.recv.trollius
+import spead2
+import spead2.recv
+import spead2.recv.trollius
 import katcp
 from katcp.kattypes import request, return_reply
 #import h5py
@@ -14,6 +14,8 @@ from trollius import From
 import tornado
 import logging
 import katsdpingest
+import subprocess
+import time
 
 
 _logger = logging.getLogger(__name__)
@@ -53,43 +55,69 @@ class _CaptureSession(object):
     _timestep : int
         Time interval (in ADC clocks) between spectra
     """
+
     def __init__(self, args, loop):
         self._loop = loop
         self._args = args
-        self._dada_dbdisk_process = None
-        self._capture_process = None
+        #self._dada_dbdisk_process = None
+        #self._capture_process = None
         self._timestamps = []
         self._manual_stop = False
         self._endpoints = []
-        if args.cbf_channels:
-            self._timestep = 2 * args.cbf_channels
-        else:
-            self._timestep = None
+        #if args.cbf_channels:
+        #    self._timestep = 2 * args.cbf_channels
+        #else:
+        self._timestep = None
         self._ig = spead2.ItemGroup()
-        # self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
-        for endpoint in args.cbf_spead:
-            _logger.info('Listening on endpoint {}'.format(endpoint))
-            self._endpoints.append(endpoint)
+        self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
+        #for endpoint in args.cbf_spead:
+        #    _logger.info('Listening on endpoint {}'.format(endpoint))
+        #    self._endpoints.append(endpoint)
+
+        self._dada_dbdisk_process = None
+        self._capture_process = None
+        self._speadmeta_process = None
+
+        self._create_dada_buffer()
+        #_logger.info("Created dada_buffer\n" + result)
+        print ("Created dada_buffer\n")
+        self._create_dada_dbdisk()
+
+        time.sleep(1)
+
         self._run_future = trollius.async(self._run(), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaNode = 1):
+        if self._dada_dbdisk_process == None:
+            raise Exception("data_db process failed to start after seconds")
+        #if self._speadmeta_process == None:
+            #raise Exception("metadata_process failed to start after seconds")
+
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers = 64):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
         ----------
         dadaId :
             Dada buffer ID.
-        numaNode :
+        numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = 'dada_db -k %s -b 268435456 -p -l -n 4 -c %d'%(dadaId, numaNode)
+        print ("create buffer")
+        cmd = 'dada_db -k %s;\
+               dada_db -k %s -b 268435456 -p -l -n %d -c %d'%(dadaId, dadaId, nBuffers, numaCore)
         dada_buffer_process = tornado.process.Subprocess(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+)
+        dada_buffer_process.wait()
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
+        dada_buffer_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE
         )
+        dada_buffer_process.wait()
+        print ('complete buffer creation')
+        yield dada_buffer_process.communicate()
 
-        return sub_process.wait_for_exit()
-
-    def _create_dada_dbdisk (self, dadaId = 'dada', numaNode = 1, outputDir = '/data'):
+    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
         Must be run after creating the dada_buffer and before the capture process.
         Must have the same NUMA node as the dada_buffer
@@ -98,27 +126,45 @@ class _CaptureSession(object):
             ----------
             dadaId :
                 Dada buffer ID.
-            numaNode :
-                NUMA node to attach dada buffer to
+            cpuCore :
+                CPU core to bind processing to
             outputDir :
                 Location to write captured data
         """
-
-        STREAM = tornado.process.Subprocess.STREAM
-        cmd = 'numactl -C 1 dada_dbdisk -k %s -D %s -z -s -d;\
-               numactl -C 1 dada_dbdisk -k %s -D %s -z -s'%(numaNode, dadaId, outputDir)
-        self._dada_dbdisk_process = tornado.process.Subprocess(
-        cmd, stdin=STREAM, stdout=STREAM, stderr=STREAM
+        print ("dada_dbdisk")
+        cmd = ['numactl', '-C', '%d'%cpuCore, 'dada_dbdisk', '-k', dadaId, '-D', outputDir, '-z', '-s']
+        self._dada_dbdisk_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE
         )
 
-        # sub_process.stdin.close()
 
-        result, error = yield [
-        Task(self._dada_dbdisk_process.stdout.read_until_close),
-        Task(self._dada_dbdisk_process.stderr.read_until_close)
-        ]
+    def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.2", pol_h_port = 8890):
 
-        raise Return((result, error))
+        cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
+
+        speadmeta_process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+
+        speadmeta_process.wait()
+        # we need to capture the output from this process
+        adc_sync_time, error = speadmeta_process.communicate()
+
+        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
+        runtimeConfig = spipConfig + ".live"
+        f_read = open (spipConfig, 'r')
+
+
+f_write = open (spipConfig, 'w')
+        for line in f_read:
+            if line.find("ADC_SYNC_TIME"):
+                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
+            else:
+                f_write.write(line + "\n")
+        f_read.close()
+        f_write.close()
+
 
 
     def _create_capture_process(self, spipConfig="/home/kat/hardware_cbf_4096chan_2pol.cfg", core1=3, core2=5):
@@ -135,66 +181,100 @@ class _CaptureSession(object):
             core2 :
                 core to run capture on
         """
-        STREAM = tornado.process.Subprocess.STREAM
+        print ("capture_process")
         cap_env = os.environ.copy()
+        # capture ADC_SYNC_TIME from the meta-data stream before running capture code
+        pol_h_host  = "10.100.21.5"
+        pol_h_mcast = "239.9.3.2"
+        pol_h_port  = 8890
+        cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
+
+        speadmeta_process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+        speadmeta_process.wait()
+        # we need to capture the output from this process
+        adc_sync_time, error = speadmeta_process.communicate()
+
+        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
+        runtimeConfig = spipConfig + ".live"
+
+        # we need to capture the output from this process
+        adc_sync_time, error = yield [
+        Task(self._capture_process.stdout.read_until_close),
+        Task(self._capture_process.stderr.read_until_close)
+        ]
+
+        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
+        runtimeConfig = spipConfig + ".live"
+        f_read = open (spipConfig, 'r')
+        f_write = open (spipConfig, 'w')
+        for line in f_read:
+            if line.find("ADC_SYNC_TIME"):
+                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
+            else:
+                f_write.write(line + "\n")
+        f_read.close()
+        f_write.close()
+
         cap_env["LD_PRELOAD"] = "libvma.so"
         cap_env["VMA_MTU"] = "9200"
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
-        cap_env["VMA_RING_ALLOCATION_LOGIC_RX"] = "10"
+                                                           
+        cmd = ["meerkat_udpmergedb", "runtimeConfig", "-f", "spead", "-b", "%d"%core1, "-c" "%d"%core2]
 
-        cmd = "meerkat_udpmergedb %s -f spead -b %d -c %d"%(spipConfig,core1,core2)
-
-        self._capture_process = tornado.process.Subprocess(
-        cmd, stdin=STREAM, stdout=STREAM, stderr=STREAM, env=cap_env
+        self._capture_process = subprocess.Popen(
+        cmd, subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=cap_env
         )
 
-        # sub_process.stdin.close()
-
-        result, error = yield [
-        Task(self._capture_process.stdout.read_until_close),
-        Task(self._capture_process.stderr.read_until_close)
-        ]
+        result, error = yield self._capture_process.communicate()
 
         raise Return((result, error))
 
     @trollius.coroutine
     def _run(self):
         """Does the work of capturing a stream. This is a coroutine."""
-        result = self._create_dada_buffer()
-        _logger.info("Created dada_buffer\n" + result)
+        print ("running")
+        #self._create_dada_buffer()
+        #_logger.info("Created dada_buffer\n" + result)
+        #print ("Created dada_buffer\n")
+        #self._create_dada_dbdisk()
+        #_logger.info ("dada_dbdisk output :\n %s\n error\n %s"%(result,error))
+        #print ("dada_dbdisk complete") 
+        self._create_capture_process()
+        #_logger.info ("capture output :\n %s\n error\n %s"%(result,error))
+        print ("capture started")
+        #ret = [self._capture_process.wait_for_exit(),]
 
-        result, error = yield self._create_dada_dbdisk()
-        _logger.info ("dada_dbdisk output :\n %s\n error\n %s"%(result,error))
-
-        result, error = yield self._create_capture_process()
-        _logger.info ("capture output :\n %s\n error\n %s"%(result,error))
-
-        ret = [self._capture_process.wait_for_exit(),]
-
-        ret.append (self._dada_dbdisk_process.wait_for_exit())
+        print ("capture_process_output = %s"%(result,error))
+        #ret.append (self._dada_dbdisk_process.wait_for_exit())
 
         # return yield ret
 
-        
+
     @trollius.coroutine
     def stop(self):
         """Shut down the stream and wait for the coroutine to complete. This
         is a coroutine.
         """
+        print ("STOPPING")
         self._manual_stop = True
-        self._capture_process.kill()
-        self._capture_process.kill()
-        self._dada_dbdisk_process.kill()
-        yield From(self._run_future)
+        if self._capture_process != None:
+            self._capture_process.kill()
+        if self._capture_process != None:
+            self._capture_process.kill()
+        if self._dada_dbdisk_process != None:
+            self._dada_dbdisk_process.kill()
+        #yield From(self._run_future)
 
 
 class CaptureServer(object):
     """Beamformer capture. This contains all the core functionality of the
     katcp device server, without depending on katcp. It is split like this
-    to facilitate unit testing.
 
-    Parameters
+                              Parameters
     ----------
     args : :class:`argparse.Namespace`
         Command-line arguments. The following arguments are required:
@@ -233,9 +313,13 @@ class CaptureServer(object):
     def start_capture(self):
         """Start capture to file, if not already in progress."""
         if self._capture is None:
-            self._capture = _CaptureSession(self._args, self._loop)
-
-    @trollius.coroutine
+            try:
+                self._capture = _CaptureSession(self._args, self._loop)
+            except Exception as e:
+                print ("Exception caught")
+                #self.stop_capture()
+                                                        
+  @trollius.coroutine
     def stop_capture(self):
         """Stop capture to file, if currently running. This is a co-routine."""
         if self._capture is not None:
@@ -276,7 +360,10 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
         """Start capture to file."""
         if self.capturing:
             return ('fail', 'already capturing')
-        self.start_capture()
+        try:
+            self.start_capture()
+        except Exception as e:
+            return ('fail',e.message)
         return ('ok',)
 
     @tornado.gen.coroutine
@@ -304,3 +391,5 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
 
 
 __all__ = ['CaptureServer', 'KatcpCaptureServer']
+                                                          
+                                      
