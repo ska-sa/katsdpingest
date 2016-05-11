@@ -8,6 +8,7 @@ import logging
 from katsdpingest import ingest_session
 from katsdpsigproc import accel
 
+
 def autotune_device(device):
     context = device.make_context()
     tune_antennas = ingest_session.CBFIngest.tune_antennas
@@ -19,6 +20,7 @@ def autotune_device(device):
         ingest_session.CBFIngest.create_proc_template(context, antennas, tune_channels[0])
     for channels in tune_channels:
         ingest_session.CBFIngest.create_proc_template(context, tune_antennas[0], channels)
+
 
 def main():
     logging.getLogger('katsdpsigproc.tune').setLevel(logging.INFO)

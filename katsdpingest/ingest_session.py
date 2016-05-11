@@ -10,7 +10,6 @@ import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
 import time
-from collections import deque
 import katsdpingest.sigproc as sp
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
@@ -18,7 +17,6 @@ from katcp import Sensor
 import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
-import socket
 import trollius
 from trollius import From
 
@@ -727,8 +725,8 @@ class CBFIngest(object):
             yield From(acq.wait_events())
 
             # Perform data processing
-            self.proc.buffer('vis_in').set(self.command_queue, vis_in)
-            self.proc()
+            proc.buffer('vis_in').set(self.command_queue, vis_in)
+            proc()
             # TODO: we're currently just relying on there only being one
             # command queue for on-device ordering, as well as on asynchronous
             # transfers, but we should be explicit with events.

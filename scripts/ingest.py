@@ -2,13 +2,10 @@
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
-import spead2
 import time
-import argparse
 import logging
 import manhole
 import signal
-import os
 import trollius
 from trollius import From
 import tornado.gen
@@ -18,7 +15,6 @@ from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest
-import katsdpingest.sigproc as sp
 from katsdpingest.ingest_session import CBFIngest
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
@@ -56,8 +52,8 @@ def parse_opts():
     parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
-                      help='level to use for basic logging or name of logging configuration file; '
-                           'default is /log/log.<SITENAME>.conf')
+                        help='level to use for basic logging or name of logging configuration file; '
+                        'default is /log/log.<SITENAME>.conf')
     return parser.parse_args()
 
 
@@ -70,33 +66,44 @@ class IngestDeviceServer(DeviceServer):
 
     def __init__(self, logger, sdisp_endpoints, antennas, channels, *args, **kwargs):
         self.logger = logger
+        # reference to the CBF ingest session
         self.cbf_session = None
-         # reference to the CBF ingest session
         self.sdisp_ips = {}
-        for endpoint in sdisp_endpoints:
-            self.sdisp_ips[endpoint.host] = endpoint.port
-         # add default or user specified endpoints
+        # add default or user specified endpoints
+        for sdisp_endpoint in sdisp_endpoints:
+            self.sdisp_ips[sdisp_endpoint.host] = sdisp_endpoint.port
         # compile the device code
         context = accel.create_some_context(interactive=False)
         self.proc_template = CBFIngest.create_proc_template(context, antennas, channels)
 
         self._my_sensors = {}
-        self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture session.","",default=0, params=[0,1])
-        self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
-        self._my_sensors["status"] = Sensor.string("status", "The current status of the capture session.","")
-        self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
-        self._my_sensors["device-status"] = Sensor.discrete("device-status", "Health status", "", ["ok", "degraded", "fail"])
+        self._my_sensors["capture-active"] = Sensor(
+                Sensor.INTEGER, "capture_active",
+                "Is there a currently active capture session.",
+                "", default=0, params=[0, 1])
+        self._my_sensors["packets-captured"] = Sensor(
+                Sensor.INTEGER, "packets_captured",
+                "The number of packets captured so far by the current session.",
+                "", default=0, params=[0, 2**63])
+        self._my_sensors["status"] = Sensor.string(
+                "status", "The current status of the capture session.", "")
+        self._my_sensors["last-dump-timestamp"] = Sensor(
+                Sensor.FLOAT, "last_dump_timestamp",
+                "Timestamp of most recently received correlator dump in Unix seconds",
+                "", default=0, params=[0, 2**63])
+        self._my_sensors["device-status"] = Sensor.discrete(
+                "device-status", "Health status", "", ["ok", "degraded", "fail"])
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
+            # take care of basic defaults to ensure sensor status is 'nominal'
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
             if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
                 self._my_sensors[sensor].set_value(0)
-             # take care of basic defaults to ensure sensor status is 'nominal'
         self._my_sensors["status"].set_value("init")
         self._my_sensors["device-status"].set_value("ok")
 
@@ -113,9 +120,10 @@ class IngestDeviceServer(DeviceServer):
         return ("ok", "Debug logging disabled.")
 
     def _enable_debug(self, debug):
-        if self.cbf_session is not None: self.cbf_session.enable_debug(debug)
+        if self.cbf_session is not None:
+            self.cbf_session.enable_debug(debug)
 
-    @request(Str(),Str())
+    @request(Str(), Str())
     @return_reply(Str())
     def request_internal_log_level(self, req, component, level):
         """Set the log level of an internal component to the specified value.
@@ -136,11 +144,12 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_session is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
 
-        self.cbf_session = CBFIngest(opts, self.proc_template,
+        self.cbf_session = CBFIngest(
+                opts, self.proc_template,
                 self._my_sensors, opts.telstate, 'cbf', cbf_logger)
         # add in existing signal display recipients...
-        for (ip,port) in self.sdisp_ips.iteritems():
-            self.cbf_session.add_sdisp_ip(ip,port)
+        for (ip, port) in self.sdisp_ips.iteritems():
+            self.cbf_session.add_sdisp_ip(ip, port)
         self.cbf_session.start()
 
         self._my_sensors["capture-active"].set_value(1)
@@ -159,7 +168,7 @@ class IngestDeviceServer(DeviceServer):
             The current system center frequency in hz
         """
         if self.cbf_session is None:
-            return ("fail","No active capture session. Please start one using capture_init")
+            return ("fail", "No active capture session. Please start one using capture_init")
         self.cbf_session.set_center_freq(center_freq_hz)
         logger.info("Center frequency set to %f Hz", center_freq_hz)
         return ("ok", "set")
@@ -176,21 +185,24 @@ class IngestDeviceServer(DeviceServer):
             # drop_sdisp_ip can in theory raise KeyError, but the check against
             # our own list prevents that.
             self.cbf_session.drop_sdisp_ip(ip)
-        return ("ok","The IP address has been dropped as a signal display recipient")
+        return ("ok", "The IP address has been dropped as a signal display recipient")
 
     @request(Str())
     @return_reply(Str())
     @tornado.gen.coroutine
     def request_add_sdisp_ip(self, req, ip):
-        """Add the supplied ip and port (ip[:port]) to the list of signal display data recipients.If not port is supplied default of 7149 is used."""
+        """Add the supplied ip and port (ip[:port]) to the list of signal
+        display data recipients.If not port is supplied default of 7149 is
+        used."""
         ipp = ip.split(":")
         ip = ipp[0]
         if len(ipp) > 1:
             port = int(ipp[1])
         else:
             port = 7149
-        if self.sdisp_ips.has_key(ip):
-            raise tornado.gen.Return(("ok", "The supplied IP is already in the active list of recipients."))
+        if ip in self.sdisp_ips:
+            raise tornado.gen.Return(
+                    ("ok", "The supplied IP is already in the active list of recipients."))
         self.sdisp_ips[ip] = port
         if self.cbf_session is not None:
             # add_sdisp_ip can in theory raise KeyError, but the check against
@@ -203,7 +215,7 @@ class IngestDeviceServer(DeviceServer):
         """Used to attempt a graceful resolution to external
         interrupts. Basically calls capture done."""
         logger.warning("External interrupt called - attempting graceful shutdown.")
-        yield self.request_capture_done("","")
+        yield self.request_capture_done("", "")
 
     @return_reply(Str())
     @tornado.gen.coroutine
@@ -242,15 +254,15 @@ def main():
     if len(logging.root.handlers) > 0:
         logging.root.removeHandler(logging.root.handlers[0])
     formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
-                                      datefmt="%Y-%m-%d %H:%M:%S")
+                                  datefmt="%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
 
     logger.setLevel(logging.INFO)
 
+    # configure SPEAD to display warnings about dropped packets etc...
     logging.getLogger('spead2').setLevel(logging.WARNING)
-     # configure SPEAD to display warnings about dropped packets etc...
 
     cbf_logger.setLevel(logging.INFO)
     cbf_logger.info("CBF ingest logging started")
@@ -259,11 +271,11 @@ def main():
     ioloop.install()
     antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
     server = IngestDeviceServer(logger, opts.sdisp_spead, antennas, opts.cbf_channels,
-            opts.host, opts.port)
+                                opts.host, opts.port)
     server.set_concurrency_options(thread_safe=False, handler_thread=False)
     server.set_ioloop(ioloop)
-    manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
-     # allow remote debug connections and expose server and opts
+    # allow remote debug connections and expose server and opts
+    manhole.install(oneshot_on='USR1', locals={'server': server, 'opts': opts})
 
     trollius.get_event_loop().add_signal_handler(
         signal.SIGINT, lambda: trollius.async(on_shutdown(server)))
@@ -278,4 +290,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
