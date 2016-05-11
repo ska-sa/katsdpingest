@@ -23,10 +23,6 @@ import trollius
 from trollius import From
 
 
-timestamps_dataset = '/Data/timestamps'
-flags_dataset = '/Data/flags'
-cbf_data_dataset = '/Data/correlator_data'
-
 # CBF SPEAD metadata items that should be stored as sensors rather than attributes
 # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
 CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
