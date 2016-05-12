@@ -471,13 +471,6 @@ class CBFIngest(object):
         if channels <= 0:
             raise ValueError('No channels')
 
-        # we need to create the raw datasets.
-        data_item = ig_cbf['xeng_raw']
-        new_shape = list(data_item.shape)
-        new_shape[-2] = baselines
-        self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(
-            str(new_shape), np.float32))
-
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
