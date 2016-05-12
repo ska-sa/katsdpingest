@@ -109,7 +109,8 @@ class _CaptureSession(object):
         print (dada_buffer_process.communicate())
         
         dada_buffer_process.wait()
-        cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
+        #should be 268435456, can't creat such a large buffer in docker at the moment
+        cmd = ['dada_db', '-k', dadaId, '-b', '26843545', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -138,7 +139,7 @@ class _CaptureSession(object):
         )
 
 
-    def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.2", pol_h_port = 8890):
+    def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 8890):
 
         cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
 
@@ -182,41 +183,8 @@ class _CaptureSession(object):
                 core to run capture on
         """
         print ("capture_process")
+        self._create_metaspead()
         cap_env = os.environ.copy()
-        # capture ADC_SYNC_TIME from the meta-data stream before running capture code
-        pol_h_host  = "10.100.21.5"
-        pol_h_mcast = "239.9.3.2"
-        pol_h_port  = 8890
-        cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
-
-        speadmeta_process = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-
-        speadmeta_process.wait()
-        # we need to capture the output from this process
-        adc_sync_time, error = speadmeta_process.communicate()
-
-        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
-        runtimeConfig = spipConfig + ".live"
-
-        # we need to capture the output from this process
-        adc_sync_time, error = yield [
-        Task(self._capture_process.stdout.read_until_close),
-        Task(self._capture_process.stderr.read_until_close)
-        ]
-
-        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
-        runtimeConfig = spipConfig + ".live"
-        f_read = open (spipConfig, 'r')
-        f_write = open (spipConfig, 'w')
-        for line in f_read:
-            if line.find("ADC_SYNC_TIME"):
-                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
-            else:
-                f_write.write(line + "\n")
-        f_read.close()
-        f_write.close()
 
         cap_env["LD_PRELOAD"] = "libvma.so"
         cap_env["VMA_MTU"] = "9200"
