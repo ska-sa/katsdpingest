@@ -236,10 +236,10 @@ class _CaptureSession(object):
 
         import fileinput
         import sys
-        f_write = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r+')
+        #f_write = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r+')
         print ("opened")
-        for line in fileinput.input(file, inplace=1):
-            print(line)
+        for line in fileinput.input("/home/kat/hardware_cbf_4096chan_2pol.cfg", inplace=1):
+            #print(line)
             if "ADC_SYNC_TIME" in line:
                 line = "ADC_SYNC_TIME %s\n"%(adc_sync_time)
             sys.stdout.write(line)
