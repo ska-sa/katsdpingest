@@ -59,8 +59,8 @@ class _CaptureSession(object):
     def __init__(self, args, loop):
         self._loop = loop
         self._args = args
-        #self._dada_dbdisk_process = None
-        #self._capture_process = None
+        self._dada_dbdisk_process = None
+        self._capture_process = None
         self._timestamps = []
         self._manual_stop = False
         self._endpoints = []
@@ -139,8 +139,8 @@ class _CaptureSession(object):
         )
 
 
-    def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 8890):
-
+    def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
+        print ("IN METADATA")
         cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
 
         speadmeta_process = subprocess.Popen(
@@ -151,7 +151,7 @@ class _CaptureSession(object):
         speadmeta_process.wait()
         # we need to capture the output from this process
         adc_sync_time, error = speadmeta_process.communicate()
-
+        print ("meta spead run")
         # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
         runtimeConfig = spipConfig + ".live"
         f_read = open (spipConfig, 'r')
@@ -165,6 +165,7 @@ class _CaptureSession(object):
                 f_write.write(line + "\n")
         f_read.close()
         f_write.close()
+        print ("meta complete with ts = %d"%ads_sync_time)
 
 
 
@@ -182,7 +183,7 @@ class _CaptureSession(object):
             core2 :
                 core to run capture on
         """
-        print ("capture_process")
+        print ("capture_process+++++++______!!")
         self._create_metaspead()
         cap_env = os.environ.copy()
 
@@ -211,16 +212,69 @@ class _CaptureSession(object):
         #self._create_dada_dbdisk()
         #_logger.info ("dada_dbdisk output :\n %s\n error\n %s"%(result,error))
         #print ("dada_dbdisk complete") 
-        self._create_capture_process()
-        #_logger.info ("capture output :\n %s\n error\n %s"%(result,error))
-        print ("capture started")
-        #ret = [self._capture_process.wait_for_exit(),]
+        #self._create_capture_process()
+        print ("capture_process+++++++______!!")
+        #self._create_metaspead()
+        #def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
+        print ("IN METADATA")
+        cmd = ["meerkat_speadmeta", "10.100.21.5", "239.9.3.30", "-p", "%d"%7148]
 
-        print ("capture_process_output = %s"%(result,error))
+        speadmeta_process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+
+        speadmeta_process.wait()
+        # we need to capture the output from this process
+        adc_sync_time, error = speadmeta_process.communicate()
+        print ("meta spead run")
+        print (adc_sync_time)
+        print (error)
+        # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
+        runtimeConfig = spipConfig + ".live"
+        f_read = open (spipConfig, 'r')
+
+
+        f_write = open (spipConfig, 'w')
+        for line in f_read:
+            if line.find("ADC_SYNC_TIME"):
+                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
+            else:
+                f_write.write(line + "\n")
+        f_read.close()
+        f_write.close()
+        print ("meta complete with ts = %d"%ads_sync_time)
+
+        cap_env = os.environ.copy()
+
+        cap_env["LD_PRELOAD"] = "libvma.so"
+        cap_env["VMA_MTU"] = "9200"
+        cap_env["VMA_RX_POLL_YIELD"] = "1"
+        cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
+        #_create_capture_process(self, spipConfig="/home/kat/hardware_cbf_4096chan_2pol.cfg", core1=3, core2=5):
+        cmd = ["meerkat_udpmergedb", "/home/kat/hardware_cbf_4096chan_2pol.cfg", "-f", "spead", "-b", "%d"%3, "-c" "%d"%5]
+
+        self._capture_process = subprocess.Popen(
+        cmd, subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=cap_env
+        )
+
+        #result, error = yield self._capture_process.communicate()
+
+        #raise Return((result, error))
+        #_logger.info ("capture output :\n %s\n error\n %s"%(result,error))
+        print ("capture started_________________-----------!!")
+        while (self._capture_process == None):
+            print ("No capture")
+            time.sleep(1)
+        self._capture_process.wait()
+        result, error = yield self._capture_process.communicate()
+
+        raise Return((result, error))
+
+        #print ("capture_process_output = %s"%(result,error))
         #ret.append (self._dada_dbdisk_process.wait_for_exit())
 
-        # return yield ret
-
+        #ret = yield self._capture_process.communicate()
 
     @trollius.coroutine
     def stop(self):
