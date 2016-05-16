@@ -217,7 +217,7 @@ class _CaptureSession(object):
         #self._create_metaspead()
         #def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
         print ("IN METADATA")
-        cmd = ["meerkat_speadmeta", "10.100.21.5", "239.9.3.30", "-p", "%d"%7148]
+        cmd = ["meerkat_speadmeta", "10.100.205.11", "239.9.3.30", "-p", "%d"%7148]
 
         speadmeta_process = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -231,18 +231,25 @@ class _CaptureSession(object):
         print (adc_sync_time)
         print (error)
         # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
-        runtimeConfig = spipConfig + ".live"
-        f_read = open (spipConfig, 'r')
+        #runtimeConfig = "/home/kat/hardware_cbf_4096chan_2pol.cfg" + ".live"
+        #f_read = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r')
 
-
-        f_write = open (spipConfig, 'w')
-        for line in f_read:
-            if line.find("ADC_SYNC_TIME"):
-                f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
-            else:
-                f_write.write(line + "\n")
-        f_read.close()
-        f_write.close()
+        import fileinput
+        import sys
+        f_write = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r+')
+        print ("opened")
+        for line in fileinput.input(file, inplace=1):
+            print(line)
+            if "ADC_SYNC_TIME" in line:
+                line = "ADC_SYNC_TIME %s\n"%(adc_sync_time)
+            sys.stdout.write(line)
+        #for line in f_read:
+        #    if line.find("ADC_SYNC_TIME"):
+        #        f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
+        #    else:
+        #        f_write.write(line + "\n")
+        #f_read.close()
+        #f_write.close()
         print ("meta complete with ts = %d"%ads_sync_time)
 
         cap_env = os.environ.copy()
