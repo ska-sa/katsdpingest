@@ -109,8 +109,7 @@ class _CaptureSession(object):
         print (dada_buffer_process.communicate())
         
         dada_buffer_process.wait()
-        #should be 268435456, can't creat such a large buffer in docker at the moment
-        cmd = ['dada_db', '-k', dadaId, '-b', '26843545', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -226,23 +225,35 @@ class _CaptureSession(object):
 
         speadmeta_process.wait()
         # we need to capture the output from this process
-        adc_sync_time, error = speadmeta_process.communicate()
+        error, adc_sync_time = speadmeta_process.communicate()
         print ("meta spead run")
-        print (adc_sync_time)
+
+#        print (adc_sync_time)
+ #       print (type(adc_sync_time))
         print (error)
         # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
         #runtimeConfig = "/home/kat/hardware_cbf_4096chan_2pol.cfg" + ".live"
         #f_read = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r')
 
-        import fileinput
-        import sys
-        #f_write = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r+')
-        print ("opened")
-        for line in fileinput.input("/home/kat/hardware_cbf_4096chan_2pol.cfg", inplace=1):
+        import re
+        replace = "ADC_SYNC_TIME %s"%adc_sync_time.strip()
+        content = ""
+        with open('/home/kat/hardware_cbf_4096chan_2pol.cfg.template', 'r+') as content_file:
+            content = content_file.read()
+            print (content)
+            content = re.sub("ADC_SYNC_TIME",replace,content)
+            print (content)
+        with open ('/home/kat/hardware_cbf_4096chan_2pol.cfg', 'r+') as content_file:
+            content_file.seek(0)
+            print (2)
+            content_file.write(content)
+            print (3)
+            content_file.truncate() 
+        #for line in fileinput.input("/home/kat/hardware_cbf_4096chan_2pol.cfg", inplace=1):
             #print(line)
-            if "ADC_SYNC_TIME" in line:
-                line = "ADC_SYNC_TIME %s\n"%(adc_sync_time)
-            sys.stdout.write(line)
+            #if "ADC_SYNC_TIME" in line:
+            #    line = "ADC_SYNC_TIME %s/n"%(adc_sync_time)
+            #sys.stdout.write(line)
         #for line in f_read:
         #    if line.find("ADC_SYNC_TIME"):
         #        f_write.write("ADC_SYNC_TIME %s\n"%(adc_sync_time))
@@ -250,7 +261,7 @@ class _CaptureSession(object):
         #        f_write.write(line + "\n")
         #f_read.close()
         #f_write.close()
-        print ("meta complete with ts = %d"%ads_sync_time)
+        print ("meta complete with ts = %s"%adc_sync_time)
 
         cap_env = os.environ.copy()
 
@@ -296,7 +307,7 @@ class _CaptureSession(object):
             self._capture_process.kill()
         if self._dada_dbdisk_process != None:
             self._dada_dbdisk_process.kill()
-        #yield From(self._run_future)
+        yield From(self._run_future)
 
 
 class CaptureServer(object):
