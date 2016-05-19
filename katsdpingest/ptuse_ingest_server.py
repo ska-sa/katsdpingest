@@ -190,7 +190,7 @@ class _CaptureSession(object):
         cap_env["VMA_MTU"] = "9200"
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
-                                                           
+        cap_env["VMA_RING_ALLOCATION_LOGIC_RX"]="1"                                                   
         cmd = ["meerkat_udpmergedb", "runtimeConfig", "-f", "spead", "-b", "%d"%core1, "-c" "%d"%core2]
 
         self._capture_process = subprocess.Popen(
