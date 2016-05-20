@@ -380,7 +380,7 @@ class CBFIngest(threading.Thread):
             tx.send_heap(data)
 
     @classmethod
-    def baseline_permutation(cls, bls_ordering, antenna_mask=None):
+    def baseline_permutation(cls, bls_ordering, antenna_mask=None, rotate=False):
         """Construct a permutation to place the baselines into the desired
         order for internal processing.
 
@@ -390,6 +390,9 @@ class CBFIngest(threading.Thread):
             Names of inputs in current ordering
         antenna_mask : set of strings, optional
             Antennas to retain in the permutation (without polarisation suffix)
+        rotate : bool, optional
+            Rotate received CBF baseline ordering up by 1 to account for CBF bustedness
+            (20 May 2016 - may be fixed shortly after...)
 
         Returns
         -------
@@ -400,6 +403,10 @@ class CBFIngest(threading.Thread):
         new_ordering : ndarray
             Replacement ordering, in the same format as `bls_ordering`
         """
+        if rotate:
+            logger.warning("Rotating CBF baseline ordering up by 1 as a temporary fix")
+            bls_ordering = bls_ordering[range(1, len(bls_ordering)) + [0]]
+
         def keep(baseline):
             if antenna_mask:
                 input1, input2 = baseline
