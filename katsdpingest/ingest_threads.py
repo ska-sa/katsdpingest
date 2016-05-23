@@ -404,7 +404,6 @@ class CBFIngest(threading.Thread):
             Replacement ordering, in the same format as `bls_ordering`
         """
         if rotate:
-            logger.warning("Rotating CBF baseline ordering up by 1 as a temporary fix")
             bls_ordering = bls_ordering[range(1, len(bls_ordering)) + [0]]
 
         def keep(baseline):
