@@ -28,6 +28,8 @@ def main():
     parser.add_argument('--file-base', default='.', type=str, help='base directory into which to write HDF5 files', metavar='DIR')
     parser.add_argument('--port', '-p', type=int, default=2050, help='katcp host port')
     parser.add_argument('--host', '-a', type=str, default='', help='katcp host address')
+    parser.add_argument('--backend', '-b', type=str, default='digifits', help='Processing backend. Options [digifits | dspsr | db_disk]')
+    parser.add_argument('--halfband', '-d', type=str, default=False, help='Perform halfband observation. All digifits observations will automatically be set to halfband.')
     args = parser.parse_args()
     logging.basicConfig(level=args.logging, format='%(asctime)s %(levelname)s:%(name)s: %(message)s')
     if not os.access(args.file_base, os.W_OK):

@@ -57,6 +57,7 @@ class _CaptureSession(object):
     """
 
     def __init__(self, args, loop):
+        print (args)
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
@@ -77,18 +78,30 @@ class _CaptureSession(object):
         self._dada_dbdisk_process = None
         self._capture_process = None
         self._speadmeta_process = None
+        self._digifits_process = None
+        self._dspsr_process = None
 
         self._create_dada_buffer()
         #_logger.info("Created dada_buffer\n" + result)
         print ("Created dada_buffer\n")
-        self._create_dada_dbdisk()
+        print (args.backend)
+        print (type(args.backend))
+        if (args.backend in "digifits"):
+            self._create_digifits()
+        elif (args.backend in "dspsr"):
+            self._create_dspsr()
+        elif (args.backend in "dada_dbdisk"):
+            self._create_dada_dbdisk()
 
         time.sleep(1)
+        
+        if (args.halfband or args.backend == "digifits"):
+            self._run_future = trollius.async(self._run(halfband=True), loop=self._loop)
+        else:
+            self._run_future = trollius.async(self._run(), loop=self._loop)
 
-        self._run_future = trollius.async(self._run(), loop=self._loop)
-
-        if self._dada_dbdisk_process == None:
-            raise Exception("data_db process failed to start after seconds")
+        #if self._dada_dbdisk_process == None:
+        #    raise Exception("data_db process failed to start after seconds")
         #if self._speadmeta_process == None:
             #raise Exception("metadata_process failed to start after seconds")
 
@@ -137,6 +150,21 @@ class _CaptureSession(object):
         cmd, stdout=subprocess.PIPE
         )
 
+    def _create_digifits (self):
+        print ("digifits")
+        with open("/tmp/digifits.log","w+") as logfile:
+            cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-set","type=search","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+            self._digifits_process = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
+            )
+
+    def _create_dspsr(self):
+        print("dspsr")
+        
+        cmd = ["dspsr","-D","0","-L","5","-cuda","0","minram","512","/home/kat/dada.info"]
+        self._dspsr_process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
 
     def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
         print ("IN METADATA")
@@ -202,7 +230,7 @@ class _CaptureSession(object):
         raise Return((result, error))
 
     @trollius.coroutine
-    def _run(self):
+    def _run(self, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
         """Does the work of capturing a stream. This is a coroutine."""
         print ("running")
         #self._create_dada_buffer()
@@ -238,12 +266,19 @@ class _CaptureSession(object):
         import re
         replace = "ADC_SYNC_TIME %s"%adc_sync_time.strip()
         content = ""
-        with open('/home/kat/hardware_cbf_4096chan_2pol.cfg.template', 'r+') as content_file:
+        if halfband:
+            c_file = '/home/kat/hardware_cbf_2048chan_2pol.cfg'
+        else:
+            c_file = '/home/kat/hardware_cbf_4096chan_2pol.cfg'
+        print ("c_file = %s"%c_file)
+        with open('%s.template'%(c_file), 'r+') as content_file:
             content = content_file.read()
             print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
             print (content)
-        with open ('/home/kat/hardware_cbf_4096chan_2pol.cfg', 'r+') as content_file:
+        print (1)
+        with open (c_file, 'r+') as content_file:
+            print(0)
             content_file.seek(0)
             print (2)
             content_file.write(content)
@@ -270,7 +305,7 @@ class _CaptureSession(object):
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         #_create_capture_process(self, spipConfig="/home/kat/hardware_cbf_4096chan_2pol.cfg", core1=3, core2=5):
-        cmd = ["meerkat_udpmergedb", "/home/kat/hardware_cbf_4096chan_2pol.cfg", "-f", "spead", "-b", "%d"%3, "-c" "%d"%5]
+        cmd = ["meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(3,5)]
 
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=cap_env
@@ -307,6 +342,10 @@ class _CaptureSession(object):
             self._capture_process.kill()
         if self._dada_dbdisk_process != None:
             self._dada_dbdisk_process.kill()
+        if self._digifits_process != None:
+            self._digifits_process.kill()
+        if self._dspsr_process != None:
+            self._dspsr_process.kill()
         yield From(self._run_future)
 
 
@@ -356,7 +395,7 @@ class CaptureServer(object):
             try:
                 self._capture = _CaptureSession(self._args, self._loop)
             except Exception as e:
-                print ("Exception caught")
+                print ("Exception caught " + str(e))
                 #self.stop_capture()
                                                         
     @trollius.coroutine
