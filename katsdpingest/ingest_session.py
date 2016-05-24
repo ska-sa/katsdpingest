@@ -19,8 +19,10 @@ import katsdptelstate
 import logging
 import trollius
 from trollius import From
+from collections import deque
 
 
+ACTIVE_FRAMES = 3
 # CBF SPEAD metadata items that should be stored as sensors rather than attributes
 # Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
 CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
@@ -66,7 +68,7 @@ class _TimeAverage(object):
         # Interval in ADC clock cycles
         clocks = 2 * cbf_attr['n_chans'] * cbf_attr['n_accs'] * self.ratio
         self.interval = int(round(clocks * cbf_attr['scale_factor_timestamp'] /
-                                  cbf_attr['adc_sample_rate']))
+                                  (2 * cbf_attr['bandwidth'])))
         self._start_ts = None
         self._ts = []
 
@@ -149,7 +151,46 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
+class RXFrame(object):
+    def __init__(self, timestamp, n_streams):
+        self.timestamp = timestamp
+        self.items = [None] * n_streams
+
+    def ready(self):
+        return all(item is not None for item in self.items)
+
+
 class CBFIngest(object):
+    """
+    Ingest session.
+
+    .. note:: The list of attributes is incomplete
+
+    Attributes
+    ----------
+    vis_in_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `vis_in` device buffer
+    timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `timeseries_weights` device buffer
+    output_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the L0 output device buffers, namely `spec_vis`,
+        `spec_flags`, `cont_vis` and `cont_flags`
+    sd_output_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the signal display output device buffers.
+    proc_resource : :class:`katsdpsigproc.resource.Resource`
+        The proc object, and the contents of all its buffers except for those
+        covered by other resources above.
+    rx : list
+        Receive SPEAD streams, each of type
+        :class:`spead2.recv.trollius.Stream`.
+    _rx_frames : :class:`deque`
+        Deque of :class:`RXFrame` objects representing incomplete frames. After
+        initialization, it always contains exactly :const:`ACTIVE_FRAMES`
+        elements, with timestamps separated by the inter-dump interval.
+    _rx_frames_complete : :class:`trollius.Queue`
+        Queue of complete frames of type :class:`RXFrame`. A value of ``None``
+        in the queue indicates that all streams have stopped.
+    """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
@@ -180,21 +221,6 @@ class CBFIngest(object):
     def create_proc_template(cls, context, antennas, channels):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
-
-        Attributes
-        ----------
-        vis_in_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the `vis_in` device buffer
-        timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the `timeseries_weights` device buffer
-        output_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the L0 output device buffers, namely `spec_vis`,
-            `spec_flags`, `cont_vis` and `cont_flags`
-        sd_output_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the signal display output device buffers.
-        proc_resource : :class:`katsdpsigproc.resource.Resource`
-            The proc object, and the contents of all its buffers except for those
-            covered by other resources above.
 
         Parameters
         ----------
@@ -269,9 +295,12 @@ class CBFIngest(object):
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}".format(
             [str(x) for x in self.cbf_spead_endpoints]))
-        self.rx = spead2.recv.trollius.Stream(spead2.ThreadPool())
+        self._rx_frames = None
+        self._rx_frames_complete = trollius.Queue(1)
+        self.rx = []
         for endpoint in self.cbf_spead_endpoints:
-            self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+            self.rx.append(spead2.recv.trollius.Stream(spead2.ThreadPool()))
+            self.rx[-1].add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
         # Instantiation of the streams delayed until exact integration time is known
         self.tx_spectral = None
         self.tx_continuum = None
@@ -476,14 +505,14 @@ class CBFIngest(object):
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'])
+            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'] * len(self.rx))
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
+            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'] * len(self.rx))
 
     @trollius.coroutine
-    def _initialise(self, ig_cbf):
+    def _initialise(self):
         """Initialise variables on reception of the first usable dump."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
         # Configure the masking and reordering of baselines
@@ -491,7 +520,7 @@ class CBFIngest(object):
         permutation, self.cbf_attr['bls_ordering'] = \
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
-        channels = self.cbf_attr['n_chans']
+        channels = self.cbf_attr['n_chans'] * len(self.rx)
         channel_range = (0, channels)
         n_accs = self.cbf_attr['n_accs']
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
@@ -717,11 +746,13 @@ class CBFIngest(object):
                 timestamps, time.time()))
 
     @trollius.coroutine
-    def _frame_job(self, proc_a, vis_in_a, data_ts, vis_in):
+    def _frame_job(self, proc_a, vis_in_a, frame):
         with proc_a as proc, vis_in_a as vis_in_buffer:
             # Load data
             events = yield From(vis_in_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
+            # TODO: copy directly into device memory, without assembling
+            vis_in = np.concatenate(frame.items)
             vis_in_buffer.set_async(self.command_queue, vis_in)
             transfer_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
@@ -779,7 +810,8 @@ class CBFIngest(object):
     @trollius.coroutine
     def stop(self):
         if self._run_future:
-            self.rx.stop()
+            for rx in self.rx:
+                rx.stop()
             yield From(self._run_future)
             self._run_future = None
 
@@ -806,90 +838,172 @@ class CBFIngest(object):
             self.logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
+    def _pop_rx_frame(self, timestep):
+        """Remove the oldest element of :attr:`_rx_frames`, and replace it with
+        a new frame at the other end.
+
+        Parameters
+        ----------
+        timestep : int
+            Timestamp difference between successive frames
+        """
+        # TODO: store timestep in the class
+        next_timestamp = self._rx_frames[-1].timestamp + timestep
+        self._rx_frames.popleft()
+        self._rx_frames.append(RXFrame(next_timestamp, len(self.rx)))
+
+    @trollius.coroutine
+    def _flush_rx_frames(self, timestep):
+        """Remove any completed frames from the head of :attr:`_rx_frames`.
+
+        Parameters
+        ----------
+        timestep : int
+            Timestamp difference between successive frames
+        """
+        while self._rx_frames[0].ready():
+            # Note: _pop_rx_frame must be done *before* trying to put the
+            # item onto the queue, because other coroutines may run and
+            # operate on _rx_frames while we're waiting for space in the
+            # queue.
+            frame = self._rx_frames[0]
+            self.logger.debug('Flushing frame with timestamp %d', frame.timestamp)
+            self._pop_rx_frame(timestep)
+            yield From(self._rx_frames_complete.put(frame))
+
+    @trollius.coroutine
+    def _read_stream(self, stream, stream_idx):
+        """Co-routine that sucks data from a single stream and populates the frame queue."""
+        try:
+            prev_ts = -1
+            ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
+            ts_wrap_period = 2**48
+            ig_cbf = spead2.ItemGroup()
+            while True:
+                try:
+                    self.logger.debug('Waiting for heap')
+                    heap = yield From(stream.get())
+                    self.logger.debug('Heap received')
+                except spead2.Stopped:
+                    break
+                updated = ig_cbf.update(heap)
+                if stream_idx == 0:
+                    self._update_telstate(updated)
+                    self._update_cbf_attr(updated)
+                if 'xeng_raw' not in updated:
+                    self.logger.info(
+                        "CBF non-data heap received on stream %d", stream_idx)
+                    continue
+                if 'timestamp' not in updated:
+                    self.logger.warning(
+                        "CBF heap without timestamp received on stream %d", stream_idx)
+                    continue
+
+                data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
+                data_item = ig_cbf['xeng_raw'].value
+                self.logger.info('Received heap with timestamp %d on stream %d', data_ts, stream_idx)
+                if data_ts <= prev_ts:
+                    # This happens either because packets ended up out-of-order (in
+                    # which case we just discard the heap that arrived too late),
+                    # or because the CBF timestamp wrapped. Out-of-order should
+                    # jump backwards a tiny amount while wraps should jump back by
+                    # close to ts_wrap_period. If both happen at the same time
+                    # then things will go wrong.
+                    if data_ts < prev_ts - ts_wrap_period // 2:
+                        ts_wrap_offset += ts_wrap_period
+                        data_ts += ts_wrap_period
+                        self.logger.warning('Data timestamps wrapped')
+                    else:
+                        self.logger.warning(
+                            "Data timestamps have gone backwards (%d <= %d), dropping heap",
+                            data_ts, prev_ts)
+                        continue
+                prev_ts = data_ts
+                # we have new data...
+
+                # check to see if our CBF attributes are complete
+                # i.e. make sure any attributes marked as critical are present
+                if not CBF_CRITICAL_ATTRS.issubset(self.cbf_attr.keys()):
+                    self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
+                    continue
+
+                timestep = int(round(self.cbf_attr['n_chans'] * self.cbf_attr['n_accs'] * self.cbf_attr['scale_factor_timestamp'] / self.cbf_attr['bandwidth']))
+                if not self._rx_frames:
+                    self._rx_frames = deque()
+                    for i in range(ACTIVE_FRAMES):
+                        self._rx_frames.append(RXFrame(data_ts + timestep * i, len(self.rx)))
+                ts0 = self._rx_frames[0].timestamp
+                if data_ts < ts0:
+                    self.logger.warning('Timestamp %d on stream %d is too far in the past, discarding',
+                                        data_ts, stream_idx)
+                    continue
+                elif (data_ts - ts0) % timestep != 0:
+                    self.logger.warning('Timestamp %d on stream %d does not match expected period, discarding',
+                                        data_ts, stream_idx)
+                    continue
+                while data_ts >= ts0 + timestep * ACTIVE_FRAMES:
+                    self.logger.warning('Frame with timestamp %d is incomplete, discarding',
+                                        self._rx_frames_first_ts)
+                    self._pop_rx_frame()
+                    yield From(self._flush_rx_frames(timestep))
+                    ts0 = self._rx_frames[0].timestamp
+                frame_idx = (data_ts - ts0) // timestep
+                self._rx_frames[frame_idx].items[stream_idx] = data_item
+                yield From(self._flush_rx_frames(timestep))
+        finally:
+            yield From(self._rx_frames_complete.put(stream_idx))
+
     @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
-        ig_cbf = spead2.ItemGroup()
         idx = 0
         self.status_sensor.set_value("idle")
-        prev_ts = -1
-        ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
-        ts_wrap_period = 2**48
         self._output_avg = None
         self._sd_avg = None
-        while True:
-            try:
-                heap = yield From(self.rx.get())
-            except spead2.Stopped:
-                break
+        rx_running = len(self.rx)
+        read_futures = []
+        for i, stream in enumerate(self.rx):
+            read_futures.append(trollius.async(self._read_stream(stream, i)))
+        while rx_running:
+            frame = yield From(self._rx_frames_complete.get())
+            if isinstance(frame, int):
+                # Special case to mark the end of a stream
+                self.rx[frame].stop()   # In case the co-routine exited with an exception
+                yield From(read_futures[frame])
+                read_futures[frame] = None
+                rx_running -= 1
+                continue
 
             st = time.time()
             if idx == 0:
+                # TODO: set this earlier, perhaps inside _read_stream
                 self.status_sensor.set_value("capturing")
 
-            # Update the telescope state and local cbf_attr cache
-            updated = ig_cbf.update(heap)
-            self._update_telstate(updated)
-            self._update_cbf_attr(updated)
-            if 'xeng_raw' not in updated:
-                self.logger.warning(
-                    "CBF Data received but either no metadata or xeng_raw group is present")
-                continue
-            if 'timestamp' not in updated:
-                self.logger.warning("No timestamp received for current data frame - discarding")
-                continue
-            data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
-            data_item = ig_cbf['xeng_raw']
-            if data_ts <= prev_ts:
-                # This happens either because packets ended up out-of-order (in
-                # which case we just discard the heap that arrived too late),
-                # or because the CBF timestamp wrapped. Out-of-order should
-                # jump backwards a tiny amount while wraps should jump back by
-                # close to ts_wrap_period. If both happen at the same time
-                # then things will go wrong.
-                if data_ts < prev_ts - ts_wrap_period // 2:
-                    ts_wrap_offset += ts_wrap_period
-                    data_ts += ts_wrap_period
-                    self.logger.warning('Data timestamps wrapped')
-                else:
-                    self.logger.warning(
-                        "Data timestamps have gone backwards (%d <= %d), dropping heap",
-                        data_ts, prev_ts)
-                    continue
-            prev_ts = data_ts
-            # we have new data...
-
-            # check to see if our CBF attributes are complete
-            # i.e. make sure any attributes marked as critical are present
-            if not CBF_CRITICAL_ATTRS.issubset(self.cbf_attr.keys()):
-                self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
-                continue
-
             # Generate timestamps
-            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
+            current_ts_rel = frame.timestamp / self.cbf_attr['scale_factor_timestamp']
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                yield From(self._initialise(ig_cbf))
+                yield From(self._initialise())
 
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
+            self._output_avg.add_timestamp(frame.timestamp)
+            self._sd_avg.add_timestamp(frame.timestamp)
 
             proc_a = self.proc_resource.acquire()
             vis_in_a = self.vis_in_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # enqueuing its work before trying to carry on.
             yield From(proc_a.wait())
-            self.jobs.add(self._frame_job(proc_a, vis_in_a, data_ts, data_item.value))
+            self.jobs.add(self._frame_job(proc_a, vis_in_a, frame))
 
             # Done with reading this frame
             idx += 1
             self.pkt_sensor.set_value(idx)
             tt = time.time() - st
             self.logger.info(
-                "Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
+                "Captured CBF frame with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
                 current_ts, tt+st, tt, idx)
             # Clear completed processing, so that any related exceptions are
             # thrown as soon as possible.
