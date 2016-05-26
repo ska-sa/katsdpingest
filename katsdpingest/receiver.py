@@ -1,5 +1,6 @@
 """Receives from multiple SPEAD streams and combines heaps into frames."""
 
+from __future__ import print_function, absolute_import, division
 import spead2
 import spead2.recv.trollius
 import trollius
@@ -86,11 +87,11 @@ class Receiver(object):
         self.active_frames = active_frames
         self._streams = []
         self._frames = None
-        self._frames_complete = trollius.Queue()
+        self._frames_complete = trollius.Queue(loop=loop)
         self._futures = []
         self._interval = None
         for i, endpoint in enumerate(endpoints):
-            stream = spead2.recv.trollius.Stream(spead2.ThreadPool())
+            stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), loop=loop)
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams.append(stream)
             self._futures.append(trollius.async(self._read_stream(stream, i), loop=loop))
@@ -99,7 +100,7 @@ class Receiver(object):
     @property
     def bandwidth(self):
         try:
-            return self.cbf_attr['n_chans'] * len(self._streams)
+            return self.cbf_attr['bandwidth'] * len(self._streams)
         except KeyError:
             return None
 
@@ -249,8 +250,7 @@ class Receiver(object):
                                         data_ts, stream_idx)
                     continue
                 while data_ts >= ts0 + self._interval * self.active_frames:
-                    _logger.warning('Frame with timestamp %d is incomplete, discarding',
-                                        self._frames_first_ts)
+                    _logger.warning('Frame with timestamp %d is incomplete, discarding', ts0)
                     self._pop_frame()
                     yield From(self._flush_frames())
                     ts0 = self._frames[0].timestamp
