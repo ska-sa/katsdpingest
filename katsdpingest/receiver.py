@@ -217,11 +217,6 @@ class Receiver(object):
                         ts_wrap_offset += ts_wrap_period
                         data_ts += ts_wrap_period
                         _logger.warning('Data timestamps wrapped')
-                    else:
-                        _logger.warning(
-                            "Data timestamps have gone backwards (%d <= %d), dropping heap",
-                            data_ts, prev_ts)
-                        continue
                 prev_ts = data_ts
                 # we have new data...
 
@@ -281,4 +276,13 @@ class Receiver(object):
                 self._running -= 1
             else:
                 raise Return(frame)
+        # Check for frames still in the queue
+        while self._frames:
+            frame = self._frames[0]
+            self._frames.popleft()
+            if frame.ready():
+                _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
+                raise Return(frame)
+            else:
+                _logger.warning('Frame with timestamp %d is incomplete, discarding', frame.timestamp)
         raise spead2.Stopped('End of streams')
