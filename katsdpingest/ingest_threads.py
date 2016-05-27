@@ -26,13 +26,18 @@ timestamps_dataset = '/Data/timestamps'
 flags_dataset = '/Data/flags'
 cbf_data_dataset = '/Data/correlator_data'
 
-# CBF SPEAD metadata items that should be stored as sensors rather than attributes
-# Schwardt/Merry: Let the debate ensue as to the whole attribute/sensor utility in the first place
-CBF_SPEAD_SENSORS = ["flags_xeng_raw"]
+# CBF SPEAD metadata items that should be stored as sensors rather than
+# attributes. Don't use this directly; use :func:`is_cbf_sensor` instead,
+# which handles cases that aren't fixed strings.
+CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
     'bandwidth', 'sync_time', 'int_time', 'scale_factor_timestamp'])
+
+
+def is_cbf_sensor(name):
+    return name in CBF_SPEAD_SENSORS or name.startswith('eq_coef_')
 
 
 class CAMIngest(threading.Thread):
@@ -735,15 +740,15 @@ class CBFIngest(threading.Thread):
             # The other items are data rather than metadata, and so do not
             # live in the telescope state.
             if item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
-                # store as an attribute unless item is in CBF_SPEAD_SENSORS (e.g. flags_xeng_raw)
+                # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
                 self._set_telstate_entry(item_name, item.value,
-                                         attribute=(item_name not in CBF_SPEAD_SENSORS))
+                                         attribute=not is_cbf_sensor(item_name))
 
     def _update_cbf_attr(self, updated):
         """Updates the internal cbf_attr dictionary from new values in the item group."""
         for item_name, item in updated.iteritems():
             if (item_name not in ['timestamp', 'xeng_raw'] and
-                    item_name not in CBF_SPEAD_SENSORS and
+                    not is_cbf_sensor(item_name) and
                     item.value is not None):
                 if item_name not in self.cbf_attr:
                     self.cbf_attr[item_name] = item.value
