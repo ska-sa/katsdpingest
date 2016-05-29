@@ -16,7 +16,7 @@ import logging
 import katsdpingest
 import subprocess
 import time
-
+import sys
 
 _logger = logging.getLogger(__name__)
 
@@ -57,7 +57,48 @@ class _CaptureSession(object):
     """
 
     def __init__(self, args, loop):
-        print (args)
+
+        #beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
+        #_logger.info(beam_x_multicast)
+        #beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
+        #_logger.info(beam_y_multicast)
+        #data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
+        #_logger.info(data_port)
+
+        #_logger.info("IN METADATA")
+        #cmd = ["meerkat_speadmeta", "10.100.205.11", beam_x_multicast, "-p", data_port]
+
+        #self._speadmeta_process = subprocess.Popen(
+        #cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        #)
+
+
+        #speadmeta_process.wait(timeout=10)
+        # we need to capture the output from this process
+        #error, adc_sync_time = self._speadmeta_process.communicate()
+        #_logger.info((error,adc_sync_time))
+        #_logger.info("meta spead run")
+
+
+
+
+        _logger.info(args)
+        _logger.info(args.telstate.keys())
+#        antenna_mask', 'cal_bp_solint', 'cal_g_solint', 'cal_k_chan_sample', 'cal_k_solint', 'cal_refant', 'config', 'sdp_cbf_channels', 'sdp_node_detail', 'subarray_product_id
+        _logger.info(args.telstate.get('antenna_mask'))
+
+        _logger.info(args.telstate.get('config'))
+        _logger.info(args.telstate.get('sdp_cbf_channels'))
+        _logger.info(args.telstate.get('sdp_ndoe_detail'))
+        _logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'])
+        _logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'])
+        _logger.info('YOLO')
+        #_logger.info(args.telstate.get('config')['sdp']['filewriter']['1']['telstate'])
+        #t = katsdptelstate.TelescopeState(args.telstate.get('config')['sdp']['filewriter']['1']['telstate'])
+        _logger.info('YOHO')
+        #_logger.info(t.get_range('obs_params', st=0))
+        #_logger.info(args.telstate.getRange('obs_params',st=0))
+        #print (sys.version_info)
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
@@ -71,8 +112,9 @@ class _CaptureSession(object):
         self._timestep = None
         self._ig = spead2.ItemGroup()
         self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
-        #for endpoint in args.cbf_spead:
-        #    _logger.info('Listening on endpoint {}'.format(endpoint))
+        for endpoint in args.cbf_spead:
+            _logger.info('Listening on endpoint {}'.format(endpoint))
+            _logger.info(endpoint.host)
         #    self._endpoints.append(endpoint)
 
         self._dada_dbdisk_process = None
@@ -80,10 +122,10 @@ class _CaptureSession(object):
         self._speadmeta_process = None
         self._digifits_process = None
         self._dspsr_process = None
+        self._speadmeta_process = None
 
         self._create_dada_buffer()
-        #_logger.info("Created dada_buffer\n" + result)
-        print ("Created dada_buffer\n")
+        _logger.info("Created dada_buffer\n")
         print (args.backend)
         print (type(args.backend))
         if (args.backend in "digifits"):
@@ -94,18 +136,25 @@ class _CaptureSession(object):
             self._create_dada_dbdisk()
 
         time.sleep(1)
-        
+        #_run(self, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
+        beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
+        _logger.info(beam_x_multicast)
+        beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
+        _logger.info(beam_y_multicast)
+        data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
+        _logger.info(data_port)
+        #_logger.info(args.telstate.getRange('obs_params',st=0))
         if (args.halfband or args.backend == "digifits"):
-            self._run_future = trollius.async(self._run(halfband=True), loop=self._loop)
+            self._run_future = trollius.async(self._run(halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
         else:
-            self._run_future = trollius.async(self._run(), loop=self._loop)
+            self._run_future = trollius.async(self._run(beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
         #if self._dada_dbdisk_process == None:
         #    raise Exception("data_db process failed to start after seconds")
         #if self._speadmeta_process == None:
             #raise Exception("metadata_process failed to start after seconds")
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers = 64):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =16):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -115,17 +164,18 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['dada_db', '-k', dadaId, '-d']
-        dada_buffer_process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE
-        )
-        print (dada_buffer_process.communicate())
+        #cmd = ['dada_db', '-k', dadaId, '-d']
+        #dada_buffer_process = subprocess.Popen(
+        #cmd, stdout=subprocess.PIPE
+        #)
+        #print (dada_buffer_process.communicate())
         
-        dada_buffer_process.wait()
+        #dada_buffer_process.wait()
         cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
+        print ('creating buffers')
         dada_buffer_process.wait()
         print ('complete buffer creation')
         print (dada_buffer_process.communicate())
@@ -144,22 +194,22 @@ class _CaptureSession(object):
             outputDir :
                 Location to write captured data
         """
-        print ("dada_dbdisk")
+        _logger.info("dada_dbdisk")
         cmd = ['numactl', '-C', '%d'%cpuCore, 'dada_dbdisk', '-k', dadaId, '-D', outputDir, '-z', '-s']
         self._dada_dbdisk_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
 
     def _create_digifits (self):
-        print ("digifits")
+        _logger.info("digifits")
         with open("/tmp/digifits.log","w+") as logfile:
-            cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-set","type=search","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+            cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
             self._digifits_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
+            cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
             )
 
     def _create_dspsr(self):
-        print("dspsr")
+        _logger.info("dspsr")
         
         cmd = ["dspsr","-D","0","-L","5","-cuda","0","minram","512","/home/kat/dada.info"]
         self._dspsr_process = subprocess.Popen(
@@ -225,14 +275,16 @@ class _CaptureSession(object):
         cmd, subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=cap_env
         )
 
-        result, error = yield self._capture_process.communicate()
+        #result, error = yield self._capture_process.communicate()
 
-        raise Return((result, error))
+        #raise Return((result, error))
 
     @trollius.coroutine
     def _run(self, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
         """Does the work of capturing a stream. This is a coroutine."""
-        print ("running")
+        _logger.info("running")
+        #_logger.info(args.telstate.getRange('obs_params',st=0))
+        #_logger.info(args.telstate.get('obs_params'))
         #self._create_dada_buffer()
         #_logger.info("Created dada_buffer\n" + result)
         #print ("Created dada_buffer\n")
@@ -243,22 +295,23 @@ class _CaptureSession(object):
         print ("capture_process+++++++______!!")
         #self._create_metaspead()
         #def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
-        print ("IN METADATA")
-        cmd = ["meerkat_speadmeta", "10.100.205.11", "239.9.3.30", "-p", "%d"%7148]
+        _logger.info("IN METADATA")
+        cmd = ["meerkat_speadmeta", "10.100.205.11", beam_y_multicast, "-p", data_port]
 
-        speadmeta_process = subprocess.Popen(
+        self._speadmeta_process = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
 
-        speadmeta_process.wait()
+        #speadmeta_process.wait(timeout=10)
         # we need to capture the output from this process
-        error, adc_sync_time = speadmeta_process.communicate()
-        print ("meta spead run")
+        error, adc_sync_time = self._speadmeta_process.communicate()
+        _logger.info((error,adc_sync_time))
+        _logger.info("meta spead run")
 
 #        print (adc_sync_time)
  #       print (type(adc_sync_time))
-        print (error)
+        #print (error)
         # next we need to put this ADC_SYNC_TIME into the spipConfig file provided
         #runtimeConfig = "/home/kat/hardware_cbf_4096chan_2pol.cfg" + ".live"
         #f_read = open ("/home/kat/hardware_cbf_4096chan_2pol.cfg", 'r')
@@ -270,12 +323,17 @@ class _CaptureSession(object):
             c_file = '/home/kat/hardware_cbf_2048chan_2pol.cfg'
         else:
             c_file = '/home/kat/hardware_cbf_4096chan_2pol.cfg'
-        print ("c_file = %s"%c_file)
+        
+        _logger.info ("c_file = %s"%c_file)
         with open('%s.template'%(c_file), 'r+') as content_file:
             content = content_file.read()
             print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
-            print (content)
+            content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%interface_ip, content)
+            content = re.sub("DATA_HOST_1         10.100.205.10", "DATA_HOST_1         %s"%interface_ip, content)
+            content = re.sub("DATA_MCAST_0        10.100.205.10", "DATA_MCAST_0        %s"%beam_x_multicast, content)
+            content = re.sub("DATA_MCAST_1        10.100.205.10", "DATA_MCAST_1        %s"%beam_y_multicast, content)
+            _logger.info (content)
         print (1)
         with open (c_file, 'r+') as content_file:
             print(0)
@@ -296,8 +354,8 @@ class _CaptureSession(object):
         #        f_write.write(line + "\n")
         #f_read.close()
         #f_write.close()
-        print ("meta complete with ts = %s"%adc_sync_time)
-
+        _logger.info("meta complete with ts = %s"%adc_sync_time)
+        self._speadmeta_process = None
         cap_env = os.environ.copy()
 
         cap_env["LD_PRELOAD"] = "libvma.so"
@@ -315,21 +373,21 @@ class _CaptureSession(object):
 
         #raise Return((result, error))
         #_logger.info ("capture output :\n %s\n error\n %s"%(result,error))
-        print ("capture started_________________-----------!!")
+        _logger.info("capture started_________________-----------!!")
         while (self._capture_process == None):
-            print ("No capture")
+            _logger.info ("No capture")
             time.sleep(1)
-        self._capture_process.wait()
-        result, error = yield self._capture_process.communicate()
+        #self._capture_process.wait()
+        #result, error = yield self._capture_process.communicate()
 
-        raise Return((result, error))
+        #raise Return((result, error))
 
         #print ("capture_process_output = %s"%(result,error))
         #ret.append (self._dada_dbdisk_process.wait_for_exit())
 
         #ret = yield self._capture_process.communicate()
 
-    @trollius.coroutine
+    #@trollius.coroutine
     def stop(self):
         """Shut down the stream and wait for the coroutine to complete. This
         is a coroutine.
@@ -340,13 +398,23 @@ class _CaptureSession(object):
             self._capture_process.kill()
         if self._capture_process != None:
             self._capture_process.kill()
+            _logger.info(self._capture_process.communicate())
         if self._dada_dbdisk_process != None:
             self._dada_dbdisk_process.kill()
         if self._digifits_process != None:
             self._digifits_process.kill()
+            _logger.info(self._digifits_process.communicate())
         if self._dspsr_process != None:
             self._dspsr_process.kill()
-        yield From(self._run_future)
+        if self._speadmeta_process != None:
+            self._speadmeta_process.kill()
+        cmd = ['dada_db', '-d']
+        dada_buffer_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE
+        )
+        _logger.info(dada_buffer_process.communicate())
+        _logger.info("KILLED ALL CAPTURE PROCESSES")
+        #yield From(self._run_future)
 
 
 class CaptureServer(object):
@@ -398,11 +466,11 @@ class CaptureServer(object):
                 print ("Exception caught " + str(e))
                 #self.stop_capture()
                                                         
-    @trollius.coroutine
+    #@trollius.coroutine
     def stop_capture(self):
         """Stop capture to file, if currently running. This is a co-routine."""
         if self._capture is not None:
-            yield From(self._capture.stop())
+            self._capture.stop()
             self._capture = None
 
 
@@ -445,11 +513,12 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
             return ('fail',e.message)
         return ('ok',)
 
-    @tornado.gen.coroutine
+    #@tornado.gen.coroutine
     def _stop_capture(self):
         """Tornado variant of :meth:`stop_capture`"""
-        stop_future = trollius.async(self.stop_capture(), loop=self._loop)
-        yield tornado.platform.asyncio.to_tornado_future(stop_future)
+        #stop_future = trollius.async(self.stop_capture(), loop=self._loop)
+        #yield tornado.platform.asyncio.to_tornado_future(stop_future)
+        self.stop_capture()
 
     @request()
     @return_reply()
@@ -458,7 +527,7 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
         """Stop a capture that is in progress."""
         if not self.capturing:
             raise tornado.gen.Return(('fail', 'not capturing'))
-        yield self._stop_capture()
+        self._stop_capture()
         raise tornado.gen.Return(('ok',))
 
     @tornado.gen.coroutine
