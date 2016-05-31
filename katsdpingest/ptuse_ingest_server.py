@@ -202,11 +202,16 @@ class _CaptureSession(object):
 
     def _create_digifits (self):
         _logger.info("digifits")
-        with open("/tmp/digifits.log","w+") as logfile:
-            cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
-            self._digifits_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
-            )
+        #cmd=["printenv"]
+        #temp_proc = subprocess.Popen(
+        #cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
+        #)
+        #_logger.info(temp_proc.communicate())
+        #with open("/tmp/digifits.log","w+") as logfile:
+        cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+        self._digifits_process = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
+        )
 
     def _create_dspsr(self):
         _logger.info("dspsr")
@@ -263,6 +268,7 @@ class _CaptureSession(object):
         print ("capture_process+++++++______!!")
         self._create_metaspead()
         cap_env = os.environ.copy()
+        _logger.info(cap_env)
 
         cap_env["LD_PRELOAD"] = "libvma.so"
         cap_env["VMA_MTU"] = "9200"
@@ -306,6 +312,7 @@ class _CaptureSession(object):
         #speadmeta_process.wait(timeout=10)
         # we need to capture the output from this process
         error, adc_sync_time = self._speadmeta_process.communicate()
+        self._speadmeta_process = None
         _logger.info((error,adc_sync_time))
         _logger.info("meta spead run")
 
@@ -334,7 +341,7 @@ class _CaptureSession(object):
             content = re.sub("DATA_MCAST_0        10.100.205.10", "DATA_MCAST_0        %s"%beam_x_multicast, content)
             content = re.sub("DATA_MCAST_1        10.100.205.10", "DATA_MCAST_1        %s"%beam_y_multicast, content)
             _logger.info (content)
-        print (1)
+        _logger.info('yo')
         with open (c_file, 'r+') as content_file:
             print(0)
             content_file.seek(0)
@@ -342,6 +349,7 @@ class _CaptureSession(object):
             content_file.write(content)
             print (3)
             content_file.truncate() 
+            _logger.info("written meta")
         #for line in fileinput.input("/home/kat/hardware_cbf_4096chan_2pol.cfg", inplace=1):
             #print(line)
             #if "ADC_SYNC_TIME" in line:
@@ -373,10 +381,23 @@ class _CaptureSession(object):
 
         #raise Return((result, error))
         #_logger.info ("capture output :\n %s\n error\n %s"%(result,error))
-        _logger.info("capture started_________________-----------!!")
-        while (self._capture_process == None):
-            _logger.info ("No capture")
-            time.sleep(1)
+        _logger.info("capture started_________________------12-----!!")
+        #while (self._capture_process == None):
+         #   _logger.info ("No capture")
+          #  time.sleep(1)
+        import signal
+        time.sleep(15)
+        _logger.info("kill cap--------------11--------------------")
+        self._capture_process.send_signal(signal.SIGINT)
+        #time.sleep(5)
+        #self._capture_process.send_signal(signal.SIGINT)
+        _logger.info("kill cap--------------11--------------------")
+            #time.sleep(2) 
+        #if self._capture_process != None:
+        #self._capture_process.send_signal(signal.SIGINT)
+        #self._capture_process.send_signal(signal.SIGINT)
+        _logger.info(self._capture_process.communicate())
+        self._capture_process = None
         #self._capture_process.wait()
         #result, error = yield self._capture_process.communicate()
 
@@ -392,22 +413,29 @@ class _CaptureSession(object):
         """Shut down the stream and wait for the coroutine to complete. This
         is a coroutine.
         """
+        import signal
         print ("STOPPING")
         self._manual_stop = True
         if self._capture_process != None:
-            self._capture_process.kill()
-        if self._capture_process != None:
-            self._capture_process.kill()
+            self._capture_process.send_signal(signal.SIGINT)
+            _logger.info("kill cap----------------------------------")
+            #time.sleep(2) 
+        #if self._capture_process != None:
+            self._capture_process.send_signal(signal.SIGINT)
             _logger.info(self._capture_process.communicate())
+            #time.sleep(4)
         if self._dada_dbdisk_process != None:
-            self._dada_dbdisk_process.kill()
+            self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process != None:
-            self._digifits_process.kill()
+            self._digifits_process.send_signal(signal.SIGINT)
+            _logger.info("comm digifits")
+            for line in self._digifits_process.stdout.readlines():
+                print (line)
             _logger.info(self._digifits_process.communicate())
         if self._dspsr_process != None:
-            self._dspsr_process.kill()
+            self._dspsr_process.send_signal(signal.SIGINT)
         if self._speadmeta_process != None:
-            self._speadmeta_process.kill()
+            self._speadmeta_process.send_signal(signal.SIGINT)
         cmd = ['dada_db', '-d']
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
@@ -429,7 +457,7 @@ class CaptureServer(object):
         cbf_channels
           Total number of PFB channels, or ``None`` for unknown
         cbf_spead
-          List of :class:`katsdptelstate.endpoint.Endpoint` for receiving SPEAD data
+          ist of :class:`katsdptelstate.endpoint.Endpoint` for receiving SPEAD data
         file_base
           Directory in which to write files
     loop : :class:`trollius.BaseEventLoop`
