@@ -718,7 +718,11 @@ class CBFIngest(object):
             # Load data
             events = yield From(vis_in_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
-            # TODO: copy directly into device memory, without assembling
+            channel = 0
+            for item in frame.items:
+                vis_in_buffer.set_region(self.command_queue, item,
+                        np.s_[channel : channel + item.shape[0]],
+                        np.s_[:], blocking=False)
             vis_in = np.concatenate(frame.items)
             vis_in_buffer.set_async(self.command_queue, vis_in)
             transfer_done = self.command_queue.enqueue_marker()
