@@ -792,7 +792,7 @@ class CBFIngest(threading.Thread):
         for heap in self.rx:
             st = time.time()
             if idx == 0:
-                self.status_sensor.set_value("capturing")
+                self.status_sensor.set_value("waiting for metadata")
 
             # Update the telescope state and local cbf_attr cache
             updated = ig_cbf.update(heap)
@@ -835,6 +835,7 @@ class CBFIngest(threading.Thread):
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
                 self._initialise(ig_cbf)
+                self.status_sensor.set_value("capturing")
 
             self._output_avg.add_timestamp(data_ts)
             self._sd_avg.add_timestamp(data_ts)
