@@ -17,9 +17,12 @@ import katsdpingest
 import subprocess
 import time
 import sys
+import netifaces
 
 _logger = logging.getLogger(__name__)
 
+def _get_interface_address(interface):
+    return netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
 
 class _CaptureSession(object):
     """Object encapsulating a co-routine that runs for a single capture session
@@ -80,22 +83,26 @@ class _CaptureSession(object):
         #_logger.info("meta spead run")
 
 
-
+        _logger.info(_get_interface_address("p4p1"))
 
         _logger.info(args)
         _logger.info(args.telstate.keys())
 #        antenna_mask', 'cal_bp_solint', 'cal_g_solint', 'cal_k_chan_sample', 'cal_k_solint', 'cal_refant', 'config', 'sdp_cbf_channels', 'sdp_node_detail', 'subarray_product_id
-        _logger.info(args.telstate.get('antenna_mask'))
-
-        _logger.info(args.telstate.get('config'))
-        _logger.info(args.telstate.get('sdp_cbf_channels'))
-        _logger.info(args.telstate.get('sdp_ndoe_detail'))
-        _logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'])
-        _logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'])
-        _logger.info('YOLO')
+        #_logger.info(args.telstate.get('antenna_mask'))
+        _logger.info(args.telstate.get('obs_script_arguments'))
+        script_args = args.telstate.get('obs_script_arguments')
+        _logger.info(type(script_args)) 
+        _logger.info("YOLO-----------------------")
+        _logger.info(script_args['backend'])
+        #_logger.info(args.telstate.get('config'))
+        #_logger.info(args.telstate.get('sdp_cbf_channels'))
+        #_logger.info(args.telstate.get('sdp_ndoe_detail'))
+        #_logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'])
+        #_logger.info(args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'])
+        #_logger.info('YOLO')
         #_logger.info(args.telstate.get('config')['sdp']['filewriter']['1']['telstate'])
         #t = katsdptelstate.TelescopeState(args.telstate.get('config')['sdp']['filewriter']['1']['telstate'])
-        _logger.info('YOHO')
+        #_logger.info('YOHO')
         #_logger.info(t.get_range('obs_params', st=0))
         #_logger.info(args.telstate.getRange('obs_params',st=0))
         #print (sys.version_info)
@@ -126,13 +133,15 @@ class _CaptureSession(object):
 
         self._create_dada_buffer()
         _logger.info("Created dada_buffer\n")
-        print (args.backend)
-        print (type(args.backend))
-        if (args.backend in "digifits"):
+        backend = script_args['backend']
+        _logger.info(backend)
+        #print (args.backend)
+        #print (type(args.backend))
+        if (backend in "digifits"):
             self._create_digifits()
-        elif (args.backend in "dspsr"):
+        elif (backend in "dspsr"):
             self._create_dspsr()
-        elif (args.backend in "dada_dbdisk"):
+        elif (backend in "dada_dbdisk"):
             self._create_dada_dbdisk()
 
         time.sleep(1)
@@ -144,17 +153,17 @@ class _CaptureSession(object):
         data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
         _logger.info(data_port)
         #_logger.info(args.telstate.getRange('obs_params',st=0))
-        if (args.halfband or args.backend == "digifits"):
-            self._run_future = trollius.async(self._run(halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
+        if (args.halfband or backend == "digifits"):
+            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
         else:
-            self._run_future = trollius.async(self._run(beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
+            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
         #if self._dada_dbdisk_process == None:
         #    raise Exception("data_db process failed to start after seconds")
         #if self._speadmeta_process == None:
             #raise Exception("metadata_process failed to start after seconds")
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =16):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 5, nBuffers =16):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -180,7 +189,7 @@ class _CaptureSession(object):
         print ('complete buffer creation')
         print (dada_buffer_process.communicate())
 
-    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 1, outputDir = '/data'):
+    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 5, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
         Must be run after creating the dada_buffer and before the capture process.
         Must have the same NUMA node as the dada_buffer
@@ -208,7 +217,7 @@ class _CaptureSession(object):
         #)
         #_logger.info(temp_proc.communicate())
         #with open("/tmp/digifits.log","w+") as logfile:
-        cmd = ["numactl", "-C", "1", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+        cmd = ["numactl", "-C", "7", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
         self._digifits_process = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
         )
@@ -286,7 +295,7 @@ class _CaptureSession(object):
         #raise Return((result, error))
 
     @trollius.coroutine
-    def _run(self, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
+    def _run(self, obs_length, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
         """Does the work of capturing a stream. This is a coroutine."""
         _logger.info("running")
         #_logger.info(args.telstate.getRange('obs_params',st=0))
@@ -302,7 +311,8 @@ class _CaptureSession(object):
         #self._create_metaspead()
         #def _create_metaspead (self, pol_h_host = "10.100.21.5", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
         _logger.info("IN METADATA")
-        cmd = ["meerkat_speadmeta", "10.100.205.11", beam_y_multicast, "-p", data_port]
+        #_logger.info(
+        cmd = ["meerkat_speadmeta", _get_interface_address("p4p1"), beam_y_multicast, "-p", data_port]
 
         self._speadmeta_process = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -336,8 +346,8 @@ class _CaptureSession(object):
             content = content_file.read()
             print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
-            content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%interface_ip, content)
-            content = re.sub("DATA_HOST_1         10.100.205.10", "DATA_HOST_1         %s"%interface_ip, content)
+            content = re.sub("DATA_HOST_0         10.100.205.11", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
+            content = re.sub("DATA_HOST_1         10.100.205.11", "DATA_HOST_1         %s"%_get_interface_address("p4p1"), content)
             content = re.sub("DATA_MCAST_0        10.100.205.10", "DATA_MCAST_0        %s"%beam_x_multicast, content)
             content = re.sub("DATA_MCAST_1        10.100.205.10", "DATA_MCAST_1        %s"%beam_y_multicast, content)
             _logger.info (content)
@@ -386,7 +396,8 @@ class _CaptureSession(object):
          #   _logger.info ("No capture")
           #  time.sleep(1)
         import signal
-        time.sleep(15)
+        _logger.info(obs_legnth)
+        time.sleep(obs_length -5)
         _logger.info("kill cap--------------11--------------------")
         self._capture_process.send_signal(signal.SIGINT)
         #time.sleep(5)
@@ -427,10 +438,10 @@ class _CaptureSession(object):
         if self._dada_dbdisk_process != None:
             self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process != None:
-            self._digifits_process.send_signal(signal.SIGINT)
-            _logger.info("comm digifits")
-            for line in self._digifits_process.stdout.readlines():
-                print (line)
+            #self._digifits_process.send_signal(signal.SIGINT)
+            #_logger.info("comm digifits")
+            #for line in self._digifits_process.stdout.readlines():
+            #    print (line)
             _logger.info(self._digifits_process.communicate())
         if self._dspsr_process != None:
             self._dspsr_process.send_signal(signal.SIGINT)
