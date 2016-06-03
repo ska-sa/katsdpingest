@@ -143,7 +143,8 @@ class _CaptureSession(object):
             self._create_dspsr()
         elif (backend in "dada_dbdisk"):
             self._create_dada_dbdisk()
-
+        _logger.info ("target_duration")
+        _logger.info (script_args['target_duration'])
         time.sleep(1)
         #_run(self, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
         beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
@@ -154,16 +155,16 @@ class _CaptureSession(object):
         _logger.info(data_port)
         #_logger.info(args.telstate.getRange('obs_params',st=0))
         if (args.halfband or backend == "digifits"):
-            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
+            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
         else:
-            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
+            self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
         #if self._dada_dbdisk_process == None:
         #    raise Exception("data_db process failed to start after seconds")
         #if self._speadmeta_process == None:
             #raise Exception("metadata_process failed to start after seconds")
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 5, nBuffers =16):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 4, nBuffers =16):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -217,17 +218,17 @@ class _CaptureSession(object):
         #)
         #_logger.info(temp_proc.communicate())
         #with open("/tmp/digifits.log","w+") as logfile:
-        cmd = ["numactl", "-C", "7", "digifits","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+        cmd = ["digifits","-v","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
         self._digifits_process = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
         )
 
     def _create_dspsr(self):
         _logger.info("dspsr")
-        
-        cmd = ["dspsr","-D","0","-L","5","-cuda","0","minram","512","/home/kat/dada.info"]
+        #numactl -C 7 dspsr -cuda 0 /home/kat/dada.info 
+        cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
         self._dspsr_process = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
         )
 
     def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
@@ -295,7 +296,7 @@ class _CaptureSession(object):
         #raise Return((result, error))
 
     @trollius.coroutine
-    def _run(self, obs_length, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
+    def _run(self, obs_length, centre_freq, targets, halfband=False, interface_ip="10.100.205.11", beam_x_multicast="239.9.3.30", beam_y_multicast="239.9.3.31", data_port="7148"):
         """Does the work of capturing a stream. This is a coroutine."""
         _logger.info("running")
         #_logger.info(args.telstate.getRange('obs_params',st=0))
@@ -346,10 +347,12 @@ class _CaptureSession(object):
             content = content_file.read()
             print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
+            content = re.sub("FREQ                1283.8955078125", "FREQ                %f"%centre_freq, content)
             content = re.sub("DATA_HOST_0         10.100.205.11", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
             content = re.sub("DATA_HOST_1         10.100.205.11", "DATA_HOST_1         %s"%_get_interface_address("p4p1"), content)
             content = re.sub("DATA_MCAST_0        10.100.205.10", "DATA_MCAST_0        %s"%beam_x_multicast, content)
             content = re.sub("DATA_MCAST_1        10.100.205.10", "DATA_MCAST_1        %s"%beam_y_multicast, content)
+            content = re.sub("SOURCE              J0835-4510", "SOURCE              %s"%targets[0], content)
             _logger.info (content)
         _logger.info('yo')
         with open (c_file, 'r+') as content_file:
@@ -396,9 +399,10 @@ class _CaptureSession(object):
          #   _logger.info ("No capture")
           #  time.sleep(1)
         import signal
-        _logger.info(obs_legnth)
-        time.sleep(obs_length -5)
-        _logger.info("kill cap--------------11--------------------")
+        _logger.info ("obs_length")
+        _logger.info(obs_length - 5)
+        time.sleep(int(obs_length))
+        _logger.info("kill cap--------------11!!--------------------")
         self._capture_process.send_signal(signal.SIGINT)
         #time.sleep(5)
         #self._capture_process.send_signal(signal.SIGINT)
@@ -438,15 +442,17 @@ class _CaptureSession(object):
         if self._dada_dbdisk_process != None:
             self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process != None:
-            #self._digifits_process.send_signal(signal.SIGINT)
+            self._digifits_process.send_signal(signal.SIGINT)
             #_logger.info("comm digifits")
             #for line in self._digifits_process.stdout.readlines():
             #    print (line)
             _logger.info(self._digifits_process.communicate())
         if self._dspsr_process != None:
             self._dspsr_process.send_signal(signal.SIGINT)
+            _logger.info(self._dspsr_process.communicate())
         if self._speadmeta_process != None:
             self._speadmeta_process.send_signal(signal.SIGINT)
+        time.sleep(5)
         cmd = ['dada_db', '-d']
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
