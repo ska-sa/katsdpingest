@@ -190,7 +190,7 @@ class _CaptureSession(object):
         print ('complete buffer creation')
         print (dada_buffer_process.communicate())
 
-    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 5, outputDir = '/data'):
+    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 0, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
         Must be run after creating the dada_buffer and before the capture process.
         Must have the same NUMA node as the dada_buffer
@@ -217,19 +217,22 @@ class _CaptureSession(object):
         #cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
         #)
         #_logger.info(temp_proc.communicate())
-        #with open("/tmp/digifits.log","w+") as logfile:
-        cmd = ["digifits","-v","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
-        self._digifits_process = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout= subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
-        )
+        with open("/tmp/digifits.log","w+") as logfile:
+            cmd = ["digifits","-v","-b","8","-t",".0001531217700876","-c","-p","1","-nsblk","128", "-cuda", "0","/home/kat/dada.info"]
+            _logging.info(cmd)
+            self._digifits_process = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
+            )
 
     def _create_dspsr(self):
         _logger.info("dspsr")
         #numactl -C 7 dspsr -cuda 0 /home/kat/dada.info 
-        cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
-        self._dspsr_process = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
-        )
+        with open("/tmp/dspsr.log","w+") as logfile:
+            cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+            _logging.info(cmd)
+            self._dspsr_process = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/data"
+            )
 
     def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
         print ("IN METADATA")
