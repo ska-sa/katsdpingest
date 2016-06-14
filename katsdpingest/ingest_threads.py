@@ -333,9 +333,9 @@ class CBFIngest(threading.Thread):
 
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
-        self.input_rate_sensor = self._my_sensors['input_rate']
+        self.input_rate_sensor = self._my_sensors['input-rate']
         self.input_bytes = 0
-        self.output_rate_sensor = self._my_sensors['output_rate']
+        self.output_rate_sensor = self._my_sensors['output-rate']
         self.output_bytes = 0
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
