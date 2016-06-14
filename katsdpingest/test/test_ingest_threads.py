@@ -3,21 +3,19 @@
 import numpy as np
 from katsdpingest import ingest_threads
 from katsdpsigproc.test.test_accel import device_test
-import collections
 import unittest
 import mock
 from nose.tools import *
 
-FakeValue = collections.namedtuple('FakeValue', ['value'])
 
 class TestTimeAverage(object):
     def setup(self):
         self.cbf_attr = {
-            'scale_factor_timestamp': FakeValue(1712000000.0),
-            'adc_sample_rate': FakeValue(1712000000),
-            'n_accs': FakeValue(123456),
-            'n_chans': FakeValue(4096),
-            'int_time': FakeValue(0.75)
+            'scale_factor_timestamp': 1712000000.0,
+            'adc_sample_rate': 1712000000,
+            'n_accs': 123456,
+            'n_chans': 4096,
+            'int_time': 0.75
         }
         self.input_interval = 123456 * 4096 * 2
 
@@ -60,9 +58,11 @@ class TestTimeAverage(object):
         assert_is(None, avg._start_ts)
         assert_equal([], avg._ts)
 
+
 def test_split_array():
     """Test _split_array"""
-    c64 = (np.random.uniform(size=(4, 7)) + 1j * np.random.uniform(size=(4,7))).astype(np.complex64)
+    c64 = (np.random.uniform(size=(4, 7)) +
+           1j * np.random.uniform(size=(4, 7))).astype(np.complex64)
     # Create a view which is discontiguous
     src = c64[:3, :5].T
     actual = ingest_threads._split_array(src, np.float32)
@@ -73,14 +73,16 @@ def test_split_array():
             expected[i, j, 1] = src[i, j].imag
     np.testing.assert_equal(actual, expected)
 
+
 class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
         template = ingest_threads.CBFIngest.create_proc_template(context, 8, 4096)
-        proc = template.instantiate(queue, 1024, (96, 1024 - 96), 544, 512,
-                16, 64, [(0, 4), (500, 512)],
-                threshold_args={'n_sigma': 11.0})
+        template.instantiate(
+            queue, 1024, (96, 1024 - 96), 544, 512,
+            16, 64, [(0, 4), (500, 512)],
+            threshold_args={'n_sigma': 11.0})
 
     def test_tune_next(self):
         assert_equal(2, ingest_threads.CBFIngest._tune_next(0, [2, 4, 8, 16]))
@@ -147,6 +149,7 @@ class TestCBFIngest(unittest.TestCase):
             ['m001v', 'm001h']])
         antenna_mask = set(['m001'])
 
-        permutation, new_ordering = ingest_threads.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
+        permutation, new_ordering = \
+            ingest_threads.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], permutation)

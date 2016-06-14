@@ -2,14 +2,6 @@
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
-# The script performs two primary roles:
-#
-# Storage of stream data on disk in hdf5 format. This includes merging incoming meta-data with the correlator data
-# stream to produce a complete, packaged hdf5 file.
-#
-# Regeneration of a SPEAD stream suitable for use in the online signal displays. At the moment this is basically
-# just an aggregate of the incoming streams from the multiple x engines scaled with n_accumulations (if set)
-
 import spead2
 import time
 import argparse
@@ -27,10 +19,6 @@ from katsdpingest.ingest_threads import CAMIngest, CBFIngest
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
 import katsdptelstate
-
- # import model components. In the future this may be done by the sdp_proxy and the 
- # complete model passed in.
-from katsdpingest.telescope_model import AntennaPositioner, CorrelatorBeamformer, Enviro, TelescopeModel, Observation
 
 # import katconf
 
@@ -58,7 +46,7 @@ def parse_opts():
     parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
-    parser.add_argument('--file-base', type=str, help='base directory into which to write HDF5 files. [default=no file]')
+    parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
@@ -80,10 +68,6 @@ class IngestDeviceServer(DeviceServer):
          # reference to the CBF ingest thread
         self.cam_thread = None
          # reference to the Telescope Manager thread
-        self.h5_file = None
-         # the current hdf5 file in use by the ingest threads
-        self.model = None
-         # the current telescope model for use in this ingest session
         self.obs = None
          # the observation component for holding observation attributes
         self.sdisp_ips = {}
@@ -98,10 +82,10 @@ class IngestDeviceServer(DeviceServer):
         self._my_sensors["capture-active"] = Sensor(Sensor.INTEGER, "capture_active", "Is there a currently active capture thread.","",default=0, params=[0,1])
         self._my_sensors["packets-captured"] = Sensor(Sensor.INTEGER, "packets_captured", "The number of packets captured so far by the current session.","",default=0, params=[0,2**63])
         self._my_sensors["status"] = Sensor.string("status", "The current status of the capture thread.","")
-
         self._my_sensors["last-dump-timestamp"] = Sensor(Sensor.FLOAT, "last_dump_timestamp","Timestamp of most recently received correlator dump in Unix seconds","",default=0,params=[0,2**63])
         self._my_sensors["input_rate"] = Sensor(Sensor.INTEGER, "input_rate","Input data rate in Bps averaged over the last 10 dumps","Bps",default=0)
         self._my_sensors["output_rate"] = Sensor(Sensor.INTEGER, "output_rate","Output data rate in Bps averaged over the last 10 dumps","Bps",default=0)
+        self._my_sensors["device-status"] = Sensor.discrete("device-status", "Health status", "", ["ok", "degraded", "fail"])
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 
@@ -114,15 +98,7 @@ class IngestDeviceServer(DeviceServer):
                 self._my_sensors[sensor].set_value(0)
              # take care of basic defaults to ensure sensor status is 'nominal'
         self._my_sensors["status"].set_value("init")
-
-    @return_reply(Str())
-    def request_sd_metadata_issue(self, req, msg):
-        """Resend the signal display metadata packets..."""
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init or via a schedule block.")
-        self.cbf_thread.send_sd_metadata()
-        smsg = "SD Metadata resent"
-        logger.info(smsg)
-        return ("ok", smsg)
+        self._my_sensors["device-status"].set_value("ok")
 
     @return_reply(Str())
     def request_enable_debug(self, req, msg):
@@ -137,7 +113,6 @@ class IngestDeviceServer(DeviceServer):
         return ("ok", "Debug logging disabled.")
 
     def _enable_debug(self, debug):
-        if self.model is not None: self.model.enable_debug(debug)
         if self.cbf_thread is not None: self.cbf_thread.enable_debug(debug)
         if self.cam_thread is not None: self.cam_thread.enable_debug(debug)
 
@@ -154,7 +129,7 @@ class IngestDeviceServer(DeviceServer):
         except ValueError:
             return ("fail", "Unknown log level specified {}".format(level))
         return ("ok", "Log level set to {}".format(level))
-        
+
     @return_reply(Str())
     def request_capture_start(self, req, msg):
         """Dummy capture start command - calls capture init."""
@@ -165,53 +140,27 @@ class IngestDeviceServer(DeviceServer):
 
     @return_reply(Str())
     def request_capture_init(self, req, msg):
-        """Creates a telesacope model suitable for use in the current subarray.
-        Opens an HDF5 file for use by the ingest threads.
-        Then spawns ingest threads to capture suitable data and meta-data to produce
-        an archive ready HDF5 file."""
+        """Spawns ingest threads to capture suitable data and meta-data to produce
+        the L0 output stream."""
         if self.cbf_thread is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
              # this should be enough of an indicator as to session activity, but it 
-             # may be worth expanding the scope to checking the file and the CAM thread as well
-
-        # for AR1 we build a standard model like for RTS... for now. Normally this would be provided by the sdp_proxy
-        m063 = AntennaPositioner(name='m063')
-        m062 = AntennaPositioner(name='m062')
-        cbf = CorrelatorBeamformer(name='cbf')
-        env = Enviro(name='anc')
-        self.obs = Observation(name='obs')
-        self.model = TelescopeModel()
-        self.model.add_components([m063,m062,cbf,env,self.obs])
-        self.model.build_index()
-
-        if opts.file_base is not None:
-            fname = "{0}/{1}.writing.h5".format(opts.file_base, str(int(time.time())))
-            self.h5_file = self.model.create_h5_file(fname)
-             # open a new HDF5 file
-            if self.h5_file is None:
-                return ("fail","Failed to create HDF5 file. Init failed.")
-        else:
-            self.h5_file = None
+             # may be worth expanding the scope to checking the CAM thread as well
 
         self.cbf_thread = CBFIngest(opts, self.proc_template,
-                self.h5_file, self._my_sensors, opts.telstate, self.model, cbf.name, cbf_logger)
+                self._my_sensors, opts.telstate, 'cbf', cbf_logger)
+        # add in existing signal display recipients...
+        for (ip,port) in self.sdisp_ips.iteritems():
+            self.cbf_thread.add_sdisp_ip(ip,port)
         self.cbf_thread.start()
 
-        self.cam_thread = CAMIngest(opts.cam_spead, self.h5_file, opts.telstate, self.model, cam_logger)
+        self.cam_thread = CAMIngest(opts.cam_spead, self._my_sensors, opts.telstate, cam_logger)
         self.cam_thread.start()
 
         self._my_sensors["capture-active"].set_value(1)
-         # add in existing signal display recipients...
-        for (ip,port) in self.sdisp_ips.iteritems():
-            self.cbf_thread.add_sdisp_ip(ip,port)
-        smsg =  "Capture initialised at %s" % time.ctime()
+        smsg = "Capture initialised at %s" % time.ctime()
         logger.info(smsg)
         return ("ok", smsg)
-
-    @request()
-    @return_reply(Str())
-    def request_enable_van_vleck(self, req):
-        """Enable Van Vleck correction of the auto-correlated visibilities."""
 
     @request(Float())
     @return_reply(Str())
@@ -223,23 +172,25 @@ class IngestDeviceServer(DeviceServer):
         center_freq_hz : int
             The current system center frequency in hz
         """
-        if self.cbf_thread is None: return ("fail","No active capture thread. Please start one using capture_init")
-        self.cbf_thread.center_freq = center_freq_hz
-        self.cbf_thread.send_sd_metadata()
-        smsg = "SD Metadata resent"
-        logger.info(smsg)
-        return ("ok","set")
+        if self.cbf_thread is None:
+            return ("fail","No active capture thread. Please start one using capture_init")
+        self.cbf_thread.set_center_freq(center_freq_hz)
+        logger.info("Center frequency set to %f Hz", center_freq_hz)
+        return ("ok", "set")
 
     @request(Str())
     @return_reply(Str())
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
+        try:
+            del self.sdisp_ips[ip]
+        except KeyError:
+            return ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip))
         if self.cbf_thread is not None:
-            if not self.sdisp_ips.has_key(ip):
-                return ("fail","The IP address specified (%s) does not exist in the current list of recipients." % (ip))
+            # drop_sdisp_ip can in theory raise KeyError, but the check against
+            # our own list prevents that.
             self.cbf_thread.drop_sdisp_ip(ip)
-            return ("ok","The IP address has been dropped as a signal display recipient")
-        return ("fail","No active capture thread.")
+        return ("ok","The IP address has been dropped as a signal display recipient")
 
     @request(Str())
     @return_reply(Str())
@@ -249,27 +200,14 @@ class IngestDeviceServer(DeviceServer):
         ip = ipp[0]
         if len(ipp) > 1: port = int(ipp[1])
         else: port = 7149
-        if self.sdisp_ips.has_key(ip): return ("ok","The supplied IP is already in the active list of recipients.")
+        if self.sdisp_ips.has_key(ip):
+            return ("ok", "The supplied IP is already in the active list of recipients.")
         self.sdisp_ips[ip] = port
         if self.cbf_thread is not None:
+            # add_sdisp_ip can in theory raise KeyError, but the check against
+            # our own list prevents that.
             self.cbf_thread.add_sdisp_ip(ip, port)
-        return ("ok","Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
-
-    @request(Str())
-    @return_reply(Str())
-    def request_set_timeseries_mask(self, req, maskstr):
-        """Sets the spectral mask used for the timeseries calculation."""
-        if self.cbf_thread is not None:
-            self.cbf_thread.set_timeseries_mask(maskstr)
-            return ("ok","mask is updated")
-        return ("fail","No active capture thread.")
-
-    @return_reply(Str())
-    def request_get_current_file(self, req, msg):
-        """Return the name of the current (or most recent) capture file."""
-        if self.h5_file is None:
-            return ("fail", "No currently active file.")
-        return ("ok", self.h5_file.filename)
+        return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
 
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
@@ -281,21 +219,20 @@ class IngestDeviceServer(DeviceServer):
     def request_capture_done(self, req, msg):
         """Closes the current capture file and renames it for use by augment."""
         if self.cbf_thread is None:
-            return ("fail","No existing capture session.")
+            return ("fail", "No existing capture session.")
 
          # if the observation framework is behaving correctly
          # then these threads will be dead before capture_done
          # is called. If not, then we take more drastic action.
         if self.cbf_thread.is_alive():
+            # This doesn't take the lock on cbf_thread, but it's safe because
+            # the stop method is itself thread-safe.
             self.cbf_thread.rx.stop()
             time.sleep(1)
 
         if self.cam_thread.is_alive():
             self.cam_thread.rx.stop()
             time.sleep(1)
-
-        self.cbf_thread.finalise()
-         # no further correspondence will be entered into
 
         self.cbf_thread.join()
         self.cam_thread.join()
@@ -304,22 +241,11 @@ class IngestDeviceServer(DeviceServer):
          # we are done with the capture thread
         self.cam_thread = None
 
-         # now we make sure to sync the model to the output file
-        valid = self.model.is_valid()
-         # check to see if we are valid up until the last 5 seconds
-        if not valid: logger.warning("Model is not valid (this is expected for now). Writing to disk anyway.")
-        if self.h5_file is not None:
-            self.model.finalise_h5_file(self.h5_file)
-            smsg = self.model.close_h5_file(self.h5_file)
-             # close file and rename if appropriate
-        else:
-            smsg = "no file to close"
-
-        self.h5_file = None
-        self.model = None
         self._my_sensors["capture-active"].set_value(0)
-        logger.info(smsg)
-        return ("ok", smsg)
+        # Error states were associated with the threads, which are now dead.
+        self._my_sensors["device-status"].set_value("ok")
+        logger.info("capture complete")
+        return ("ok", "capture complete")
 
 
 if __name__ == '__main__':
@@ -343,9 +269,6 @@ if __name__ == '__main__':
     logging.getLogger('spead2').setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
 
-    sp.ProcBlock.logger = logger
-     # logger ref for use in the signal processing routines
-
     cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
     cbf_logger.setLevel(logging.INFO)
     cbf_logger.info("CBF ingest logging started")
@@ -360,7 +283,7 @@ if __name__ == '__main__':
             opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
-    logger.info("Started k7_capture server.")
+    logger.info("Started katsdpingest server.")
 
     manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
      # allow remote debug connections and expose server and opts
@@ -390,7 +313,7 @@ if __name__ == '__main__':
                 device.start()
                 logger.info("Started")
     except KeyboardInterrupt:
-        logger.info("Shutting down k7_capture server...")
+        logger.info("Shutting down katsdpingest server...")
         logger.info("Activity logging stopped")
         server.handle_interrupt()
         server.stop()
