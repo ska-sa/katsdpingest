@@ -333,6 +333,10 @@ class CBFIngest(threading.Thread):
 
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
+        self.input_rate_sensor = self._my_sensors['input-rate']
+        self.input_bytes = 0
+        self.output_rate_sensor = self._my_sensors['output-rate']
+        self.output_bytes = 0
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
@@ -635,6 +639,7 @@ class CBFIngest(threading.Thread):
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         # Shift to the centre of the dump
         ts_rel += 0.5 * self.cbf_attr['int_time']
+        self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
         self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
         self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
 
@@ -782,6 +787,7 @@ class CBFIngest(threading.Thread):
         """Real implementation of `run`."""
         ig_cbf = spead2.ItemGroup()
         idx = 0
+        rate_timer = 0
         self.status_sensor.set_value("idle")
         prev_ts = -1
         ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
@@ -834,6 +840,7 @@ class CBFIngest(threading.Thread):
 
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
+                rate_timer = time.time()
                 self._initialise(ig_cbf)
                 self.status_sensor.set_value("capturing")
 
@@ -846,12 +853,19 @@ class CBFIngest(threading.Thread):
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
             # Perform data processing
+            self.input_bytes += data_item.value.nbytes
             self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
             self.proc()
 
             # Done with reading this frame
             idx += 1
             self.pkt_sensor.set_value(idx)
+            if idx > 0 and idx % 10 == 0:
+                self.input_rate_sensor.set_value(int(self.input_bytes / (time.time() - rate_timer)))
+                self.output_rate_sensor.set_value(int(self.output_bytes / (time.time() - rate_timer)))
+                self.input_bytes = 0
+                self.output_bytes = 0
+                rate_timer = time.time()
             tt = time.time() - st
             self.logger.info(
                 "Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
