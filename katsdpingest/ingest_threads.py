@@ -352,6 +352,13 @@ class CBFIngest(threading.Thread):
             [str(x) for x in self.cbf_spead_endpoints]))
         thread_pool = spead2.ThreadPool(4)
         self.rx = spead2.recv.Stream(thread_pool, max_heaps=2, ring_heaps=2)
+        # This is a quick hack with the maximum size for AR1. Ideally as soon
+        # as we have the necessary metadata we should compute the actual size,
+        # but _initialise is only called once we've grabbed a heap, and at
+        # full speed we can't capture a heap without the memory pool.
+        xeng_raw_size = 16 * 17 * 2 * 32768 * 8
+        memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 8, 8)
+        self.rx.set_memory_pool(memory_pool)
         for endpoint in self.cbf_spead_endpoints:
             self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
         self.tx_spectral = spead2.send.UdpStream(
@@ -627,11 +634,6 @@ class CBFIngest(threading.Thread):
         # initialise the signal display metadata
         self._initialise_ig_sd()
         self._send_sd_data(self.ig_sd.get_start())
-
-        # prepare a memory pool
-        xeng_raw_size = np.product(data_item.shape) * data_item.dtype.itemsize
-        memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 8, 8)
-        self.rx.set_memory_pool(memory_pool)
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
