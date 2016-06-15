@@ -22,7 +22,7 @@ setup(
         'manhole',
         'netifaces',
         'numpy',
-        'spead2>=0.8.0',
+        'spead2>=0.10.2',
         'ipaddress',
         'katcp',
         'katsdpsigproc',
