@@ -13,6 +13,7 @@ import spead2
 import spead2.send
 import spead2.recv
 import time
+from contextlib import contextmanager
 import katsdpingest.sigproc as sp
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
@@ -38,6 +39,18 @@ CBF_CRITICAL_ATTRS = frozenset([
 
 def is_cbf_sensor(name):
     return name in CBF_SPEAD_SENSORS or name.startswith('eq_coef_')
+
+
+@contextmanager
+def timer(logger, fmt, *args, **kwargs):
+    """Context manager that logs a message on completion, including the
+    elapsed time.
+    """
+    st = time.time()
+    yield
+    et = time.time()
+    args = args + (et - st,)
+    logger.info(fmt + ' (elapsed: %.3f)', *args, **kwargs)
 
 
 class CAMIngest(threading.Thread):
@@ -637,23 +650,27 @@ class CBFIngest(threading.Thread):
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
-        self.proc.end_sum()
-        spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
-        spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
-        cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
-        cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
+        with timer(self.logger, 'Finalised averaging for L0'):
+            self.proc.end_sum()
+        with timer(self.logger, 'Read L0 data from GPU'):
+            spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
+            spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
+            cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
+            cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
 
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         # Shift to the centre of the dump
         ts_rel += 0.5 * self.cbf_attr['int_time']
         self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
-        self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
-        self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
+        with timer(self.logger, 'Sent L0 spectral data'):
+            self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
+        with timer(self.logger, 'Sent L0 continuum data'):
+            self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
 
-        self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
-            timestamps, time.time()))
+        self.logger.info("Finished dump group with raw timestamps %s", timestamps)
         # Prepare for the next group
-        self.proc.start_sum()
+        with timer(self.logger, 'Cleared accumulators for L0'):
+            self.proc.start_sum()
 
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
@@ -686,52 +703,57 @@ class CBFIngest(threading.Thread):
             mask = np.ones(self.channels, np.float32) / self.channels
 
         try:
-            self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
+            with timer(self.logger, 'Sent timeseries_weights to GPU'):
+                self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
         except Exception:
             self.logger.warn('Failed to set timeseries_weights', exc_info=True)
 
-        self.proc.end_sd_sum()
+        with timer(self.logger, 'Finalised averaging for signal displays'):
+            self.proc.end_sd_sum()
         ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
         ts = self.cbf_attr['sync_time'] + ts_rel
-        cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
-        cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
-        spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
-        spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
-        timeseries = self.proc.buffer('timeseries').get(self.command_queue)
-        percentiles = []
-        percentiles_flags = []
-        for i in range(len(self.proc.percentiles)):
-            name = 'percentile{0}'.format(i)
-            p = self.proc.buffer(name).get(self.command_queue)
-            pflags = self.proc.buffer(name + '_flags').get(self.command_queue)
-            percentiles.append(p)
-            # Signal display server wants flags duplicated to broadcast with
-            # the percentiles
-            percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
+        with timer(self.logger, 'Read back signal display data from GPU'):
+            cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
+            cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
+            spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
+            spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
+            timeseries = self.proc.buffer('timeseries').get(self.command_queue)
+            percentiles = []
+            percentiles_flags = []
+            for i in range(len(self.proc.percentiles)):
+                name = 'percentile{0}'.format(i)
+                p = self.proc.buffer(name).get(self.command_queue)
+                pflags = self.proc.buffer(name + '_flags').get(self.command_queue)
+                percentiles.append(p)
+                # Signal display server wants flags duplicated to broadcast with
+                # the percentiles
+                percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
 
         # populate new datastructure to supersede sd_data etc
-        self.ig_sd['sd_timestamp'].value = int(ts * 100)
-        if np.all(custom_signals_indices < spec_vis.shape[1]):
-            self.ig_sd['sd_data'].value = \
-                _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
-            self.ig_sd['sd_data_index'].value = custom_signals_indices
-            self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
-        else:
-            self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
-                             custom_signals_indices)
-        self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
-        self.ig_sd['sd_blmxflags'].value = cont_flags
-        self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
-        self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
-        self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-        if center_freq is not None:
-            self.ig_sd['center_freq'].value = center_freq
+        with timer(self.logger, 'Prepared signal display data for sending'):
+            self.ig_sd['sd_timestamp'].value = int(ts * 100)
+            if np.all(custom_signals_indices < spec_vis.shape[1]):
+                self.ig_sd['sd_data'].value = \
+                    _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+                self.ig_sd['sd_data_index'].value = custom_signals_indices
+                self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+            else:
+                self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                                 custom_signals_indices)
+            self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
+            self.ig_sd['sd_blmxflags'].value = cont_flags
+            self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
+            self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
+            self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
+            if center_freq is not None:
+                self.ig_sd['center_freq'].value = center_freq
 
-        self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
-        self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
-            timestamps, time.time()))
+        with timer(self.logger, 'Sent signal display data'):
+            self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
+        self.logger.info("Finished SD group with raw timestamps %s", timestamps)
         # Prepare for the next group
-        self.proc.start_sd_sum()
+        with timer(self.logger, 'Cleared accumulators for signal displays'):
+            self.proc.start_sd_sum()
 
     def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
         if self.telstate is not None:
@@ -861,8 +883,10 @@ class CBFIngest(threading.Thread):
 
             # Perform data processing
             self.input_bytes += data_item.value.nbytes
-            self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
-            self.proc()
+            with timer(self.logger, 'Sent input visibilities to GPU'):
+                self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
+            with timer(self.logger, 'Processed input visibilities on GPU'):
+                self.proc()
 
             # Done with reading this frame
             idx += 1
