@@ -364,13 +364,13 @@ class CBFIngest(threading.Thread):
         self.logger.info("CBF SPEAD stream reception on {0}".format(
             [str(x) for x in self.cbf_spead_endpoints]))
         thread_pool = spead2.ThreadPool(4)
-        self.rx = spead2.recv.Stream(thread_pool, max_heaps=2, ring_heaps=2)
+        self.rx = spead2.recv.Stream(thread_pool, max_heaps=2, ring_heaps=8)
         # This is a quick hack with the maximum size for AR1. Ideally as soon
         # as we have the necessary metadata we should compute the actual size,
         # but _initialise is only called once we've grabbed a heap, and at
         # full speed we can't capture a heap without the memory pool.
         xeng_raw_size = 16 * 17 * 2 * 32768 * 8
-        memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 8, 8)
+        memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 16, 16)
         self.rx.set_memory_pool(memory_pool)
         for endpoint in self.cbf_spead_endpoints:
             self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
