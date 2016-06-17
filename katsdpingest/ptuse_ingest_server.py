@@ -102,8 +102,10 @@ class _CaptureSession(object):
         time.sleep(1)
         beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
         beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
+        _logger.info(beam_x_multicast)
+        _logger.info(beam_y_multicast)
         data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
-        if (args.halfband or backend == "digifits"):
+        if (args.halfband or backend in "digifits"):
             self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
         else:
             self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
@@ -118,7 +120,7 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers, '-c', '%d'%numaCore]
+        cmd = ['numactl','-C','%d'%numaCore,'dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -142,7 +144,7 @@ class _CaptureSession(object):
                 Location to write captured data
         """
         _logger.info("dada_dbdisk")
-        cmd = ['numactl', '-C', '%d'%cpuCore, 'dada_dbdisk', '-k', dadaId, '-D', outputDir, '-z', '-s']
+        cmd = ['dada_dbdisk', '-k', dadaId, '-c','%d'%cpuCore, '-D', outputDir, '-z', '-s']
         self._dada_dbdisk_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -162,27 +164,27 @@ class _CaptureSession(object):
         parser.add_argument('-do_dedisp', dest='-do_dedisp', action='store_true', help='enable coherent dedispersion (default: false)')
         parser.add_argument('-c', dest='-c', action='store_true', help='keep offset and scale constant')
         parser.add_argument('-I', dest='-I', type=int, help='rescale interval in seconds')
-        parser.add_argument('-p', dest='-p', type=int, choices = [1,2,4], help='output 1 (Intensity), 2 (AABB), or 4 (Coherence) products')
-        parser.add_argument('-b', dest='-b', type=int, choices = [1,2,4,8], help='number of bits per sample output to file [1,2,4,8]')
+        parser.add_argument('-p', dest='-p', type=str, choices = ['1','2','4'], help='output 1 (Intensity), 2 (AABB), or 4 (Coherence) products')
+        parser.add_argument('-b', dest='-b', type=str, choices = ['1','2','4','8'], help='number of bits per sample output to file [1,2,4,8]')
         parser.add_argument('-F', dest='-F', type=int, help='nchan[:D]     * create a filterbank (voltages only)')
         parser.add_argument('-nsblk', dest='-nsblk', type=int, help='output block size in samples (default=2048)')
         parser.add_argument('-k', dest='-K', action='store_true', help='remove inter-channel dispersion delays')
         opts = parser.parse_args (backend_args.split(" "))
         opts_list = [list(i) for i in  zip(vars(opts).keys(),vars(opts).values())]
         _logger.info(opts_list)
-        for i in opts_list:
-           if i[1] == True and i[1] != 1:
-               _logger.info(i)
-               i[1] = '' 
-        return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False)] 
+        #for i in opts_list:
+        #  if i[1] and i[0] != '-p':
+        #      _logger.info(i)
+        #      i[1] = '' 
+        return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False and item != True)] 
                 
 
-    def _create_digifits (self, backend_args):
+    def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1 -c'):
         _logger.info("digifits")
         passed_args = self.get_digifits_args(backend_args)
-        cmd =["digifits",] + passed_args + ["-b","8","-nsblk","128","cuda", "0","/home/kat/dada.info"]
-        _logger.info(passed_args)
-        _logger.info(cmd)
+        cmd =["digifits"] + passed_args + ["-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
+        #_logger.info(passed_args)
+        #_logger.info(cmd)
         with open("/tmp/digifits.log","a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
@@ -245,11 +247,11 @@ class _CaptureSession(object):
             opts = parser.parse_args (backend_args.split(" "))
             opts_list = [list(i) for i in  zip(vars(opts).keys(),vars(opts).values())]
             _logger.info(opts_list)
-            for i in opts_list:
-               if i[1] == True and i[1] != 1:
-                   _logger.info(i)
-                   i[1] = ''
-            return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False)]
+            #for i in opts_list:
+            #   if i[1] == True and i[1] != 1:
+            #       _logger.info(i)
+            #       i[1] = ''
+            return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False and item != True)]
         else:
             return []
 
@@ -264,7 +266,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+            cmd = ["dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
@@ -397,11 +399,13 @@ class _CaptureSession(object):
         _logger.info(obs_length - 5)
         time.sleep(int(obs_length))
         _logger.info("kill cap--------------11!!--------------------")
-        self._capture_process.send_signal(signal.SIGINT)
-        _logger.info("kill cap--------------11--------------------")
         time.sleep(1)
-        if self._capture_processi.poll() != 0:
+        if self._capture_process.poll() != 0:
             self._capture_process.send_signal(signal.SIGINT)
+        _logger.info("kill cap--------------11--------------------")
+        #time.sleep(1)
+        #if self._capture_processi.poll() != 0:
+        self._capture_process.send_signal(signal.SIGINT)
  
         if self._capture_processi.poll() != 0:
             self._capture_process.kill()
