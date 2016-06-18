@@ -11,7 +11,6 @@ MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 # Also remove the wheel built for h5py, because it was linked against the
 # system version and needs to be recompiled
 USER root
-RUN apt-get update && apt-get -y --no-install-recommends install libboost-regex1.55-dev
 RUN cd /tmp && \
     wget http://www.hdfgroup.org/ftp/HDF5/current/src/hdf5-1.8.17.tar.bz2 && \
     tar -jxf hdf5-1.8.17.tar.bz2 && \
