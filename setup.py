@@ -52,6 +52,7 @@ setup(
     setup_requires=['katversion'],
     install_requires=[
         'h5py',
+        'futures',
         'manhole',
         'netifaces',
         'numpy',
