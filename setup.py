@@ -25,7 +25,7 @@ extensions = [
         sources=(glob.glob('spead2/src/common_*.cpp') +
                  glob.glob('spead2/src/recv_*.cpp') +
                  glob.glob('spead2/src/send_*.cpp') +
-                 ['katsdpingest/bf_ingest_session.cpp']),
+                 ['spead2/src/py_common.cpp', 'katsdpingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/src/*.h'),
         language='c++',
         include_dirs=['spead2/src'],
