@@ -31,7 +31,7 @@ extensions = [
         include_dirs=['spead2/src'],
         define_macros=[('SPEAD2_USE_IBV', '1')],
         extra_compile_args=['-std=c++11', '-g0'],
-        libraries=[bp_library, 'rdmacm', 'ibverbs', 'hdf5_cpp', 'hdf5_hl', 'hdf5', 'boost_system', 'boost_regex'])
+        libraries=[bp_library, 'rdmacm', 'ibverbs', 'hdf5_cpp', 'hdf5', 'boost_system', 'boost_regex'])
 ]
 
 setup(
