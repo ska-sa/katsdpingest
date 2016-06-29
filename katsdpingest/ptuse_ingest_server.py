@@ -113,7 +113,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =16):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =64):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -123,7 +123,7 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['numactl','-C','%d'%numaCore,'dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers]
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore, '-p', '-l', '-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -269,7 +269,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+            cmd = ["dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
