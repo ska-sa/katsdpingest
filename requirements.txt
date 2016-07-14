@@ -18,6 +18,7 @@ nose
 numpy
 omnijson==0.1.2
 pbr
+pkginfo
 ply
 ProxyTypes
 psutil==4.1.0
