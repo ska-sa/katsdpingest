@@ -1,6 +1,6 @@
 #!groovy
 
-katsdp.setDependencies(['ska-sa/katsdpsigproc/master'])
+katsdp.setDependencies(['ska-sa/katsdpsigproc/test-jenkinsfile'])
 
 def stageDigitiserCapture() {
     stage 'digitiser capture'
