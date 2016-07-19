@@ -14,7 +14,8 @@ def stageDigitiserCapture() {
 katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stagePrepare()
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
-    katsdp.stageMakeDocker()
-    stageDigitiserCapture()
+    // TODO: re-enable Docker pieces
+    //katsdp.stageMakeDocker()
+    //stageDigitiserCapture()
     // TODO: autotuning
 }
