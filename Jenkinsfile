@@ -7,7 +7,7 @@ def stageDigitiserCapture() {
     node {
         deleteDir()
         unstash 'source'
-        makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
+        katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
     }
 }
 
