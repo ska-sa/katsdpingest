@@ -7,9 +7,7 @@ def stageDigitiserCapture() {
     node {
         deleteDir()
         unstash 'source'
-        dir('git/digitiser_capture') {
-            sh 'build-docker-image.sh katsdpingest_digitiser_capture'
-        }
+        makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
     }
 }
 
