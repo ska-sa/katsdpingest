@@ -19,6 +19,7 @@ import signal
 import time
 
 import argparse
+import pyfits
 
 _logger = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ class _CaptureSession(object):
     _timestep : int
         Time interval (in ADC clocks) between spectra
     """
-
     def __init__(self, args, loop):
-
         script_args = args.telstate.get('obs_script_arguments')
+        self.run = False
+        self.args=args
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
@@ -89,6 +90,7 @@ class _CaptureSession(object):
         _logger.info("Created dada_buffer\n")
         if script_args:
             backend = script_args['backend']
+            self.backend = script_args['backend']
             _logger.info(backend)
             if (backend in "digifits"):
                 if (script_args['backend_args']):
@@ -103,6 +105,9 @@ class _CaptureSession(object):
             elif (backend in "dada_dbdisk"):
                 self._create_dada_dbdisk()
             time.sleep(1)
+            _logger.info(args.telstate.get(script_args))
+            _logger.info(args.telstate.get('config'))
+            _logger.info(args)
             beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
             beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
             _logger.info(beam_x_multicast)
@@ -113,7 +118,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =16):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =64):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -123,7 +128,7 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['numactl','-C','%d'%numaCore,'dada_db', '-k', dadaId, '-b', '268435456', '-p', '-l', '-n', '%d'%nBuffers]
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore, '-p', '-l', '-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -186,12 +191,14 @@ class _CaptureSession(object):
         _logger.info("digifits")
         passed_args = self.get_digifits_args(backend_args)
         cmd =["taskset", "7", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
+        self.save_dir = "/data/%.0fsf"%time.time()
+        os.mkdir(self.save_dir)
         #_logger.info(passed_args)
         #_logger.info(cmd)
         with open("/tmp/digifits.log","a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
             )
 
     def get_dspsr_args(self, backend_args):
@@ -266,13 +273,16 @@ class _CaptureSession(object):
         passed_args.append(["-D","0","-Q","-cuda","0","/home/kat/dada.info"])
         _logger.info (passed_args)
         _logger.info(passed_args)
+
+        self.save_dir = "/data/%.0far"%time.time()
+        os.mkdir(self.save_dir)
  
         with open("/tmp/dspsr.log","a") as logfile:
-            cmd = ["taskset","7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+            cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
+            cmd = ["taskset","5,7","dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="/data"
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
             )
 
     def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
@@ -301,7 +311,7 @@ class _CaptureSession(object):
                 f_write.write(line + "\n")
         f_read.close()
         f_write.close()
-        print ("meta complete with ts = %d"%ads_sync_time)
+        print ("meta complete with ts = %d"%adc_sync_time)
 
 
 
@@ -342,7 +352,7 @@ class _CaptureSession(object):
         print ("capture_process+++++++______!!")
         _logger.info("IN METADATA")
         cmd = ["meerkat_speadmeta", _get_interface_address("p4p1"), beam_y_multicast, "-p", data_port]
-
+        self.run = True
         #keys = [kv[0].split(' ', 1)[0] for kv in args.telstate.get_range('obs_params', st=0)]
         #values = [eval(kv[0].split(' ', 1)[1]) for kv in t.get_range('obs_params', st=0)]
         #obs_params = dict(zip(keys, values))
@@ -433,6 +443,7 @@ class _CaptureSession(object):
  
         _logger.info("meta complete with ts = %s"%adc_sync_time)
         self._speadmeta_process = None
+        self.startTime=time.strftime("%Y-%m%dT%H:%M:%S")
         cap_env = os.environ.copy()
 
         cap_env["LD_PRELOAD"] = "libvma.so"
@@ -469,6 +480,12 @@ class _CaptureSession(object):
         is a coroutine.
         """
         #import signal
+        _logger.info("--------------------------------------------")
+        _logger.info(dir(self.args.telstate))
+        for k in self.args.telstate.keys():
+            _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
+        _logger.info(self.args.telstate.get('config'))
+        _logger.info(self.args)
         print ("STOPPING")
         self._manual_stop = True
         if  self._capture_process is not None and self._capture_process.poll() is None:
@@ -494,6 +511,41 @@ class _CaptureSession(object):
         cmd, stdout=subprocess.PIPE
         )
         _logger.info(dada_buffer_process.communicate())
+        if self.run and self.backend == 'digifits':
+            data_files = os.listdir(self.save_dir)
+            _logger.info(data_files)
+            data = pyfits.open("%s/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
+            target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
+            _logger.info(target)
+            hduPrimary=data[0].header
+            hduPrimary["TELESCOP"]="MeerKAT"
+            hduPrimary["RA"]=target[-2]
+            hduPrimary["DEC"]=target[-1]
+            hduPrimary["STT_CRD1"]=target[-2]
+            hduPrimary["STT_CRD2"]=target[-1]
+            hduPrimary["STP_CRD1"]=target[-2]
+            hduPrimary["STP_CRD2"]=target[-1]
+            hduPrimary["TRK_MODE"]="TRACK"
+            hduPrimary["OBS_MODE"]="SEARCH"
+            hduPrimary["TCYCLE"]=0
+            hduPrimary["ANT_X"]=5109318.8410
+            hduPrimary["ANT_Y"]=2006836.3673
+            hduPrimary["ANT_Z"]=-3238921.7749
+            hduPrimary["NRCVR"]=0
+            hduPrimary["CAL_MODE"]="OFF"
+            hduPrimary["CAL_FREQ"]=0.
+            hduPrimary["CAL_DCYC"]=0.
+            hduPrimary["CAL_PHS"]=0.
+            hduPrimary["CAL_NPHS"]=0
+            hduPrimary["CHAN_DM"] = 0.0
+            hduPrimary["DATE-OBS"]=self.startTime
+            hduPrimary["DATE"]=self.startTime
+            
+            hduSubint = data[2].header
+            hduSubint["NPOL"]=1
+            hduSubint["POL_TYPE"]="AA+BB"
+            hduSubint["NCHNOFFS"] = 0 
+
         _logger.info("KILLED ALL CAPTURE PROCESSES")
         #yield From(self._run_future)
 
