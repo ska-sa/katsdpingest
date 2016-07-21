@@ -4,9 +4,6 @@ def katsdp = fileLoader.fromGit('jenkins/scripts/katsdp.groovy', 'git@github.com
 
 katsdp.setDependencies(['ska-sa/katsdpsigproc/test-jenkinsfile'])
 
-def stageDigitiserCapture() {
-}
-
 katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stagePrepare()
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
