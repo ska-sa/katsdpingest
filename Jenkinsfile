@@ -17,7 +17,7 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
             // TODO: update the script instead
             withEnv(["GIT_BRANCH=${env.BRANCH_NAME}"]) {
                 dir('git') {
-                    sh './jenkins-autotune.sh'
+                    sh './jenkins-autotune.sh titanx'
                 }
             }
         }
