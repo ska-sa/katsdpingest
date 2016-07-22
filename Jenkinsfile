@@ -10,7 +10,7 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stageMakeDocker()
 
     stage 'autotuning'
-    simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
+    katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
         deleteDir()
         unstash 'prepared'
         virtualenv('venv') {
@@ -24,7 +24,7 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     }
 
     stage 'digitiser capture'
-    simpleNode {
+    katsdp.simpleNode {
         deleteDir()
         unstash 'source'
         katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
