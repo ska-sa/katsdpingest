@@ -12,12 +12,12 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     stage 'autotuning'
     katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
         deleteDir()
-        unstash 'prepared'
-        virtualenv('venv') {
+        unstash 'prepare'
+        katsdp.virtualenv('venv') {
             // TODO: update the script instead
             withEnv(["GIT_BRANCH=${env.BRANCH_NAME}"]) {
                 dir('git') {
-                    sh 'jenkins-autotune.sh'
+                    sh './jenkins-autotune.sh'
                 }
             }
         }
