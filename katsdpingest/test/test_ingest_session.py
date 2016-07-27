@@ -13,6 +13,7 @@ class TestTimeAverage(object):
         self.cbf_attr = {
             'scale_factor_timestamp': 1712000000.0,
             'adc_sample_rate': 1712000000,
+            'bandwidth': 856000000,
             'n_accs': 123456,
             'n_chans': 4096,
             'int_time': 0.75
