@@ -27,6 +27,7 @@ setup(
         'katcp',
         'katsdpsigproc',
         'katsdpdisp',
+        'katsdpfilewriter',
         'katsdptelstate',
         'psutil',
         'trollius'
