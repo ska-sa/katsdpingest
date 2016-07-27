@@ -284,11 +284,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-<<<<<<< HEAD
-            cmd = ["taskset","5,7","dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
-=======
             cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
->>>>>>> c4e0d640ee47033cdead93cf4ddeb3c86d554b28
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
