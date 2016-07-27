@@ -8,6 +8,7 @@ funcsigs
 futures
 h5py
 ipaddress==1.0.16
+katcp
 linecache2
 Mako
 manhole
@@ -18,6 +19,7 @@ nose
 numpy
 omnijson==0.1.2
 pbr
+pkginfo
 ply
 ProxyTypes
 psutil==4.1.0
@@ -37,8 +39,7 @@ Twisted
 ujson==1.35
 unittest2
 zope.interface
-git+ssh://git@github.com/ska-sa/katcp-python#egg=katcp
-git+ssh://git@github.com/ska-sa/katsdpsigproc@async-resource#egg=katsdpsigproc
+git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpdisp#egg=katsdpdisp
 git+ssh://git@github.com/ska-sa/katsdpdata#egg=katsdpfilewriter&subdirectory=katsdpfilewriter
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
