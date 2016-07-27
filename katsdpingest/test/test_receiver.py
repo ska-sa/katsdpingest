@@ -36,6 +36,12 @@ class QueueRecvStream(object):
     def stop(self):
         self._queue.put_nowait(None)
 
+    def set_memory_allocator(self, allocator):
+        pass
+
+    def set_memory_pool(self, memory_pool):
+        pass
+
 
 class QueueSendStream(object):
     """Sending side for a :class:`QueueRecvStream`."""
