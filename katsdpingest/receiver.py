@@ -99,7 +99,14 @@ class Receiver(object):
         self._futures = []
         self._interval = None
         for i, endpoint in enumerate(endpoints):
-            stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), loop=loop)
+            stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), max_heaps=2, ring_heaps=2, loop=loop)
+            # This is a quick hack with the maximum size for AR1. Ideally as soon
+            # as we have the necessary metadata we should compute the actual size,
+            # but _initialise is only called once we've grabbed a heap, and at
+            # full speed we can't capture a heap without the memory pool.
+            xeng_raw_size = 16 * 17 * 2 * 32768 * 8 // len(endpoints)
+            memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 8, 8)
+            stream.set_memory_pool(memory_pool)
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams.append(stream)
             self._futures.append(trollius.async(self._read_stream(stream, i), loop=loop))
