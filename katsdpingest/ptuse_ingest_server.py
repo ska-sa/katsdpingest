@@ -85,8 +85,10 @@ class _CaptureSession(object):
         self._digifits_process = None
         self._dspsr_process = None
         self._speadmeta_process = None
+        self._dada_header_process = None
 
         self._create_dada_buffer()
+        self._create_dada_header()
         _logger.info("Created dada_buffer\n")
         if script_args:
             backend = script_args['backend']
@@ -105,9 +107,6 @@ class _CaptureSession(object):
             elif (backend in "dada_dbdisk"):
                 self._create_dada_dbdisk()
             time.sleep(1)
-            _logger.info(args.telstate.get(script_args))
-            _logger.info(args.telstate.get('config'))
-            _logger.info(args)
             beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
             beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
             _logger.info(beam_x_multicast)
@@ -118,7 +117,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =64):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =64):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -136,6 +135,12 @@ class _CaptureSession(object):
         dada_buffer_process.wait()
         print ('complete buffer creation')
         print (dada_buffer_process.communicate())
+
+    def _create_dada_header(self):
+        cmd = ['dada_header']
+        self._dada_header_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
 
     def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 0, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
@@ -460,12 +465,12 @@ class _CaptureSession(object):
         #import signal
         _logger.info ("obs_length")
         _logger.info(obs_length - 5)
-        time.sleep(int(obs_length-2))
-        _logger.info("kill cap--------------11!!--------------------")
-        time.sleep(1)
-        if self._capture_process.poll() is None:
-            self._capture_process.send_signal(signal.SIGINT)
-        _logger.info("kill cap--------------11--------------------")
+        #time.sleep(int(obs_length-2))
+        #_logger.info("kill cap--------------11!!--------------------")
+        #time.sleep(1)
+        #if self._capture_process.poll() is None:
+        #    self._capture_process.send_signal(signal.SIGINT)
+        #_logger.info("kill cap--------------11--------------------")
         #time.sleep(1)
         #if self._capture_processi.poll() is None:
         #    self._capture_process.send_signal(signal.SIGINT)
@@ -484,6 +489,7 @@ class _CaptureSession(object):
         _logger.info(dir(self.args.telstate))
         for k in self.args.telstate.keys():
             _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
+            _logger.info("++++++++++++++++++________________________++++++++++++++++++++++")
         _logger.info(self.args.telstate.get('config'))
         _logger.info(self.args)
         print ("STOPPING")
@@ -511,6 +517,24 @@ class _CaptureSession(object):
         cmd, stdout=subprocess.PIPE
         )
         _logger.info(dada_buffer_process.communicate())
+        dada_header = dict([d.split() for d in self._dada_header_process.communicate()[0].split('\n')][:-1])
+        _logger.info(dada_header)
+        
+        obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
+        script_args = self.args.telstate.get('obs_script_arguments')
+        obs_info.write ("observer;%s"%script_args['observer'])
+        obs_info.write ("program_block_id;%s"%script_args["program_block_id"])
+        obs_info.write ("targets;%s"%script_args["targets"])
+        obs_info.write ("sb_id_code;%s"%script_args["sb_id_code"])
+        obs_info.write ("target_duration;%s"%script_args["target_duration"])
+        obs_info.write ("proposal_id;%s"%script_args["proposal_id"])
+        obs_info.write ("description;%s"%script_args["description"])
+        obs_info.write ("backend_args;%s"%script_args["backend_args"])
+        obs_info.write ("experiment_id;%s"%script_args["experiment_id"])
+        obs_info.write ("PICOSECONDS;%s"%dada_header["PICOSECONDS"])
+        obs_info.write ("UTC_START;%s"%dada_header["UTC_START"]) 
+        obs_info.close()
+
         if self.run and self.backend == 'digifits':
             data_files = os.listdir(self.save_dir)
             _logger.info(data_files)
