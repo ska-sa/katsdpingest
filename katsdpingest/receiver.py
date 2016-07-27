@@ -106,7 +106,7 @@ class Receiver(object):
             # full speed we can't capture a heap without the memory pool.
             xeng_raw_size = 16 * 17 * 2 * 32768 * 8 // len(endpoints)
             memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 16, 16)
-            stream.set_memory_pool(memory_pool)
+            stream.set_memory_allocator(memory_pool)
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams.append(stream)
             self._futures.append(trollius.async(self._read_stream(stream, i), loop=loop))
