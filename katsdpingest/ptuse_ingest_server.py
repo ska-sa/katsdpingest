@@ -117,7 +117,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =64):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =32):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -195,7 +195,7 @@ class _CaptureSession(object):
     def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1 -c'):
         _logger.info("digifits")
         passed_args = self.get_digifits_args(backend_args)
-        cmd =["taskset", "7", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
+        cmd =["taskset", "5,7", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
         os.mkdir(self.save_dir)
         #_logger.info(passed_args)
@@ -284,7 +284,11 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
+<<<<<<< HEAD
             cmd = ["taskset","5,7","dspsr","-t","2","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+=======
+            cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+>>>>>>> c4e0d640ee47033cdead93cf4ddeb3c86d554b28
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
@@ -486,12 +490,11 @@ class _CaptureSession(object):
         """
         #import signal
         _logger.info("--------------------------------------------")
-        _logger.info(dir(self.args.telstate))
-        for k in self.args.telstate.keys():
-            _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
-            _logger.info("++++++++++++++++++________________________++++++++++++++++++++++")
-        _logger.info(self.args.telstate.get('config'))
-        _logger.info(self.args)
+        #_logger.info(dir(self.args.telstate))
+        #for k in self.args.telstate.keys():
+        #    _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
+        #_logger.info(self.args.telstate.get('config'))
+        #_logger.info(self.args)
         print ("STOPPING")
         self._manual_stop = True
         if  self._capture_process is not None and self._capture_process.poll() is None:
