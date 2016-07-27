@@ -75,9 +75,10 @@ OTHER_SENSORS = [
 
 
 def configure_logging():
-    if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
+    if len(logging.root.handlers) > 0:
+        logging.root.removeHandler(logging.root.handlers[0])
     formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
-                                      datefmt="%Y-%m-%d %H:%M:%S")
+                                  datefmt="%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
@@ -152,7 +153,7 @@ class Client(object):
                 result = status[sensor.cam_name]
                 if result[u'success']:
                     self._logger.info("Set sampling strategy on %s to %s",
-                        sensor.cam_name, sensor.sampling_strategy_and_params)
+                                      sensor.cam_name, sensor.sampling_strategy_and_params)
                 else:
                     raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
                         sensor.cam_name, result[u'info']))
@@ -180,13 +181,13 @@ class Client(object):
             value = value.encode('us-ascii')
         if status == 'unknown':
             self._logger.warn("Sensor {} received update '{}' with status 'unknown' (ignored)"
-                    .format(name, value))
+                              .format(name, value))
         elif name in self._sensors:
             sensor = self._sensors[name]
             self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
         else:
             self._logger.debug("Sensor {} received update '{}' but we didn't subscribe (ignored)"
-                    .format(name, value))
+                               .format(name, value))
 
     def update_callback(self, msg):
         self._logger.info("update_callback: %s", pprint.pformat(msg))
@@ -202,6 +203,7 @@ class Client(object):
         self._portal_client.disconnect()
         self._logger.info("disconnected")
         self._loop.stop()
+
 
 def main():
     args = parse_args()
