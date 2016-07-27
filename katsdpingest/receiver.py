@@ -29,6 +29,9 @@ class Frame(object):
     def ready(self):
         return all(item is not None for item in self.items)
 
+    def nbytes(self):
+        return sum([item.nbytes if item is not None else 0])
+
 
 class Receiver(object):
     """Class that receives from multiple SPEAD streams and combines heaps into

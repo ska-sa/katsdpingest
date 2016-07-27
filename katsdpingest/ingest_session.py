@@ -247,6 +247,10 @@ class CBFIngest(object):
 
         self._my_sensors = my_sensors
         self.pkt_sensor = self._my_sensors['packets-captured']
+        self.input_rate_sensor = self._my_sensors['input_rate']
+        self.input_bytes = 0
+        self.output_rate_sensor = self._my_sensors['output_rate']
+        self.output_bytes = 0
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self.ig_sd = None
@@ -602,6 +606,7 @@ class CBFIngest(object):
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             # Shift to the centre of the dump
             ts_rel += 0.5 * self.cbf_attr['int_time']
+            self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
             yield From(resource.async_wait_for_events([transfer_done]))
             yield From(trollius.gather(
                 self._send_visibilities(
@@ -780,6 +785,7 @@ class CBFIngest(object):
     def _run(self):
         """Real implementation of `run`."""
         idx = 0
+        rate_timer = 0
         self.status_sensor.set_value("idle")
         self._output_avg = None
         self._sd_avg = None
@@ -793,6 +799,7 @@ class CBFIngest(object):
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
                 self.status_sensor.set_value("capturing")
+                rate_timer = time.time()
                 yield From(self._initialise())
 
             # Generate timestamps
@@ -808,11 +815,18 @@ class CBFIngest(object):
             # Limit backlog by waiting for previous job to get as far as
             # enqueuing its work before trying to carry on.
             yield From(proc_a.wait())
+            self.input_bytes += frame.nbytes
             self.jobs.add(self._frame_job(proc_a, vis_in_a, frame))
 
             # Done with reading this frame
             idx += 1
             self.pkt_sensor.set_value(idx)
+            if idx % 10 == 0:
+                self.input_rate_sensor.set_value(int(self.input_bytes / (time.time() - rate_timer)))
+                self.output_rate_sensor.set_value(int(self.output_bytes / (time.time() - rate_timer)))
+                self.input_bytes = 0
+                self.output_bytes = 0
+                rate_timer = time.time()
             tt = time.time() - st
             self.logger.info(
                 "Captured CBF frame with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
