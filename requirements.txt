@@ -7,6 +7,7 @@ decorator
 funcsigs
 futures
 h5py
+ipaddress==1.0.16
 linecache2
 Mako
 manhole
