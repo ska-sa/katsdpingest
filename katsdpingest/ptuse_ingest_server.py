@@ -518,21 +518,23 @@ class _CaptureSession(object):
         _logger.info(dada_buffer_process.communicate())
         dada_header = dict([d.split() for d in self._dada_header_process.communicate()[0].split('\n')][:-1])
         _logger.info(dada_header)
-        
-        obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
-        script_args = self.args.telstate.get('obs_script_arguments')
-        obs_info.write ("observer;%s"%script_args['observer'])
-        obs_info.write ("program_block_id;%s"%script_args["program_block_id"])
-        obs_info.write ("targets;%s"%script_args["targets"])
-        obs_info.write ("sb_id_code;%s"%script_args["sb_id_code"])
-        obs_info.write ("target_duration;%s"%script_args["target_duration"])
-        obs_info.write ("proposal_id;%s"%script_args["proposal_id"])
-        obs_info.write ("description;%s"%script_args["description"])
-        obs_info.write ("backend_args;%s"%script_args["backend_args"])
-        obs_info.write ("experiment_id;%s"%script_args["experiment_id"])
-        obs_info.write ("PICOSECONDS;%s"%dada_header["PICOSECONDS"])
-        obs_info.write ("UTC_START;%s"%dada_header["UTC_START"]) 
-        obs_info.close()
+       
+
+        if self.backend == 'digifits' or self.backend == 'dspsr': 
+            obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
+            script_args = self.args.telstate.get('obs_script_arguments')
+            obs_info.write ("observer;%s\n"%script_args['observer'])
+            obs_info.write ("program_block_id;%s\n"%script_args["program_block_id"])
+            obs_info.write ("targets;%s\n"%script_args["targets"])
+            obs_info.write ("sb_id_code;%s\n"%script_args["sb_id_code"])
+            obs_info.write ("target_duration;%s\n"%script_args["target_duration"])
+            obs_info.write ("proposal_id;%s\n"%script_args["proposal_id"])
+            obs_info.write ("description;%s\n"%script_args["description"])
+            obs_info.write ("backend_args;%s\n"%script_args["backend_args"])
+            obs_info.write ("experiment_id;%s\n"%script_args["experiment_id"])
+            obs_info.write ("PICOSECONDS;%s\n"%dada_header["PICOSECONDS"])
+            obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"]) 
+            obs_info.close()
 
         if self.run and self.backend == 'digifits':
             data_files = os.listdir(self.save_dir)
