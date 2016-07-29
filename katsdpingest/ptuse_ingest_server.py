@@ -520,7 +520,7 @@ class _CaptureSession(object):
         _logger.info(dada_header)
        
 
-        if self.backend == 'digifits' or self.backend == 'dspsr': 
+        if self.run and self.backend == 'digifits' or self.backend == 'dspsr': 
             obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
             script_args = self.args.telstate.get('obs_script_arguments')
             obs_info.write ("observer;%s\n"%script_args['observer'])
