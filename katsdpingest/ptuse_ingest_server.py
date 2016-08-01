@@ -73,6 +73,7 @@ class _CaptureSession(object):
         self._endpoints = []
         self.cpture_log = None
         self._timestep = None
+        self.backend = None
         self._ig = spead2.ItemGroup()
         self._stream = spead2.recv.trollius.Stream(spead2.ThreadPool(), 0, loop=self._loop)
         for endpoint in args.cbf_spead:
@@ -376,7 +377,7 @@ class _CaptureSession(object):
             content = metafile.read()
             _logger.info("content is %s"%content)
             count = 0
-            while count < 1000 and content == "":
+            while count < 5000 and content == "":
                 count+=1
                 time.sleep(0.1)
                 content = metafile.read()
@@ -387,6 +388,7 @@ class _CaptureSession(object):
             self._speadmeta_process.kill()
             self._speadmeta_process = None
             _logger.info("metadata packet did not arrive by timeout")
+            self.run == False
             return
         _logger.info("passed exit")
         #_logger.info(dir(self._metadata_process))
@@ -520,7 +522,7 @@ class _CaptureSession(object):
         _logger.info(dada_header)
        
 
-        if self.run and self.backend == 'digifits' or self.backend == 'dspsr': 
+        if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'): 
             obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
             script_args = self.args.telstate.get('obs_script_arguments')
             obs_info.write ("observer;%s\n"%script_args['observer'])
@@ -536,7 +538,7 @@ class _CaptureSession(object):
             obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"]) 
             obs_info.close()
 
-        if self.run and self.backend == 'digifits':
+        if self.backend and self.backend == 'digifits':
             data_files = os.listdir(self.save_dir)
             _logger.info(data_files)
             data = pyfits.open("%s/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
