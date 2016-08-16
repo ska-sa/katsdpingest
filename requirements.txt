@@ -33,7 +33,7 @@ singledispatch
 six
 spead2
 tornado
-trollius==2.1
+trollius
 traceback2
 Twisted
 ujson==1.35
