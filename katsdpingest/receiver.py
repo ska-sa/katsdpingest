@@ -36,7 +36,7 @@ class Frame(object):
 
     @property
     def nbytes(self):
-        return sum([item.nbytes if item is not None else 0])
+        return sum([(item.nbytes if item is not None else 0) for item in self.items])
 
 
 class Receiver(object):
