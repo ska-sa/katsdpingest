@@ -47,7 +47,8 @@ setup(
         "scripts/ingest.py",
         "scripts/bf_ingest.py",
         "scripts/ingest_autotune.py",
-        "scripts/cam2telstate.py"
+        "scripts/cam2telstate.py",
+        "scripts/cam2spead_recv.py"
     ],
     setup_requires=['katversion'],
     install_requires=[
