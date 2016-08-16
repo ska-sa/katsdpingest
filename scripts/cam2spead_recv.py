@@ -24,7 +24,7 @@ import katsdptelstate
 def parse_opts():
     parser = katsdptelstate.ArgumentParser()
     parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
-    parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=2041, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
                       help='level to use for basic logging or name of logging configuration file; '
@@ -117,8 +117,8 @@ class IngestDeviceServer(DeviceServer):
     """Serves the ingest katcp interface.
     Top level holder of the cam2spead thread."""
 
-    VERSION_INFO = ("sdp-ingest", 0, 1)
-    BUILD_INFO = ("sdp-ingest", 0, 1, "rc1")
+    VERSION_INFO = ("sdp-cam2spead-recv", 0, 1)
+    BUILD_INFO = ("sdp-cam2spead-recv", 0, 1, "rc1")
 
     def __init__(self, logger, *args, **kwargs):
         self.logger = logger
@@ -245,7 +245,7 @@ if __name__ == '__main__':
     server = IngestDeviceServer(logger, opts.host, opts.port)
     server.set_restart_queue(restart_queue)
     server.start()
-    logger.info("Started katsdpingest server.")
+    logger.info("Started cam2spead_recv server.")
 
     manhole.install(oneshot_on='USR1', locals={'server':server, 'opts':opts})
      # allow remote debug connections and expose server and opts
@@ -275,7 +275,7 @@ if __name__ == '__main__':
                 device.start()
                 logger.info("Started")
     except KeyboardInterrupt:
-        logger.info("Shutting down katsdpingest server...")
+        logger.info("Shutting down cam2spead_recv server...")
         logger.info("Activity logging stopped")
         server.handle_interrupt()
         server.stop()
