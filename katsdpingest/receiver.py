@@ -115,17 +115,11 @@ class Receiver(object):
 
     @property
     def bandwidth(self):
-        try:
-            return self.cbf_attr['bandwidth'] * len(self._streams)
-        except KeyError:
-            return None
+        return self.cbf_attr.get('bandwidth')
 
     @property
     def n_chans(self):
-        try:
-            return self.cbf_attr['n_chans'] * len(self._streams)
-        except KeyError:
-            return None
+        return self.cbf_attr.get('n_chans')
 
     def stop(self):
         """Stop all the individual streams and wait to join them."""
