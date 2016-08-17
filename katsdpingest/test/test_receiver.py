@@ -100,8 +100,9 @@ class QueueRecvStream(object):
 class TestReceiver(object):
     def setup(self):
         self.loop = trollius.get_event_loop_policy().new_event_loop()
-        endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+3')
-        self.n_streams = 4
+        endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+1')
+        self.n_streams = 2
+        self.n_xengs = 4
         self.rx = Receiver(endpoints, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
@@ -144,7 +145,7 @@ class TestReceiver(object):
             ig.add_item(0x4103, 'frequency', 'Identifies the first channel in the band of frequencies in the SPEAD heap. Can be used to reconstruct the full spectrum.',
                 (), format=[('u', 48)])
             ig.add_item(0x1800, 'xeng_raw', 'Raw data stream from all the X-engines in the system. For KAT-7, this item represents a full spectrum (all frequency channels) assembled from lowest frequency to highest frequency. Each frequency channel contains the data for all baselines (n_bls given by SPEAD Id=0x1008). Each value is a complex number - two (real and imaginary) signed integers.',
-                (self.n_chans // self.n_streams, self.n_bls, 2), np.int32)
+                (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_heap())
         self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
@@ -196,7 +197,7 @@ class TestReceiver(object):
         """
         xeng_raw = np.random.uniform(
             -1000, 1000,
-            size=(n_frames, self.n_streams, self.n_chans // self.n_streams, self.n_bls, 2))
+            size=(n_frames, self.n_xengs, self.n_chans // self.n_xengs, self.n_bls, 2))
         xeng_raw = xeng_raw.astype(np.int32)
         interval = 2 * self.n_accs * self.n_chans
         timestamps = np.arange(n_frames, dtype=np.uint64) * interval + 1234567890123
@@ -205,10 +206,12 @@ class TestReceiver(object):
     @trollius.coroutine
     def _send_in_order(self, xeng_raw, timestamps):
         for t in range(len(xeng_raw)):
-            for i in range(self.n_streams):
-                self.tx_ig[i]['timestamp'].value = timestamps[t]
-                self.tx_ig[i]['xeng_raw'].value = xeng_raw[t, i]
-                self.tx[i].send_heap(self.tx_ig[i].get_heap())
+            for i in range(self.n_xengs):
+                stream_idx = i * self.n_streams // self.n_xengs
+                self.tx_ig[stream_idx]['timestamp'].value = timestamps[t]
+                self.tx_ig[stream_idx]['frequency'].value = i * self.n_chans // self.n_xengs
+                self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
+                self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
             yield From(trollius.sleep(0.02, loop=self.loop))
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
@@ -222,8 +225,8 @@ class TestReceiver(object):
         for t in range(n_frames):
             frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
             assert_equal(timestamps[t], frame.timestamp)
-            assert_equal(self.n_streams, len(frame.items))
-            for i in range(self.n_streams):
+            assert_equal(self.n_xengs, len(frame.items))
+            for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
             yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
@@ -252,9 +255,11 @@ class TestReceiver(object):
             (8, 0), (9, 3), (8, 1), (8, 3), (8, 2)
         ]
         for (t, i) in order:
-            self.tx_ig[i]['timestamp'].value = timestamps[t]
-            self.tx_ig[i]['xeng_raw'].value = xeng_raw[t, i]
-            self.tx[i].send_heap(self.tx_ig[i].get_heap())
+            stream_idx = i * self.n_streams // self.n_xengs
+            self.tx_ig[stream_idx]['timestamp'].value = timestamps[t]
+            self.tx_ig[stream_idx]['frequency'].value = i * self.n_chans // self.n_xengs
+            self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
+            self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
             # Longish sleep to ensure the ordering is respected
             yield From(trollius.sleep(0.02, loop=self.loop))
         for i in range(self.n_streams):
@@ -270,8 +275,8 @@ class TestReceiver(object):
             for t in [0, 1, 6, 8]:
                 frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
                 assert_equal(timestamps[t], frame.timestamp)
-                assert_equal(self.n_streams, len(frame.items))
-                for i in range(self.n_streams):
+                assert_equal(self.n_xengs, len(frame.items))
+                for i in range(self.n_xengs):
                     np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
                 yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
