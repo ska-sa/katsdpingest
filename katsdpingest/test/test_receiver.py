@@ -12,17 +12,19 @@ import katsdptelstate.endpoint
 from katsdpsigproc.test.test_resource import async_test
 from nose.tools import *
 import mock
+import logging
 
 
-class QueueRecvStream(object):
-    """Replacement for :class:`spead2.recv.trollius.Stream` that lets us
-    feed in heaps directly."""
-    def __init__(self,  *args, **kwargs):
-        loop = kwargs.pop('loop', None)
+class QueueStream(object):
+    """A simulated SPEAD stream, stored in memory as a queue of heaps. A value
+    of None indicates that the stream has been shut down (because putting an
+    actual stop heap in the queue won't have the desired effect, as normally
+    this is processed at a lower level).
+    """
+    _streams = {}
+
+    def __init__(self, loop=None):
         self._queue = trollius.Queue(loop=loop)
-
-    def add_udp_reader(self, *args, **kwargs):
-        pass
 
     @trollius.coroutine
     def get(self):
@@ -36,18 +38,6 @@ class QueueRecvStream(object):
     def stop(self):
         self._queue.put_nowait(None)
 
-    def set_memory_allocator(self, allocator):
-        pass
-
-    def set_memory_pool(self, memory_pool):
-        pass
-
-
-class QueueSendStream(object):
-    """Sending side for a :class:`QueueRecvStream`."""
-    def __init__(self, receive):
-        self.receive = receive
-
     def send_heap(self, heap):
         tp = spead2.ThreadPool()
         encoder = spead2.send.BytesStream(tp)
@@ -57,19 +47,64 @@ class QueueSendStream(object):
         decoder.add_buffer_reader(raw)
         try:
             heap = decoder.get()
-            self.receive._queue.put_nowait(heap)
+            self._queue.put_nowait(heap)
         except spead2.Stopped:
-            self.receive.stop()
+            self.stop()
+
+    @classmethod
+    def get_instance(cls, multicast_group, port, loop=None):
+        key = (multicast_group, port)
+        if key not in cls._streams:
+            logging.debug('Creating stream %s', key)
+            cls._streams[key] = QueueStream(loop)
+        else:
+            logging.debug('Connecting to existing stream %s', key)
+        return cls._streams[key]
+
+    @classmethod
+    def clear_instances(cls):
+        cls._streams.clear()
+
+
+class QueueRecvStream(object):
+    """Replacement for :class:`spead2.recv.trollius.Stream` that lets us
+    feed in heaps directly."""
+    def __init__(self,  *args, **kwargs):
+        self._loop = kwargs.pop('loop', None)
+        self._stream = None
+
+    def add_udp_reader(self, port, *args, **kwargs):
+        bind_hostname = kwargs['bind_hostname']
+        if self._stream is not None:
+            raise RuntimeError('QueueRecvStream only supports one reader')
+        self._stream = QueueStream.get_instance(bind_hostname, port, self._loop)
+
+    @trollius.coroutine
+    def get(self):
+        heap = yield From(self._stream.get())
+        raise Return(heap)
+
+    def stop(self):
+        # Note: don't call stop on the stream, because that will cause the
+        # next stream connected to the same endpoint to also be in a stopped
+        # state.
+        pass
+
+    def set_memory_allocator(self, allocator):
+        pass
+
+    def set_memory_pool(self, memory_pool):
+        pass
 
 
 class TestReceiver(object):
-    @mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
     def setup(self):
         self.loop = trollius.get_event_loop_policy().new_event_loop()
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+3')
         self.n_streams = 4
-        self.rx = Receiver(endpoints, loop=self.loop)
-        self.tx = [QueueSendStream(stream) for stream in self.rx._streams]
+        self.rx = Receiver(endpoints, active_frames=3, loop=self.loop)
+        self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
+                   for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         self.adc_sample_rate = 1712000000
         self.n_chans = 4096
@@ -91,11 +126,11 @@ class TestReceiver(object):
             ig.add_item(0x1008, 'n_bls', 'The total number of baselines in the data product. Each pair of inputs (polarisation pairs) is considered a baseline.',
                 (), format=[('u', 48)], value=self.n_bls)
             ig.add_item(0x1009, 'n_chans', 'The total number of frequency channels present in any integration.',
-                        (), format=[('u', 48)], value=self.n_chans // self.n_streams)
+                        (), format=[('u', 48)], value=self.n_chans)
             ig.add_item(0x100C, 'bls_ordering', "The X-engine baseline output ordering. The form is a list of arrays of strings of user-defined antenna names ('input1','input2'). For example [('antC23x','antC23y'), ('antB12y','antA29y')]",
                 baselines.shape, baselines.dtype, value=baselines)
             ig.add_item(0x1013, 'bandwidth', 'The analogue bandwidth of the digitally processed signal in Hz.',
-                        (), format=[('f', 64)], value=self.adc_sample_rate / 2 / self.n_streams)
+                        (), format=[('f', 64)], value=self.adc_sample_rate / 2)
             ig.add_item(0x1015, 'n_accs', 'The number of spectra that are accumulated per integration.',
                 (), format=[('u', 48)], value=self.n_accs)
             ig.add_item(0x1016, 'int_time', "Approximate (it's a float!) time per accumulation in seconds. This is intended for reference only. Each accumulation has an associated timestamp which should be used to determine the time of the integration rather than incrementing the start time by this value for sequential integrations (which would allow errors to grow).",
@@ -106,12 +141,18 @@ class TestReceiver(object):
                 (), format=[('f', 64)], value=self.adc_sample_rate)
             ig.add_item(0x1600, 'timestamp', 'Timestamp of start of this integration. uint counting multiples of ADC samples since last sync (sync_time, id=0x1027). Divide this number by timestamp_scale (id=0x1046) to get back to seconds since last sync when this integration was actually started. Note that the receiver will need to figure out the centre timestamp of the accumulation (eg, by adding half of int_time, id 0x1016).',
                 (), None, format=[('u', 48)])
+            ig.add_item(0x4103, 'frequency', 'Identifies the first channel in the band of frequencies in the SPEAD heap. Can be used to reconstruct the full spectrum.',
+                (), format=[('u', 48)])
             ig.add_item(0x1800, 'xeng_raw', 'Raw data stream from all the X-engines in the system. For KAT-7, this item represents a full spectrum (all frequency channels) assembled from lowest frequency to highest frequency. Each frequency channel contains the data for all baselines (n_bls given by SPEAD Id=0x1008). Each value is a complex number - two (real and imaginary) signed integers.',
                 (self.n_chans // self.n_streams, self.n_bls, 2), np.int32)
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_heap())
+        self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
+        self.patcher.start()
 
     def teardown(self):
+        self.patcher.stop()
+        QueueStream.clear_instances()
         self.loop.close()
 
     @async_test

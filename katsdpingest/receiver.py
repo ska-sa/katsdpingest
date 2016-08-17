@@ -270,6 +270,12 @@ class Receiver(object):
                 channel0 = 0
                 if 'frequency' in updated:
                     channel0 = updated['frequency'].value
+                else:
+                    # Old format, with only one engine per stream
+                    if stream_xengs != 1:
+                        _logger.warning('CBF heap without frequency received on stream %d', stream_idx)
+                        continue
+                    channel0 = stream_channels * stream_idx
                 if channel0 % heap_channels != 0 or channel0 < 0 or channel0 + heap_channels > self.n_chans:
                     _logger.warning("CBF heap with invalid channel %d on stream %d", channel0, stream_idx)
                     continue
