@@ -286,7 +286,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["numactl","-C","5","dspsr -D 0 -Q -minram 512 -L 10 -b 1024 -cuda 0 /home/kat/dada.info"]
+            cmd = ["numactl","-C","5","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
