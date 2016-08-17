@@ -9,16 +9,18 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
     katsdp.stageMakeDocker()
 
-    stage 'autotuning'
-    katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
-        deleteDir()
-        katsdp.unpackGit()
-        katsdp.unpackVenv()
-        katsdp.virtualenv('venv') {
-            // TODO: update the script instead
-            withEnv(["GIT_BRANCH=${env.BRANCH_NAME}"]) {
-                dir('git') {
-                    sh './jenkins-autotune.sh titanx'
+    if (currentBuild.result == null) {
+        stage 'autotuning', concurrency: 1
+        katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
+            deleteDir()
+            katsdp.unpackGit()
+            katsdp.unpackVenv()
+            katsdp.virtualenv('venv') {
+                // TODO: update the script instead
+                withEnv(["GIT_BRANCH=${env.BRANCH_NAME}"]) {
+                    dir('git') {
+                        sh './jenkins-autotune.sh titanx'
+                    }
                 }
             }
         }
