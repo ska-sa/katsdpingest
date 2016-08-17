@@ -118,7 +118,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =32):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =32):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -128,7 +128,8 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore, '-p', '-l', '-n', '%d'%nBuffers]
+        #did have -p and -l
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore, '-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -143,7 +144,7 @@ class _CaptureSession(object):
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
-    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 0, outputDir = '/data'):
+    def _create_dada_dbdisk (self, dadaId = 'dada', cpuCore = 1, outputDir = '/data'):
         """Create the dada_dbdisk process which writes data from dada buffer to disk.
         Must be run after creating the dada_buffer and before the capture process.
         Must have the same NUMA node as the dada_buffer
@@ -196,7 +197,7 @@ class _CaptureSession(object):
     def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1 -c'):
         _logger.info("digifits")
         passed_args = self.get_digifits_args(backend_args)
-        cmd =["taskset", "5,7", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
+        cmd =["numactl", "-C", "5", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
         os.mkdir(self.save_dir)
         #_logger.info(passed_args)
@@ -285,7 +286,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["taskset","7","dspsr","-D","0","-Q","-L","10","-cuda","0","/home/kat/dada.info"]
+            cmd = ["numactl","-C","5","dspsr -D 0 -Q -minram 512 -L 10 -b 1024 -cuda 0 /home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
@@ -457,7 +458,7 @@ class _CaptureSession(object):
         cap_env["VMA_MTU"] = "9200"
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
-        cmd = ["meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(3,5)]
+        cmd = ["meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("/tmp/capture.log","a")
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
