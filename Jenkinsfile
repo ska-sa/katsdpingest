@@ -10,7 +10,7 @@ katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stageMakeDocker()
 
     if (currentBuild.result == null) {
-        stage 'autotuning', concurrency: 1
+        stage name: 'autotuning', concurrency: 1
         katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
             deleteDir()
             katsdp.unpackGit()
