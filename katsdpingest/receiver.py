@@ -145,7 +145,9 @@ class Receiver(object):
                 self._running -= 1
 
     def _set_telstate_entry(self, name, value, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, attribute=attribute)
+        utils.set_telstate_entry(self.telstate, name, value,
+                                 prefix=self.cbf_name,
+                                 attribute=attribute)
 
     def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
