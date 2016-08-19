@@ -36,6 +36,9 @@ class Frame(object):
     def ready(self):
         return all(item is not None for item in self.items)
 
+    def empty(self):
+        return all(item is None for item in self.items)
+
     @property
     def nbytes(self):
         return sum([(item.nbytes if item is not None else 0) for item in self.items])
@@ -355,6 +358,6 @@ class Receiver(object):
             if frame.ready():
                 _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
                 raise Return(frame)
-            else:
+            elif not frame.empty():
                 _logger.warning('Frame with timestamp %d is incomplete, discarding', frame.timestamp)
         raise spead2.Stopped('End of streams')
