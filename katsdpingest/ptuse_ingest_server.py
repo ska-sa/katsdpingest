@@ -118,7 +118,7 @@ class _CaptureSession(object):
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =32):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =32):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -286,7 +286,7 @@ class _CaptureSession(object):
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["numactl","-C","5","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+            cmd = ["numactl","-C","4","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
