@@ -148,6 +148,7 @@ class Receiver(object):
             if item_name not in ['bls_ordering', 'timestamp', 'frequency', 'xeng_raw']:
                 # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
                 utils.set_telstate_entry(self.telstate, item_name, item.value,
+                                         prefix=self.cbf_name,
                                          attribute=not is_cbf_sensor(item_name))
 
     def _update_cbf_attr(self, updated):

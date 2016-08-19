@@ -559,7 +559,7 @@ class CBFIngest(object):
 
         # Initialise the output streams
         kept_channels = channel_range[1] - channel_range[0]
-        spectral_size = kept_channels * baselines * np.dtype(np.complex64).itemsize
+        spectral_size = kept_channels * baselines * (np.dtype(np.complex64).itemsize + np.dtype(np.uint8).itemsize)
         # Scaling by 1.1 is to account for network overheads and to allow
         # catchup if we temporarily fall behind the rate.
         spectral_rate = spectral_size / self._output_avg.int_time * 1.1
