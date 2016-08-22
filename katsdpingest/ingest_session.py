@@ -17,7 +17,7 @@ import katsdptelstate
 import logging
 import trollius
 from trollius import From
-from . import utils, receiver
+from . import utils, receiver, sender
 
 
 class _TimeAverage(object):
@@ -227,8 +227,8 @@ class CBFIngest(object):
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.spectral_spead_endpoint = opts.l0_spectral_spead
-        self.continuum_spead_endpoint = opts.l0_continuum_spead
+        self.spectral_spead_endpoints = opts.l0_spectral_spead
+        self.continuum_spead_endpoints = opts.l0_continuum_spead
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -274,24 +274,12 @@ class CBFIngest(object):
         # Instantiation of the output streams delayed until exact integration time is known
         self.tx_spectral = None
         self.tx_continuum = None
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
-        self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
 
     def enable_debug(self, debug):
         if debug:
             self.logger.setLevel(logging.DEBUG)
         else:
             self.logger.setLevel(logging.INFO)
-
-    @trollius.coroutine
-    def _async_send_heap(self, stream, heap):
-        """Send a heap on a stream and wait for it to complete, but log and
-        suppress exceptions."""
-        try:
-            yield From(stream.async_send_heap(heap))
-        except Exception:
-            self.logger.warn("Error sending heap", exc_info=True)
 
     def _send_sd_data(self, data):
         """Send a heap to all signal display servers, asynchronously.
@@ -306,7 +294,7 @@ class CBFIngest(object):
         future : `trollius.Future`
             A future that is completed when the heap has been sent to all receivers.
         """
-        return trollius.gather(*(trollius.async(self._async_send_heap(tx, data))
+        return trollius.gather(*(trollius.async(sender.async_send_heap(tx, data))
                                  for tx in self._sdisp_ips.itervalues()))
 
     @classmethod
@@ -408,23 +396,6 @@ class CBFIngest(object):
     def set_center_freq(self, center_freq):
         """Change the center frequency reported to signal displays."""
         self._center_freq = center_freq
-
-    def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
-        """Asynchronously send visibilities to the receivers, returning a
-        future."""
-        # Create items on first use. This is simpler than figuring out the
-        # correct shapes ahead of time.
-        if 'correlator_data' not in ig:
-            ig.add_item(id=None, name='correlator_data', description="Visibilities",
-                        shape=vis.shape, dtype=vis.dtype)
-            ig.add_item(id=None, name='flags', description="Flags for visibilities",
-                        shape=flags.shape, dtype=flags.dtype)
-            ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
-                        shape=(), dtype=None, format=[('f', 64)])
-        ig['correlator_data'].value = vis
-        ig['flags'].value = flags
-        ig['timestamp'].value = ts_rel
-        return trollius.async(self._async_send_heap(tx, ig.get_heap()))
 
     def _initialise_ig_sd(self):
         """Create a item group for signal displays."""
@@ -559,23 +530,24 @@ class CBFIngest(object):
 
         # Initialise the output streams
         kept_channels = channel_range[1] - channel_range[0]
-        spectral_size = kept_channels * baselines * (np.dtype(np.complex64).itemsize + np.dtype(np.uint8).itemsize)
-        # Scaling by 1.1 is to account for network overheads and to allow
-        # catchup if we temporarily fall behind the rate.
-        spectral_rate = spectral_size / self._output_avg.int_time * 1.1
-        continuum_rate = spectral_rate / self.cont_factor
-        self.tx_spectral = spead2.send.trollius.UdpStream(
-            spead2.ThreadPool(),
-            self.spectral_spead_endpoint.host,
-            self.spectral_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=spectral_rate))
-        self.tx_continuum = spead2.send.trollius.UdpStream(
-            spead2.ThreadPool(),
-            self.continuum_spead_endpoint.host,
-            self.continuum_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=continuum_rate))
-        yield From(self._async_send_heap(self.tx_spectral, self.ig_spectral.get_start()))
-        yield From(self._async_send_heap(self.tx_continuum, self.ig_continuum.get_start()))
+        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        thread_pool = spead2.ThreadPool(2)
+        self.tx_spectral = sender.VisSenderSet(
+            thread_pool,
+            self.spectral_spead_endpoints,
+            l0_flavour,
+            self._output_avg.int_time,
+            channel_range,
+            baselines)
+        self.tx_continuum = sender.VisSenderSet(
+            thread_pool,
+            self.continuum_spead_endpoints,
+            l0_flavour,
+            self._output_avg.int_time,
+            (0, kept_channels // self.cont_factor),
+            baselines)
+        yield From(self.tx_spectral.start())
+        yield From(self.tx_continuum.start())
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
@@ -615,11 +587,8 @@ class CBFIngest(object):
             self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
             yield From(resource.async_wait_for_events([transfer_done]))
             yield From(trollius.gather(
-                self._send_visibilities(
-                    self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel),
-                self._send_visibilities(
-                    self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)))
-
+                self.tx_spectral.send(spec_vis, spec_flags, ts_rel),
+                self.tx_continuum.send(cont_vis, cont_flags, ts_rel)))
             self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
                 timestamps, time.time()))
 
@@ -853,15 +822,13 @@ class CBFIngest(object):
                 acq.ready()
         yield From(self.jobs.finish())
         self.logger.info("CBF ingest complete at %f" % time.time())
-        yield From(self._stop_stream(self.tx_spectral, self.ig_spectral))
+        yield From(self.tx_spectral.stop())
         self.tx_spectral = None
-        yield From(self._stop_stream(self.tx_continuum, self.ig_continuum))
+        yield From(self.tx_continuum.stop())
         self.tx_continuum = None
         if self.ig_sd is not None:
             for tx in self._sdisp_ips.itervalues():
                 yield From(self._stop_stream(tx, self.ig_sd))
-        self.ig_spectral = None
-        self.ig_continuum = None
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
