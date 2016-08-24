@@ -13,6 +13,7 @@ import tempfile
 import os
 import os.path
 
+
 def get_existing(cli, image):
     container = cli.create_container(image=image)
     container_id = container['Id']
@@ -56,7 +57,7 @@ def main():
         if args.host.startswith('tcp://'):
             args.host = 'https://' + args.host[6:]
         tls_config = docker.tls.TLSConfig(
-            client_cert=(os.path.expanduser('~/.docker/cert.pem'), 
+            client_cert=(os.path.expanduser('~/.docker/cert.pem'),
                          os.path.expanduser('~/.docker/key.pem')),
             verify=os.path.expanduser('~/.docker/ca.pem'))
         cli = docker.Client(args.host, tls=tls_config)

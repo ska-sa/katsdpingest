@@ -1,137 +1,23 @@
-#!/usr/bin/python
+"""Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
-# Threads for ingesting data and meta-data in order to produce a complete HDF5 file for further
-# processing.
-#
-# Currently has a CBFIngest and CAMIngest class
-#
-# Details on these are provided in the class documentation
-
+from __future__ import division, print_function, absolute_import
 import numpy as np
-import threading
 import spead2
 import spead2.send
 import spead2.recv
+import spead2.send.trollius
+import spead2.recv.trollius
 import time
-from contextlib import contextmanager
 import katsdpingest.sigproc as sp
+from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
 import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
-import socket
-
-
-timestamps_dataset = '/Data/timestamps'
-flags_dataset = '/Data/flags'
-cbf_data_dataset = '/Data/correlator_data'
-
-# CBF SPEAD metadata items that should be stored as sensors rather than
-# attributes. Don't use this directly; use :func:`is_cbf_sensor` instead,
-# which handles cases that aren't fixed strings.
-CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
-# Attributes that are required for data to be correctly ingested
-CBF_CRITICAL_ATTRS = frozenset([
-    'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
-    'bandwidth', 'sync_time', 'int_time', 'scale_factor_timestamp'])
-
-
-def is_cbf_sensor(name):
-    return name in CBF_SPEAD_SENSORS or name.startswith('eq_coef_')
-
-
-@contextmanager
-def timer(logger, fmt, *args, **kwargs):
-    """Context manager that logs a message on completion, including the
-    elapsed time.
-    """
-    st = time.time()
-    yield
-    et = time.time()
-    args = args + (et - st,)
-    logger.info(fmt + ' (elapsed: %.3f)', *args, **kwargs)
-
-
-class CAMIngest(threading.Thread):
-    """The CAM Ingest class receives meta-data updates in the form
-    of sensor information from the CAM via SPEAD. It uses these to
-    update the telescope state."""
-    def __init__(self, spead_endpoints, my_sensors, telstate, logger):
-        self.logger = logger
-        self.spead_endpoints = spead_endpoints
-        self.telstate = telstate
-        self._my_sensors = my_sensors
-        self.ig = None
-        threading.Thread.__init__(self)
-
-    def enable_debug(self, debug):
-        """Enable/disable debugging in the internal logger.
-
-        This function is thread-safe (because the logging module is).
-        """
-        self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
-
-    def _update_telstate(self, updated):
-        for item_name, item in updated.iteritems():
-            self.logger.debug("Sensor update: {} == {}".format(item_name, item.value))
-            try:
-                (value_time, status, sensor_value) = item.value.split(" ", 2)
-                value_time = float(value_time)
-                sensor_value = np.safe_eval(sensor_value)
-            except ValueError:
-                # our update is not a classical sensor triplet of time / status / value
-                # fake up a realistic looking sensor
-                sensor_value = item.value
-                value_time = time.time()
-                status = "nominal"
-                if sensor_value == '':
-                    # TODO: once fixed in numpy remove this check
-                    self.logger.error("Not inserting empty string into sensor {} due to existing numpy/pickle bug"
-                                      .format(item_name))
-                    continue
-            if status == 'unknown':
-                self.logger.debug("Sensor {0} received update '{1}' with status 'unknown' (ignored)"
-                                  .format(item_name, item.value))
-            elif self.telstate is not None:
-                # XXX Nasty hack to get SDP onto cbf name for AR1 integration
-                item_name = item_name.replace('data_1_', 'cbf_')
-                self.telstate.add(item_name, sensor_value, value_time)
-
-    def run(self):
-        """Thin wrapper around :meth:`_run` which handles exceptions."""
-        try:
-            self._run()
-        except Exception:
-            self.logger.error('CAMIngest thread threw an exception', exc_info=True)
-            status_sensor = self._my_sensors['device-status']
-            if status_sensor.value() != 'fail':
-                # If we were already in fail state, then don't raise the level to
-                # warning.
-                self._my_sensors['device-status'].set_value('degraded', Sensor.WARN)
-
-    def _run(self):
-        self.ig = spead2.ItemGroup()
-        self.logger.debug("Initalising SPEAD transports at %f" % time.time())
-        self.logger.info("CAM SPEAD stream reception on {0}".format(
-            [str(x) for x in self.spead_endpoints]))
-        # Socket only used for multicast subscription
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for endpoint in self.spead_endpoints:
-            if endpoint.multicast_subscribe(sock):
-                self.logger.info("Subscribing to multicast address {0}".format(endpoint.host))
-            elif endpoint.host != '':
-                self.logger.warning("Ignoring non-multicast address {0}".format(endpoint.host))
-        rx_md = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        rx_md.add_udp_reader(self.spead_endpoints[0].port)
-        self.rx = rx_md
-
-        for heap in rx_md:
-            updated = self.ig.update(heap)
-            self._update_telstate(updated)
-
-        self.logger.info("CAM ingest thread complete at %f" % time.time())
+import trollius
+from trollius import From
+from . import utils, receiver, sender
 
 
 class _TimeAverage(object):
@@ -170,7 +56,7 @@ class _TimeAverage(object):
         # Interval in ADC clock cycles
         clocks = 2 * cbf_attr['n_chans'] * cbf_attr['n_accs'] * self.ratio
         self.interval = int(round(clocks * cbf_attr['scale_factor_timestamp'] /
-                                  cbf_attr['adc_sample_rate']))
+                                  (2 * cbf_attr['bandwidth'])))
         self._start_ts = None
         self._ts = []
 
@@ -253,7 +139,29 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
-class CBFIngest(threading.Thread):
+class CBFIngest(object):
+    """
+    Ingest session.
+
+    .. note:: The list of attributes is incomplete
+
+    Attributes
+    ----------
+    vis_in_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `vis_in` device buffer
+    timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `timeseries_weights` device buffer
+    output_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the L0 output device buffers, namely `spec_vis`,
+        `spec_flags`, `cont_vis` and `cont_flags`
+    sd_output_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the signal display output device buffers.
+    proc_resource : :class:`katsdpsigproc.resource.Resource`
+        The proc object, and the contents of all its buffers except for those
+        covered by other resources above.
+    rx : :class:`katsdpingest.receiver.Receiver`
+        Receiver that combines data from the SPEAD streams into frames
+    """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
@@ -315,19 +223,12 @@ class CBFIngest(threading.Thread):
                  my_sensors, telstate, cbf_name, logger):
         self._sdisp_ips = {}
         self._center_freq = None
-
-        # Lock used to synchronise access between the katcp device server
-        # thread and this thread. It protects all attributes declared above
-        # this point.
-        self._lock = threading.Lock()
+        self._run_future = None
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.logger = logger
-        self.cbf_spead_endpoints = opts.cbf_spead
-        self.spectral_spead_endpoint = opts.l0_spectral_spead
-        self.spectral_spead_rate = opts.l0_spectral_spead_rate
-        self.continuum_spead_endpoint = opts.l0_continuum_spead
-        self.continuum_spead_rate = opts.l0_continuum_spead_rate
+        self.spectral_spead_endpoints = opts.l0_spectral_spead
+        self.continuum_spead_endpoints = opts.l0_continuum_spead
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -352,43 +253,27 @@ class CBFIngest(threading.Thread):
         self.output_bytes = 0
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
-        self.sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
+        self.ig_sd = None
         # Initialise processing blocks used
         self.command_queue = proc_template.context.create_command_queue()
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.proc = None
+        self.proc_resource = None
+        self.vis_in_resource = None
+        self.timeseries_weights_resource = None
+        self.output_resource = None
+        self.sd_output_resource = None
+        self.jobs = resource.JobQueue()
         # Done with blocks
 
         self.logger.debug("Initialising SPEAD transports at %f" % time.time())
         self.logger.info("CBF SPEAD stream reception on {0}".format(
-            [str(x) for x in self.cbf_spead_endpoints]))
-        thread_pool = spead2.ThreadPool(4)
-        self.rx = spead2.recv.Stream(thread_pool, max_heaps=2, ring_heaps=8)
-        # This is a quick hack with the maximum size for AR1. Ideally as soon
-        # as we have the necessary metadata we should compute the actual size,
-        # but _initialise is only called once we've grabbed a heap, and at
-        # full speed we can't capture a heap without the memory pool.
-        xeng_raw_size = 16 * 17 * 2 * 32768 * 8
-        memory_pool = spead2.MemoryPool(xeng_raw_size, xeng_raw_size + 512, 16, 16)
-        self.rx.set_memory_pool(memory_pool)
-        for endpoint in self.cbf_spead_endpoints:
-            self.rx.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
-        self.tx_spectral = spead2.send.UdpStream(
-            thread_pool,
-            self.spectral_spead_endpoint.host,
-            self.spectral_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.spectral_spead_rate / 8))
-        self.tx_continuum = spead2.send.UdpStream(
-            thread_pool,
-            self.continuum_spead_endpoint.host,
-            self.continuum_spead_endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=self.continuum_spead_rate / 8))
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        self.ig_spectral = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
-        self.ig_continuum = spead2.send.ItemGroup(descriptor_frequency=1, flavour=l0_flavour)
-
-        threading.Thread.__init__(self)
+            [str(x) for x in opts.cbf_spead]))
+        self.rx = receiver.Receiver(opts.cbf_spead, telstate, cbf_name)
+        self.cbf_attr = self.rx.cbf_attr
+        # Instantiation of the output streams delayed until exact integration time is known
+        self.tx_spectral = None
+        self.tx_continuum = None
 
     def enable_debug(self, debug):
         if debug:
@@ -397,16 +282,20 @@ class CBFIngest(threading.Thread):
             self.logger.setLevel(logging.INFO)
 
     def _send_sd_data(self, data):
-        """Send a heap to all signal display servers.
+        """Send a heap to all signal display servers, asynchronously.
 
-        This method is thread-safe.
+        Parameters
+        ----------
+        data : :class:`spead2.send.Heap`
+            Heap to send
+
+        Returns
+        -------
+        future : `trollius.Future`
+            A future that is completed when the heap has been sent to all receivers.
         """
-        # The actual sending is blocking, so first make a copy so that we can
-        # drop the lock quickly.
-        with self._lock:
-            sdisp_ips = self._sdisp_ips.values()
-        for tx in sdisp_ips:
-            tx.send_heap(data)
+        return trollius.gather(*(trollius.async(sender.async_send_heap(tx, data))
+                                 for tx in self._sdisp_ips.itervalues()))
 
     @classmethod
     def baseline_permutation(cls, bls_ordering, antenna_mask=None, rotate=False):
@@ -459,6 +348,16 @@ class CBFIngest(threading.Thread):
             permutation[reordered[i][0]] = i
         return permutation, np.array([x[1] for x in reordered])
 
+    @trollius.coroutine
+    def _stop_stream(self, stream, ig):
+        """Send a stop packet to a stream. To ensure that it won't be lost
+        on the sending side, the stream is first flushed, then the stop
+        heap is sent and waited for."""
+        if stream is not None:
+            yield From(stream.async_flush())
+            yield From(stream.async_send_heap(ig.get_end()))
+
+    @trollius.coroutine
     def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
@@ -467,11 +366,11 @@ class CBFIngest(threading.Thread):
         KeyError
             if `ip` is not currently in the list
         """
-        with self._lock:
-            self.logger.info("Removing ip %s from the signal display list." % (ip))
-            stream = self._sdisp_ips[ip]
-            del self._sdisp_ips[ip]
-        stream.send_heap(self.ig_sd.get_end())
+        self.logger.info("Removing ip %s from the signal display list." % (ip))
+        stream = self._sdisp_ips[ip]
+        del self._sdisp_ips[ip]
+        if self.ig_sd is not None:
+            yield From(self._stop_stream(stream, self.ig_sd))
 
     def add_sdisp_ip(self, ip, port):
         """Add a new server to the signal display list.
@@ -488,41 +387,21 @@ class CBFIngest(threading.Thread):
         KeyError
             if `ip` is already in the list (even if on a different port)
         """
-        with self._lock:
-            if ip in self._sdisp_ips:
-                raise ValueError('{0} is already in the active list of recipients'.format(ip))
-            config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
-            self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
-            self._sdisp_ips[ip] = spead2.send.UdpStream(spead2.ThreadPool(), ip, port, config)
+        if ip in self._sdisp_ips:
+            raise ValueError('{0} is already in the active list of recipients'.format(ip))
+        config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
+        self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
+        self._sdisp_ips[ip] = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
 
     def set_center_freq(self, center_freq):
-        """Change the center frequency reported to signal displays.
-
-        This function is thread-safe.
-        """
-        with self._lock:
-            self._center_freq = center_freq
-
-    def _send_visibilities(self, tx, ig, vis, flags, ts_rel):
-        # Create items on first use. This is simpler than figuring out the
-        # correct shapes ahead of time.
-        if 'correlator_data' not in ig:
-            ig.add_item(id=None, name='correlator_data', description="Visibilities",
-                        shape=vis.shape, dtype=vis.dtype)
-            ig.add_item(id=None, name='flags', description="Flags for visibilities",
-                        shape=flags.shape, dtype=flags.dtype)
-            ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
-                        shape=(), dtype=None, format=[('f', 64)])
-        ig['correlator_data'].value = vis
-        ig['flags'].value = flags
-        ig['timestamp'].value = ts_rel
-        tx.send_heap(ig.get_heap())
+        """Change the center frequency reported to signal displays."""
+        self._center_freq = center_freq
 
     def _initialise_ig_sd(self):
         """Create a item group for signal displays."""
         sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         inline_format = [('u', sd_flavour.heap_address_bits)]
-        self.ig_sd = spead2.send.ItemGroup(flavour=self.sd_flavour)
+        self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
         self.ig_sd.add_item(
             name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
             format=[('f', 32)], shape=(self.proc.buffer('sd_spec_vis').shape[0], None, 2))
@@ -574,35 +453,30 @@ class CBFIngest(threading.Thread):
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.cbf_attr['bandwidth'])
+            shape=(), dtype=None, format=[('f', 64)], value=self.rx.bandwidth)
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.cbf_attr['n_chans'])
+            shape=(), dtype=None, format=inline_format, value=self.rx.n_chans)
 
-    def _initialise(self, ig_cbf):
-        """Initialise variables on reception of the first usable dump."""
+    @trollius.coroutine
+    def _initialise(self):
+        """Initialise variables on reception of the first usable frame."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
         # Configure the masking and reordering of baselines
         orig_bls_ordering = self.cbf_attr['bls_ordering']
         permutation, self.cbf_attr['bls_ordering'] = \
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
-        channels = self.cbf_attr['n_chans']
+        channels = self.rx.n_chans
+        channel_range = (0, channels)
         n_accs = self.cbf_attr['n_accs']
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
-            raise ValueError('No baselines (bls_ordering={}, antenna_mask = {})'.format(
+            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 orig_bls_ordering, self.antenna_mask))
         if channels <= 0:
             raise ValueError('No channels')
-
-        # we need to create the raw datasets.
-        data_item = ig_cbf['xeng_raw']
-        new_shape = list(data_item.shape)
-        new_shape[-2] = baselines
-        self.logger.info("Creating cbf_data dataset with shape: {0}, dtype: {1}".format(
-            str(new_shape), np.float32))
 
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
@@ -629,7 +503,7 @@ class CBFIngest(threading.Thread):
                 percentile_ranges.append((0, 0))
 
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, (0, channels), cbf_baselines, baselines,
+                self.command_queue, channels, channel_range, cbf_baselines, baselines,
                 self.cont_factor, self.sd_cont_factor, percentile_ranges,
                 threshold_args={'n_sigma': 11.0})
         self.proc.set_scale(1.0 / n_accs)
@@ -638,6 +512,12 @@ class CBFIngest(threading.Thread):
             self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
+        # Set up resources
+        self.proc_resource = resource.Resource(self.proc)
+        self.vis_in_resource = resource.Resource(self.proc.buffer('vis_in'))
+        self.timeseries_weights_resource = resource.Resource(self.proc.buffer('timeseries_weights'))
+        self.output_resource = resource.Resource(None)
+        self.sd_output_resource = resource.Resource(None)
         # Record information about the processing in telstate
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
@@ -646,41 +526,75 @@ class CBFIngest(threading.Thread):
 
         # initialise the signal display metadata
         self._initialise_ig_sd()
-        self._send_sd_data(self.ig_sd.get_start())
+        yield From(self._send_sd_data(self.ig_sd.get_start()))
+
+        # Initialise the output streams
+        kept_channels = channel_range[1] - channel_range[0]
+        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        thread_pool = spead2.ThreadPool(2)
+        self.tx_spectral = sender.VisSenderSet(
+            thread_pool,
+            self.spectral_spead_endpoints,
+            l0_flavour,
+            self._output_avg.int_time,
+            channel_range,
+            baselines)
+        self.tx_continuum = sender.VisSenderSet(
+            thread_pool,
+            self.continuum_spead_endpoints,
+            l0_flavour,
+            self._output_avg.int_time,
+            (0, kept_channels // self.cont_factor),
+            baselines)
+        yield From(self.tx_spectral.start())
+        yield From(self.tx_continuum.start())
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
-        with timer(self.logger, 'Finalised averaging for L0'):
-            self.proc.end_sum()
-        with timer(self.logger, 'Read L0 data from GPU'):
-            spec_flags = self.proc.buffer('spec_flags').get(self.command_queue)
-            spec_vis = self.proc.buffer('spec_vis').get(self.command_queue)
-            cont_flags = self.proc.buffer('cont_flags').get(self.command_queue)
-            cont_vis = self.proc.buffer('cont_vis').get(self.command_queue)
+        proc_a = self.proc_resource.acquire()
+        output_a = self.output_resource.acquire()
+        self.jobs.add(self._flush_output_job(proc_a, output_a, timestamps))
 
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
-        # Shift to the centre of the dump
-        ts_rel += 0.5 * self.cbf_attr['int_time']
-        self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
-        with timer(self.logger, 'Sent L0 spectral data'):
-            self._send_visibilities(self.tx_spectral, self.ig_spectral, spec_vis, spec_flags, ts_rel)
-        with timer(self.logger, 'Sent L0 continuum data'):
-            self._send_visibilities(self.tx_continuum, self.ig_continuum, cont_vis, cont_flags, ts_rel)
+    @trollius.coroutine
+    def _flush_output_job(self, proc_a, output_a, timestamps):
+        with proc_a as proc, output_a:
+            # Wait for resources
+            events = yield From(proc_a.wait())
+            events += yield From(output_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
 
-        self.logger.info("Finished dump group with raw timestamps %s", timestamps)
-        # Prepare for the next group
-        with timer(self.logger, 'Cleared accumulators for L0'):
-            self.proc.start_sum()
+            # Compute
+            proc.end_sum()
+            proc_done = self.command_queue.enqueue_marker()
+            proc_a.ready([proc_done])
+
+            # Transfer (TODO: use pre-allocated pinned memory, with corresponding resource)
+            spec_flags = proc.buffer('spec_flags').get_async(self.command_queue)
+            spec_vis = proc.buffer('spec_vis').get_async(self.command_queue)
+            cont_flags = proc.buffer('cont_flags').get_async(self.command_queue)
+            cont_vis = proc.buffer('cont_vis').get_async(self.command_queue)
+            transfer_done = self.command_queue.enqueue_marker()
+            # Prepare for the next group (which only touches the output
+            # buffers).
+            proc.start_sum()
+            output_done = self.command_queue.enqueue_marker()
+            self.command_queue.flush()
+            output_a.ready([output_done])
+
+            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+            # Shift to the centre of the dump
+            ts_rel += 0.5 * self.cbf_attr['int_time']
+            self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
+            yield From(resource.async_wait_for_events([transfer_done]))
+            yield From(trollius.gather(
+                self.tx_spectral.send(spec_vis, spec_flags, ts_rel),
+                self.tx_continuum.send(cont_vis, cont_flags, ts_rel)))
+            self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
+                timestamps, time.time()))
 
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
-
-        with self._lock:
-            center_freq = self._center_freq
-
-        # For now, both telstate and katcp can be used to set the mask and
-        # custom signals, but telstate takes precedence.
         custom_signals_indices = None
         mask = None
         if self.telstate is not None:
@@ -702,35 +616,61 @@ class CBFIngest(threading.Thread):
         if mask is None:
             mask = np.ones(self.channels, np.float32) / self.channels
 
-        try:
-            with timer(self.logger, 'Sent timeseries_weights to GPU'):
-                self.proc.buffer('timeseries_weights').set(self.command_queue, mask)
-        except Exception:
-            self.logger.warn('Failed to set timeseries_weights', exc_info=True)
+        proc_a = self.proc_resource.acquire()
+        sd_output_a = self.sd_output_resource.acquire()
+        timeseries_weights_a = self.timeseries_weights_resource.acquire()
+        self.jobs.add(self._flush_sd_job(
+                proc_a, sd_output_a, timeseries_weights_a,
+                timestamps, custom_signals_indices, mask))
 
-        with timer(self.logger, 'Finalised averaging for signal displays'):
-            self.proc.end_sd_sum()
-        ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
-        ts = self.cbf_attr['sync_time'] + ts_rel
-        with timer(self.logger, 'Read back signal display data from GPU'):
-            cont_vis = self.proc.buffer('sd_cont_vis').get(self.command_queue)
-            cont_flags = self.proc.buffer('sd_cont_flags').get(self.command_queue)
-            spec_vis = self.proc.buffer('sd_spec_vis').get(self.command_queue)
-            spec_flags = self.proc.buffer('sd_spec_flags').get(self.command_queue)
-            timeseries = self.proc.buffer('timeseries').get(self.command_queue)
+    @trollius.coroutine
+    def _flush_sd_job(self, proc_a, sd_output_a, timeseries_weights_a,
+                      timestamps, custom_signals_indices, mask):
+        with proc_a as proc, sd_output_a, timeseries_weights_a as timeseries_weights:
+            # Load timeseries weights
+            events = yield From(timeseries_weights_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            try:
+                timeseries_weights.set_async(self.command_queue, mask)
+            except Exception:
+                self.logger.warn('Failed to set timeseries_weights', exc_info=True)
+
+            # Compute
+            events = yield From(proc_a.wait())
+            events += yield From(sd_output_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            proc.end_sd_sum()
+            proc_done = self.command_queue.enqueue_marker()
+            proc_a.ready([proc_done])
+            timeseries_weights_a.ready([proc_done])
+
+            # Transfer
+            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+            ts = self.cbf_attr['sync_time'] + ts_rel
+            cont_vis = proc.buffer('sd_cont_vis').get_async(self.command_queue)
+            cont_flags = proc.buffer('sd_cont_flags').get_async(self.command_queue)
+            spec_vis = proc.buffer('sd_spec_vis').get_async(self.command_queue)
+            spec_flags = proc.buffer('sd_spec_flags').get_async(self.command_queue)
+            timeseries = proc.buffer('timeseries').get_async(self.command_queue)
             percentiles = []
             percentiles_flags = []
-            for i in range(len(self.proc.percentiles)):
+            for i in range(len(proc.percentiles)):
                 name = 'percentile{0}'.format(i)
-                p = self.proc.buffer(name).get(self.command_queue)
-                pflags = self.proc.buffer(name + '_flags').get(self.command_queue)
+                p = proc.buffer(name).get_async(self.command_queue)
+                pflags = proc.buffer(name + '_flags').get(self.command_queue)
                 percentiles.append(p)
                 # Signal display server wants flags duplicated to broadcast with
                 # the percentiles
                 percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
+            transfer_done = self.command_queue.enqueue_marker()
+            # Prepare for the next group
+            proc.start_sd_sum()
+            output_done = self.command_queue.enqueue_marker()
+            self.command_queue.flush()
+            sd_output_a.ready([output_done])
 
-        # populate new datastructure to supersede sd_data etc
-        with timer(self.logger, 'Prepared signal display data for sending'):
+            # populate new datastructure to supersede sd_data etc
+            yield From(resource.async_wait_for_events([transfer_done]))
             self.ig_sd['sd_timestamp'].value = int(ts * 100)
             if np.all(custom_signals_indices < spec_vis.shape[1]):
                 self.ig_sd['sd_data'].value = \
@@ -745,51 +685,55 @@ class CBFIngest(threading.Thread):
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-            if center_freq is not None:
-                self.ig_sd['center_freq'].value = center_freq
+            if self._center_freq is not None:
+                self.ig_sd['center_freq'].value = self._center_freq
 
-        with timer(self.logger, 'Sent signal display data'):
-            self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
-        self.logger.info("Finished SD group with raw timestamps %s", timestamps)
-        # Prepare for the next group
-        with timer(self.logger, 'Cleared accumulators for signal displays'):
-            self.proc.start_sd_sum()
+            yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
+            self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
+                timestamps, time.time()))
+
+    @trollius.coroutine
+    def _frame_job(self, proc_a, vis_in_a, frame):
+        with proc_a as proc, vis_in_a as vis_in_buffer:
+            # Load data
+            events = yield From(vis_in_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            channel = 0
+            for item in frame.items:
+                vis_in_buffer.set_region(self.command_queue, item,
+                        np.s_[channel : channel + item.shape[0]],
+                        np.s_[:], blocking=False)
+            vis_in = np.concatenate(frame.items)
+            vis_in_buffer.set_async(self.command_queue, vis_in)
+            transfer_done = self.command_queue.enqueue_marker()
+            self.command_queue.flush()
+
+            # Perform data processing
+            events = yield From(proc_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            proc()
+            done_event = self.command_queue.enqueue_marker()
+            vis_in_a.ready([done_event])
+            proc_a.ready([done_event])
+
+            # Keep vis_in live until the transfer is complete
+            yield From(resource.async_wait_for_events([transfer_done]))
 
     def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
-        if self.telstate is not None:
-            if add_cbf_prefix:
-                name = '{0}_{1}'.format(self.cbf_name, name)
-            try:
-                self.telstate.add(name, value, immutable=attribute)
-            except katsdptelstate.ImmutableKeyError:
-                old = self.telstate.get(name)
-                if not np.array_equal(old, value):
-                    self.logger.warning('Attribute %s could not be set to %s because it is already set to %s',
-                                        name, value, old)
+        utils.set_telstate_entry(self.telstate, name, value, self.cbf_name if add_cbf_prefix else None, attribute)
 
-    def _update_telstate(self, updated):
-        """Updates the telescope state from new values in the item group."""
-        for item_name, item in updated.iteritems():
-            # bls_ordering is set later by _initialise, after permuting it.
-            # The other items are data rather than metadata, and so do not
-            # live in the telescope state.
-            if item_name not in ['bls_ordering', 'timestamp', 'xeng_raw']:
-                # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
-                self._set_telstate_entry(item_name, item.value,
-                                         attribute=not is_cbf_sensor(item_name))
+    def start(self):
+        assert self._run_future is None
+        self._run_future = trollius.async(self.run())
 
-    def _update_cbf_attr(self, updated):
-        """Updates the internal cbf_attr dictionary from new values in the item group."""
-        for item_name, item in updated.iteritems():
-            if (item_name not in ['timestamp', 'xeng_raw'] and
-                    not is_cbf_sensor(item_name) and
-                    item.value is not None):
-                if item_name not in self.cbf_attr:
-                    self.cbf_attr[item_name] = item.value
-                else:
-                    self.logger.warning('Item %s is already set to %s, not setting to %s',
-                                        item_name, self.cbf_attr[item_name], item.value)
+    @trollius.coroutine
+    def stop(self):
+        if self._run_future:
+            self.rx.stop()
+            yield From(self._run_future)
+            self._run_future = None
 
+    @trollius.coroutine
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
 
@@ -801,7 +745,7 @@ class CBFIngest(threading.Thread):
             # are deleted) with the context being current.
             with self.proc_template.context:
                 try:
-                    self._run()
+                    yield From(self._run())
                 finally:
                     # These have references to self, causing circular references
                     self._output_avg = None
@@ -809,89 +753,50 @@ class CBFIngest(threading.Thread):
                     # Drop last references to all the objects
                     self.proc = None
         except Exception:
-            self.logger.error('CBFIngest thread threw an uncaught exception', exc_info=True)
+            self.logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
+    @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
-        ig_cbf = spead2.ItemGroup()
         idx = 0
         rate_timer = 0
         self.status_sensor.set_value("idle")
-        prev_ts = -1
-        ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
-        ts_wrap_period = 2**48
         self._output_avg = None
         self._sd_avg = None
+        while True:
+            try:
+                frame = yield From(self.rx.get())
+            except spead2.Stopped:
+                break
 
-        for heap in self.rx:
             st = time.time()
-            if idx == 0:
-                self.status_sensor.set_value("waiting for metadata")
-
-            # Update the telescope state and local cbf_attr cache
-            updated = ig_cbf.update(heap)
-            self._update_telstate(updated)
-            self._update_cbf_attr(updated)
-            if 'xeng_raw' not in updated:
-                self.logger.warning(
-                    "CBF Data received but either no metadata or xeng_raw group is present")
-                continue
-            if 'timestamp' not in updated:
-                self.logger.warning("No timestamp received for current data frame - discarding")
-                continue
-            data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
-            data_item = ig_cbf['xeng_raw']
-            if data_ts <= prev_ts:
-                # This happens either because packets ended up out-of-order (in
-                # which case we just discard the heap that arrived too late),
-                # or because the CBF timestamp wrapped. Out-of-order should
-                # jump backwards a tiny amount while wraps should jump back by
-                # close to ts_wrap_period. If both happen at the same time
-                # then things will go wrong.
-                if data_ts < prev_ts - ts_wrap_period // 2:
-                    ts_wrap_offset += ts_wrap_period
-                    data_ts += ts_wrap_period
-                    self.logger.warning('Data timestamps wrapped')
-                else:
-                    self.logger.warning(
-                        "Data timestamps have gone backwards (%d <= %d), dropping heap",
-                        data_ts, prev_ts)
-                    continue
-            prev_ts = data_ts
-            # we have new data...
-
-            # check to see if our CBF attributes are complete
-            # i.e. make sure any attributes marked as critical are present
-            if not CBF_CRITICAL_ATTRS.issubset(self.cbf_attr.keys()):
-                self.logger.warning("CBF Component Model is not currently valid as critical attribute items are missing. Data will be discarded until these become available.")
-                continue
-
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                rate_timer = time.time()
-                self._initialise(ig_cbf)
                 self.status_sensor.set_value("capturing")
-
-            self._output_avg.add_timestamp(data_ts)
-            self._sd_avg.add_timestamp(data_ts)
+                rate_timer = time.time()
+                yield From(self._initialise())
 
             # Generate timestamps
-            current_ts_rel = data_ts / self.cbf_attr['scale_factor_timestamp']
+            current_ts_rel = frame.timestamp / self.cbf_attr['scale_factor_timestamp']
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
-            # Perform data processing
-            self.input_bytes += data_item.value.nbytes
-            with timer(self.logger, 'Sent input visibilities to GPU'):
-                self.proc.buffer('vis_in').set(self.command_queue, data_item.value)
-            with timer(self.logger, 'Processed input visibilities on GPU'):
-                self.proc()
+            self._output_avg.add_timestamp(frame.timestamp)
+            self._sd_avg.add_timestamp(frame.timestamp)
+
+            proc_a = self.proc_resource.acquire()
+            vis_in_a = self.vis_in_resource.acquire()
+            # Limit backlog by waiting for previous job to get as far as
+            # enqueuing its work before trying to carry on.
+            yield From(proc_a.wait())
+            self.input_bytes += frame.nbytes
+            self.jobs.add(self._frame_job(proc_a, vis_in_a, frame))
 
             # Done with reading this frame
             idx += 1
             self.pkt_sensor.set_value(idx)
-            if idx > 0 and idx % 10 == 0:
+            if idx % 10 == 0:
                 self.input_rate_sensor.set_value(int(self.input_bytes / (time.time() - rate_timer)))
                 self.output_rate_sensor.set_value(int(self.output_bytes / (time.time() - rate_timer)))
                 self.input_bytes = 0
@@ -899,22 +804,31 @@ class CBFIngest(threading.Thread):
                 rate_timer = time.time()
             tt = time.time() - st
             self.logger.info(
-                "Captured CBF dump with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
+                "Captured CBF frame with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
                 current_ts, tt+st, tt, idx)
+            # Clear completed processing, so that any related exceptions are
+            # thrown as soon as possible.
+            self.jobs.clean()
 
         # Stop received.
-
-        if self._output_avg is not None:  # Could be None if no heaps arrived
-            self._output_avg.finish()
-            self._sd_avg.finish()
+        yield From(self.rx.join())
+        if self.proc_resource is not None:    # Could be None if no heaps arrived
+            acq = self.proc_resource.acquire()
+            with acq:
+                yield From(acq.wait_events())
+                if self._output_avg is not None:
+                    self._output_avg.finish()
+                self._sd_avg.finish()
+                acq.ready()
+        yield From(self.jobs.finish())
         self.logger.info("CBF ingest complete at %f" % time.time())
-        self.tx_spectral.send_heap(self.ig_spectral.get_end())
+        yield From(self.tx_spectral.stop())
         self.tx_spectral = None
-        self.tx_continuum.send_heap(self.ig_continuum.get_end())
+        yield From(self.tx_continuum.stop())
         self.tx_continuum = None
-        self._send_sd_data(self.ig_sd.get_end())
-        self.ig_spectral = None
-        self.ig_continuum = None
+        if self.ig_sd is not None:
+            for tx in self._sdisp_ips.itervalues():
+                yield From(self._stop_stream(tx, self.ig_sd))
         if self.proc is not None:   # Could be None if no heaps arrived
             self.logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():

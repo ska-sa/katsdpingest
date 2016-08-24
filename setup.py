@@ -67,7 +67,7 @@ setup(
         'psutil',
         'trollius'
     ],
-    extras_require = {
+    extras_require={
         'cam2telstate': ['katportalclient', 'tornado>=4.0', 'six'],
         'test': tests_require
     },

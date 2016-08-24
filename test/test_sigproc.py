@@ -8,10 +8,12 @@ import katsdpingest.sigproc as sp
 import numpy as np
 import argparse
 
+
 def generate_data(vis_in_device, channels, baselines):
     vis_in = vis_in_device.empty_like()
     vis_in[:] = np.random.normal(scale=32.0, size=(channels, baselines, 2)).astype(np.int32)
     return vis_in
+
 
 def create_flagger(context, args):
     background = rfi.BackgroundMedianFilterDeviceTemplate(
@@ -20,6 +22,7 @@ def create_flagger(context, args):
             context, args.channels + args.border)
     threshold = rfi.ThresholdSumDeviceTemplate(context)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
+
 
 def create_percentile_ranges(antennas):
     n_cross = antennas * (antennas - 1) // 2
@@ -43,10 +46,12 @@ def create_percentile_ranges(antennas):
             (cuts[5], cuts[6])   # crosshv
     ]
 
+
 def create_template(context, args):
     percentile_ranges = create_percentile_ranges(args.antennas)
     percentile_sizes = list(set([x[1] - x[0] for x in percentile_ranges]))
     return sp.IngestTemplate(context, create_flagger(context, args), percentile_sizes)
+
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -79,7 +84,8 @@ def main():
     context = accel.create_some_context(True)
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
-    proc = template.instantiate(command_queue, channels, channel_range, cbf_baselines, baselines,
+    proc = template.instantiate(
+            command_queue, channels, channel_range, cbf_baselines, baselines,
             args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.antennas),
             threshold_args={'n_sigma': args.sigmas})
     print "{0} bytes required".format(proc.required_bytes())
