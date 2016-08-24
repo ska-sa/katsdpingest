@@ -174,7 +174,7 @@ class Prepare(accel.Operation):
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
                 (out_baselines, padded_channels), np.complex64)
-        # Channels need to be range-checked anywhere here, so no padding
+        # Channels need to be range-checked anyway here, so no padding
         self.slots['weights'] = accel.IOSlot(
                 (out_baselines, channel_range[1] - channel_range[0]), np.float32)
         self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
@@ -571,9 +571,9 @@ class IngestTemplate(object):
         Template for RFI flagging. It must have transposed flag outputs.
     percentile_sizes : list of int
         Set of number of baselines per percentile calculation. These do not need to exactly
-        match the actual sizes of the ranges passed to the instance. The smaller template
+        match the actual sizes of the ranges passed to the instance. The smallest template
         that is big enough will be used, so an exact match is best for good performance,
-        and there must be one that is at least big enough.
+        and there must be at least one that is big enough.
     """
 
     flag_names = ['reserved0', 'static', 'cam', 'reserved3', 'ingest_rfi',
