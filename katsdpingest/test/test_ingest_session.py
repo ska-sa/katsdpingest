@@ -2,6 +2,7 @@
 
 import numpy as np
 from katsdpingest import ingest_session
+from katsdpingest.sigproc import Range
 from katsdpsigproc.test.test_accel import device_test
 import unittest
 import mock
@@ -81,8 +82,8 @@ class TestCBFIngest(unittest.TestCase):
         """Test that an ingest processor can be created on the device"""
         template = ingest_session.CBFIngest.create_proc_template(context, 8, 4096)
         template.instantiate(
-            queue, 1024, (96, 1024 - 96), 544, 512,
-            16, 64, [(0, 4), (500, 512)],
+            queue, 1024, Range(96, 1024 - 96), 544, 512,
+            8, 16, [(0, 4), (500, 512)],
             threshold_args={'n_sigma': 11.0})
 
     def test_tune_next(self):

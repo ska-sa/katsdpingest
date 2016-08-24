@@ -469,7 +469,7 @@ class CBFIngest(object):
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
         channels = self.rx.n_chans
-        channel_range = (0, channels)
+        channel_range = sp.Range(0, channels)
         n_accs = self.cbf_attr['n_accs']
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
@@ -529,7 +529,6 @@ class CBFIngest(object):
         yield From(self._send_sd_data(self.ig_sd.get_start()))
 
         # Initialise the output streams
-        kept_channels = channel_range[1] - channel_range[0]
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         thread_pool = spead2.ThreadPool(2)
         self.tx_spectral = sender.VisSenderSet(
@@ -544,7 +543,7 @@ class CBFIngest(object):
             self.continuum_spead_endpoints,
             l0_flavour,
             self._output_avg.int_time,
-            (0, kept_channels // self.cont_factor),
+            sp.Range(0, len(channel_range) // self.cont_factor),
             baselines)
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
