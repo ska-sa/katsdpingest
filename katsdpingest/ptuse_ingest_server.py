@@ -458,7 +458,7 @@ class _CaptureSession(object):
         cap_env["VMA_MTU"] = "9200"
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
-        cmd = ["meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
+        cmd = ["numactl","-C","0,2,6","meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("/tmp/capture.log","a")
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
@@ -535,44 +535,50 @@ class _CaptureSession(object):
             obs_info.write ("description;%s\n"%script_args["description"])
             obs_info.write ("backend_args;%s\n"%script_args["backend_args"])
             obs_info.write ("experiment_id;%s\n"%script_args["experiment_id"])
-            obs_info.write ("PICOSECONDS;%s\n"%dada_header["PICOSECONDS"])
-            obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"]) 
+            try:
+                obs_info.write ("PICOSECONDS;%s\n"%dada_header["PICOSECONDS"])
+                obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"]) 
+            except:
+                _logger.info("Not a real beamformer observation")
             obs_info.close()
 
         if self.backend and self.backend == 'digifits':
-            data_files = os.listdir(self.save_dir)
-            _logger.info(data_files)
-            data = pyfits.open("%s/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
-            target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
-            _logger.info(target)
-            hduPrimary=data[0].header
-            hduPrimary["TELESCOP"]="MeerKAT"
-            hduPrimary["RA"]=target[-2]
-            hduPrimary["DEC"]=target[-1]
-            hduPrimary["STT_CRD1"]=target[-2]
-            hduPrimary["STT_CRD2"]=target[-1]
-            hduPrimary["STP_CRD1"]=target[-2]
-            hduPrimary["STP_CRD2"]=target[-1]
-            hduPrimary["TRK_MODE"]="TRACK"
-            hduPrimary["OBS_MODE"]="SEARCH"
-            hduPrimary["TCYCLE"]=0
-            hduPrimary["ANT_X"]=5109318.8410
-            hduPrimary["ANT_Y"]=2006836.3673
-            hduPrimary["ANT_Z"]=-3238921.7749
-            hduPrimary["NRCVR"]=0
-            hduPrimary["CAL_MODE"]="OFF"
-            hduPrimary["CAL_FREQ"]=0.
-            hduPrimary["CAL_DCYC"]=0.
-            hduPrimary["CAL_PHS"]=0.
-            hduPrimary["CAL_NPHS"]=0
-            hduPrimary["CHAN_DM"] = 0.0
-            hduPrimary["DATE-OBS"]=self.startTime
-            hduPrimary["DATE"]=self.startTime
+            try:
+                data_files = os.listdir(self.save_dir)
+                _logger.info(data_files)
+                data = pyfits.open("%s/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
+                target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
+                _logger.info(target)
+                hduPrimary=data[0].header
+                hduPrimary["TELESCOP"]="MeerKAT"
+                hduPrimary["RA"]=target[-2]
+                hduPrimary["DEC"]=target[-1]
+                hduPrimary["STT_CRD1"]=target[-2]
+                hduPrimary["STT_CRD2"]=target[-1]
+                hduPrimary["STP_CRD1"]=target[-2]
+                hduPrimary["STP_CRD2"]=target[-1]
+                hduPrimary["TRK_MODE"]="TRACK"
+                hduPrimary["OBS_MODE"]="SEARCH"
+                hduPrimary["TCYCLE"]=0
+                hduPrimary["ANT_X"]=5109318.8410
+                hduPrimary["ANT_Y"]=2006836.3673
+                hduPrimary["ANT_Z"]=-3238921.7749
+                hduPrimary["NRCVR"]=0
+                hduPrimary["CAL_MODE"]="OFF"
+                hduPrimary["CAL_FREQ"]=0.0
+                hduPrimary["CAL_DCYC"]=0.0
+                hduPrimary["CAL_PHS"]=0.0
+                hduPrimary["CAL_NPHS"]=0.0
+                hduPrimary["CHAN_DM"] = 0.0
+                hduPrimary["DATE-OBS"]=self.startTime
+                hduPrimary["DATE"]=self.startTime
             
-            hduSubint = data[2].header
-            hduSubint["NPOL"]=1
-            hduSubint["POL_TYPE"]="AA+BB"
-            hduSubint["NCHNOFFS"] = 0 
+                hduSubint = data[2].header
+                hduSubint["NPOL"]=1
+                hduSubint["POL_TYPE"]="AA+BB"
+                hduSubint["NCHNOFFS"] = 0 
+            except:
+                _logger.info("Oh no failed header update")
 
         _logger.info("KILLED ALL CAPTURE PROCESSES")
         #yield From(self._run_future)
