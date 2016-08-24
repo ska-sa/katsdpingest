@@ -775,12 +775,19 @@ class IngestOperation(accel.OperationSequence):
         Extra keyword arguments to pass to the noise estimation instantiation
     threshold_args : dict, optional
         Extra keyword arguments to pass to the threshold instantiation
+
+    Raises
+    ------
+    ValueError
+        if `channel_range` values are not a multiple of `cont_factor`
     """
     def __init__(
             self, template, command_queue, channels, channel_range,
             cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
+        if channel_range[0] % cont_factor or channel_range[1] % cont_factor:
+            raise ValueError('channel_range is not aligned to cont_factor')
         kept_channels = channel_range[1] - channel_range[0]
         self.template = template
         self.prepare = template.prepare.instantiate(
