@@ -273,7 +273,7 @@ class CBFIngest(object):
     # lists are also used by ingest_autotune.py for pre-tuning standard
     # configurations.
     tune_antennas = [2, 4, 8, 16]
-    tune_channels = [4096, 32768]
+    tune_channels = [4096, 8192, 9216, 32768]
 
     @classmethod
     def _tune_next(cls, value, predef):
