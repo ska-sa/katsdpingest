@@ -8,6 +8,7 @@ import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
 import time
+import fractions
 import katsdpingest.sigproc as sp
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
@@ -137,6 +138,111 @@ def _slot_shape(x, split_dtype=None):
         shape = shape + (ratio,)
         dtype = new_dtype
     return {'dtype': dtype, 'shape': shape}
+
+
+class ChannelRanges(object):
+    """
+    Tracks the various channel ranges involved in ingest. Each channel range
+    is represented as a pair of integers (start and past-the-end), relative to
+    the full band being correlated by CBF.
+
+    Parameters
+    ----------
+    channels : int
+        Number of input channels from CBF
+    cont_factor : int
+        Number of output channels averaged to produce a continuum output channel
+    sd_cont_factor : int
+        Number of channels averaged to produce a signal display continuum channel
+    streams : int
+        Number of input streams available for subscription (must divide `channels`)
+    guard : int
+        Minimum number of channels to keep on either side of the output for RFI
+        flagging.
+    output : :class:`katsdpingest.sigproc.Range`
+        Output spectral channel range
+    sd_output : :class:`katsdpingest.sigproc.Range`
+        Signal display channel range
+
+    Raises
+    ------
+    ValueError
+        if `channels` is not a multiple of `cont_factor`, `sd_cont_factor` and
+        `streams`
+    ValueError
+        if `output` is not aligned to `cont_factor`
+    ValueError
+        if `sd_output` is not aligned to `sd_cont_factor`
+    ValueError
+        if `output` or `sd_output` overflows the whole channel range
+
+    Attributes
+    ----------
+    cont_factor : int
+        Number of output channels averaged to produce a continuum output channel
+    sd_cont_factor : int
+        Number of channels averaged to produce a signal display continuum channel
+    guard : int
+        Minimum number of channels to keep on either side of the output for RFI
+        flagging.
+    cbf : :class:`katsdpingest.sigproc.Range`
+        The full range of channels correlated by CBF (first element is always
+        0)
+    subscribed : :class:`katsdpingest.sigproc.Range`
+        The set of channels we receive from the CBF from our multicast
+        subscriptions (subset of `cbf`)
+    input : :class:`katsdpingest.sigproc.Range`
+        The set of channels transferred to the compute device (subset of
+        `subscribed`).
+    computed : :class:`katsdpingest.sigproc.Range`
+        The set of channels for which we compute visibilities, flags and
+        weights on the compute device (subset of `input`). This will be inset
+        from `input` by at least `guard`, except where there is insufficient space
+        in `cbf`.
+
+        These channels are all read back to host memory. This
+        range is guaranteed to be a multiple of both the signal display and
+        output continuum factors.
+    output : :class:`katsdpingest.sigproc.Range`
+        The set of channels contained in the L0 spectral output (subset of
+        `computed`). This range is guaranteed to be a multiple of the output
+        continuum factor.
+    sd_output : :class:`katsdpingest.sigproc.Range`
+        The set of channels contained in the signal display output (subset of
+        `computed`). This range is guaranteed to be a multiple of the signal
+        display continuum factor.
+    """
+
+    def __init__(self, channels, cont_factor, sd_cont_factor, streams, guard,
+                 output, sd_output):
+        self.cont_factor = cont_factor
+        self.sd_cont_factor = sd_cont_factor
+        self.guard = guard
+        self.cbf = sp.Range(0, channels)
+        if not self.cbf.isaligned(streams):
+            raise ValueError('channel count is not a multiple of the number of streams')
+        if not self.cbf.isaligned(cont_factor):
+            raise ValueError('channel count is not a multiple of the continuum factor')
+        if not self.cbf.isaligned(sd_cont_factor):
+            raise ValueError('channel count is not a multiple of the sd continuum factor')
+        if not output.issubset(self.cbf):
+            raise ValueError('output range overflows full channel range')
+        if not sd_output.issubset(self.cbf):
+            raise ValueError('sd output range overflows full channel range')
+        if not output.isaligned(cont_factor):
+            raise ValueError('output range is not aligned to continuum factor')
+        if not sd_output.isaligned(sd_cont_factor):
+            raise ValueError('sd output range is not aligned to continuum factor')
+        self.output = output
+        self.sd_output = sd_output
+        # Compute least common multiple
+        alignment = cont_factor * sd_cont_factor // fractions.gcd(cont_factor, sd_cont_factor)
+        self.computed = output.union(sd_output).alignto(alignment)
+        self.input = sp.Range(self.computed.start - guard, self.computed.stop + guard)
+        self.input = self.input.intersection(self.cbf)
+        stream_channels = channels // streams
+        self.subscribed = self.input.alignto(stream_channels)
+        assert self.subscribed.issubset(self.cbf)
 
 
 class CBFIngest(object):
