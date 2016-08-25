@@ -295,7 +295,7 @@ class CBFIngest(object):
         return out
 
     @classmethod
-    def create_proc_template(cls, context, antennas, channels):
+    def create_proc_template(cls, context, antennas, max_channels):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -305,12 +305,12 @@ class CBFIngest(object):
             Context in which to compile device code
         antennas : int
             Number of antennas, *after* any masking
-        channels : int
-            Number of channels, *prior* to any clipping
+        max_channels : int
+            Maximum number of incoming channels to support
         """
         # Quantise to reduce number of options to autotune
         max_antennas = cls._tune_next_antennas(antennas)
-        max_channels = cls._tune_next(channels, cls.tune_channels)
+        max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
