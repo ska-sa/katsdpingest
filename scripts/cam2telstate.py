@@ -39,6 +39,7 @@ class Sensor(object):
 
 # Per-receptor sensors, without the prefix for the receptor name
 RECEPTOR_SENSORS = [
+    Sensor('observer'),
     Sensor('activity'),
     Sensor('target'),
     Sensor('pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
@@ -46,31 +47,43 @@ RECEPTOR_SENSORS = [
     Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
     Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('dig_noise_diode'),
+    Sensor('dig_synchronisation_epoch'),
     Sensor('ap_indexer_position'),
+    Sensor('ap_point_error_tiltmeter_enabled'),
+    Sensor('ap_tilt_corr_azim'),
+    Sensor('ap_tilt_corr_elev'),
     Sensor('rsc_rxl_serial_number'),
     Sensor('rsc_rxs_serial_number'),
     Sensor('rsc_rxu_serial_number'),
-    Sensor('rsc_rxx_serial_number')
+    Sensor('rsc_rxx_serial_number'),
+    Sensor('ap_version_list', immutable=True)
 ]
 # Data proxy sensors without the data proxy prefix
 DATA_SENSORS = [
     Sensor('target'),
-    Sensor('auto_delay_enabled')
+    Sensor('auto_delay_enabled'),
+    Sensor('loaded_delay_correction'),
+    Sensor('cbf_version_list'),
+    Sensor('spmc_version_list')
 ]
 # Subarray sensors with the subarray name prefix
 SUBARRAY_SENSORS = [
     Sensor('config_label', immutable=True),
     Sensor('band', immutable=True),
     Sensor('product', immutable=True),
-    Sensor('sub_nr', immutable=True)
+    Sensor('sub_nr', immutable=True),
+    Sensor('dump_rate', immutable=True),
+    Sensor('pool_resources', immutable=True)
 ]
 # All other sensors
 OTHER_SENSORS = [
-    Sensor('anc_weather_pressure'),
-    Sensor('anc_weather_relative_humidity'),
-    Sensor('anc_weather_temperature'),
-    Sensor('anc_weather_wind_direction'),
-    Sensor('anc_weather_wind_speed')
+    Sensor('anc_air_pressure'),
+    Sensor('anc_air_relative_humidity'),
+    Sensor('anc_air_temperature'),
+    Sensor('anc_wind_direction'),
+    Sensor('anc_mean_wind_speed'),
+    Sensor('mcp_dmc_version_list', immutable=True),
+    Sensor('mcp_cmc_version_list', immutable=True)
 ]
 
 
