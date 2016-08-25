@@ -2,7 +2,7 @@
 
 import numpy as np
 from katsdpingest import ingest_session
-from katsdpingest.sigproc import Range
+from katsdpingest.utils import Range
 from katsdpsigproc.test.test_accel import device_test
 import unittest
 import mock

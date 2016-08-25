@@ -16,7 +16,7 @@ from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest
 from katsdpingest.ingest_session import CBFIngest, ChannelRanges
-from katsdpingest.sigproc import Range
+from katsdpingest.utils import Range
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
 import katsdptelstate
@@ -37,7 +37,7 @@ def comma_list(type_):
 
 
 def range_str(value):
-    """Convert a string of the form 'A:B' to a :class:`~katsdpingest.sigproc.Range`,
+    """Convert a string of the form 'A:B' to a :class:`~katsdpingest.utils.Range`,
     where A and B are integers.
     """
     fields = value.split(':', 1)

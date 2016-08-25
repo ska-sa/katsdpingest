@@ -6,7 +6,7 @@ import spead2.send.trollius
 import logging
 import trollius
 from trollius import From
-from katsdpingest.sigproc import Range
+from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class VisSender(object):
         SPEAD flavour to use on `stream`
     int_time : float
         Time between dumps, in seconds
-    channel_range : :class:`katsdpingest.sigproc.Range`
+    channel_range : :class:`katsdpingest.utils.Range`
         Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
     baselines : number of baselines in output
     """

@@ -10,7 +10,7 @@ from collections import deque
 import multiprocessing
 import numpy as np
 from . import utils
-from .sigproc import Range
+from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class Receiver(object):
     endpoints : list of :class:`katsdptelstate.Endpoint`
         Endpoints for SPEAD streams. These must be listed in order
         of increasing channel number.
-    channel_range : :class:`katsdpingest.sigproc.Range`
+    channel_range : :class:`katsdpingest.utils.Range`
         Channels to capture. These must be aligned to the stream boundaries.
     cbf_channels : int
         Total number of channels represented by `endpoints`.

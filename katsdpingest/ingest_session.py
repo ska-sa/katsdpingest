@@ -159,9 +159,9 @@ class ChannelRanges(object):
     guard : int
         Minimum number of channels to keep on either side of the output for RFI
         flagging.
-    output : :class:`katsdpingest.sigproc.Range`
+    output : :class:`katsdpingest.utils.Range`
         Output spectral channel range
-    sd_output : :class:`katsdpingest.sigproc.Range`
+    sd_output : :class:`katsdpingest.utils.Range`
         Signal display channel range
 
     Raises
@@ -185,16 +185,16 @@ class ChannelRanges(object):
     guard : int
         Minimum number of channels to keep on either side of the output for RFI
         flagging.
-    cbf : :class:`katsdpingest.sigproc.Range`
+    cbf : :class:`katsdpingest.utils.Range`
         The full range of channels correlated by CBF (first element is always
         0)
-    subscribed : :class:`katsdpingest.sigproc.Range`
+    subscribed : :class:`katsdpingest.utils.Range`
         The set of channels we receive from the CBF from our multicast
         subscriptions (subset of `cbf`)
-    input : :class:`katsdpingest.sigproc.Range`
+    input : :class:`katsdpingest.utils.Range`
         The set of channels transferred to the compute device (subset of
         `subscribed`).
-    computed : :class:`katsdpingest.sigproc.Range`
+    computed : :class:`katsdpingest.utils.Range`
         The set of channels for which we compute visibilities, flags and
         weights on the compute device (subset of `input`). This will be inset
         from `input` by at least `guard`, except where there is insufficient space
@@ -203,11 +203,11 @@ class ChannelRanges(object):
         These channels are all read back to host memory. This
         range is guaranteed to be a multiple of both the signal display and
         output continuum factors.
-    output : :class:`katsdpingest.sigproc.Range`
+    output : :class:`katsdpingest.utils.Range`
         The set of channels contained in the L0 spectral output (subset of
         `computed`). This range is guaranteed to be a multiple of the output
         continuum factor.
-    sd_output : :class:`katsdpingest.sigproc.Range`
+    sd_output : :class:`katsdpingest.utils.Range`
         The set of channels contained in the signal display output (subset of
         `computed`). This range is guaranteed to be a multiple of the signal
         display continuum factor.
@@ -218,7 +218,7 @@ class ChannelRanges(object):
         self.cont_factor = cont_factor
         self.sd_cont_factor = sd_cont_factor
         self.guard = guard
-        self.cbf = sp.Range(0, channels)
+        self.cbf = utils.Range(0, channels)
         if not self.cbf.isaligned(streams):
             raise ValueError('channel count is not a multiple of the number of streams')
         if not self.cbf.isaligned(cont_factor):
@@ -238,7 +238,7 @@ class ChannelRanges(object):
         # Compute least common multiple
         alignment = cont_factor * sd_cont_factor // fractions.gcd(cont_factor, sd_cont_factor)
         self.computed = output.union(sd_output).alignto(alignment)
-        self.input = sp.Range(self.computed.start - guard, self.computed.stop + guard)
+        self.input = utils.Range(self.computed.start - guard, self.computed.stop + guard)
         self.input = self.input.intersection(self.cbf)
         stream_channels = channels // streams
         self.subscribed = self.input.alignto(stream_channels)
@@ -637,8 +637,8 @@ class CBFIngest(object):
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         thread_pool = spead2.ThreadPool(2)
         spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
-        continuum_channels = sp.Range(spectral_channels.start // self.channel_ranges.cont_factor,
-                                      spectral_channels.stop // self.channel_ranges.cont_factor)
+        continuum_channels = utils.Range(spectral_channels.start // self.channel_ranges.cont_factor,
+                                         spectral_channels.stop // self.channel_ranges.cont_factor)
         self.tx_spectral = sender.VisSenderSet(
             thread_pool,
             self.spectral_spead_endpoints,
@@ -785,8 +785,8 @@ class CBFIngest(object):
             # populate new datastructure to supersede sd_data etc
             yield From(resource.async_wait_for_events([transfer_done]))
             spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
-            cont_channels = sp.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
-                                     spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
+            cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
+                                        spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             self.ig_sd['sd_timestamp'].value = int(ts * 100)
             if np.all(custom_signals_indices < spec_vis.shape[1]):
                 self.ig_sd['sd_data'].value = \
@@ -825,7 +825,7 @@ class CBFIngest(object):
             self.command_queue.enqueue_wait_for_events(events)
             item_channel = self.channel_ranges.subscribed.start
             for item in frame.items:
-                item_range = sp.Range(item_channel, item_channel + item.shape[0])
+                item_range = utils.Range(item_channel, item_channel + item.shape[0])
                 item_channel += item.shape[0]
                 use_range = item_range.intersection(self.channel_ranges.input)
                 if not use_range:
