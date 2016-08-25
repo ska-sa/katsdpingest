@@ -822,10 +822,12 @@ class CBFIngest(object):
                 acq.ready()
         yield From(self.jobs.finish())
         self.logger.info("CBF ingest complete at %f" % time.time())
-        yield From(self.tx_spectral.stop())
-        self.tx_spectral = None
-        yield From(self.tx_continuum.stop())
-        self.tx_continuum = None
+        if self.tx_spectral is not None:
+            yield From(self.tx_spectral.stop())
+            self.tx_spectral = None
+        if self.tx_continuum is not None:
+            yield From(self.tx_continuum.stop())
+            self.tx_continuum = None
         if self.ig_sd is not None:
             for tx in self._sdisp_ips.itervalues():
                 yield From(self._stop_stream(tx, self.ig_sd))
