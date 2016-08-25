@@ -10,6 +10,7 @@ from collections import deque
 import multiprocessing
 import numpy as np
 from . import utils
+from .sigproc import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -54,6 +55,10 @@ class Receiver(object):
     endpoints : list of :class:`katsdptelstate.Endpoint`
         Endpoints for SPEAD streams. These must be listed in order
         of increasing channel number.
+    channel_range : :class:`katsdpingest.sigproc.Range`
+        Channels to capture. These must be aligned to the stream boundaries.
+    cbf_channels : int
+        Total number of channels represented by `endpoints`.
     telstate : :class:`katsdptelstate.TelescopeState`, optional
         Telescope state to be populated with CBF attributes
     cbf_name : str
@@ -73,10 +78,6 @@ class Receiver(object):
         Value of `cbf_name` passed to the constructor
     active_frames : int
         Value of `active_frames` passed to constructor
-    bandwidth : int
-        Total bandwidth across all the streams, or ``None`` if not yet known
-    n_chans : int
-        Total channels across all the streams, or ``None`` if not yet known
     _interval : int
         Expected timestamp change between successive frames. This is initially ``None``,
         and is computed once the necessary metadata is available.
@@ -94,14 +95,27 @@ class Receiver(object):
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
     """
-    def __init__(self, endpoints, telstate=None, cbf_name='cbf', active_frames=2, loop=None):
+    def __init__(self, endpoints, channel_range, cbf_channels,
+                 telstate=None, cbf_name='cbf', active_frames=2, loop=None):
+        # Determine the endpoints to actually use
+        if cbf_channels % len(endpoints):
+            raise ValueError('cbf_channels not divisible by the number of endpoints')
+        stream_channels = cbf_channels // len(endpoints)
+        if not channel_range.isaligned(stream_channels):
+            raise ValueError('channel_range is not aligned to the stream boundaries')
+        use_endpoints = endpoints[channel_range.start // stream_channels :
+                                  channel_range.stop // stream_channels]
+
         if loop is None:
             loop = trollius.get_event_loop()
         self.telstate = telstate
         self.cbf_attr = {}
         self.cbf_name = cbf_name
+        self.n_chans = cbf_channels
         self.active_frames = active_frames
-        self._streams = [None] * len(endpoints)
+        self.channel_range = channel_range
+        self.cbf_channels = cbf_channels
+        self._streams = [None] * len(use_endpoints)
         self._frames = None
         self._frames_complete = trollius.Queue(loop=loop)
         self._futures = []
@@ -109,18 +123,12 @@ class Receiver(object):
         self._loop = loop
         # If we have a large number of streams, we avoid creating more
         # threads than CPU cores.
-        thread_pool = spead2.ThreadPool(min(multiprocessing.cpu_count(), len(endpoints)))
-        for i, endpoint in enumerate(endpoints):
+        thread_pool = spead2.ThreadPool(min(multiprocessing.cpu_count(), len(use_endpoints)))
+        for i, endpoint in enumerate(use_endpoints):
             self._futures.append(trollius.async(self._read_stream(thread_pool, endpoint, i), loop=loop))
-        self._running = len(endpoints)
-
-    @property
-    def bandwidth(self):
-        return self.cbf_attr.get('bandwidth')
-
-    @property
-    def n_chans(self):
-        return self.cbf_attr.get('n_chans')
+        self._running = len(use_endpoints)
+        _logger.info("CBF SPEAD stream reception on {0}".format(
+            [str(x) for x in use_endpoints]))
 
     def stop(self):
         """Stop all the individual streams."""
@@ -235,10 +243,10 @@ class Receiver(object):
             # same timestamp, and set up the new stream.
             heap_data_size = np.product(ig_cbf['xeng_raw'].shape) * ig_cbf['xeng_raw'].dtype.itemsize
             heap_channels = ig_cbf['xeng_raw'].shape[0]
-            stream_channels = self.n_chans // len(self._streams)
+            stream_channels = len(self.channel_range) // len(self._streams)
             if stream_channels % heap_channels != 0:
                 raise ValueError('Number of channels in xeng_raw does not divide into per-stream channels')
-            xengs = self.n_chans // heap_channels
+            xengs = len(self.channel_range) // heap_channels
             stream_xengs = stream_channels // heap_channels
             ring_heaps = 8
             # TODO: this is somewhat heuristic. Examine code more carefully to
@@ -280,10 +288,12 @@ class Receiver(object):
                         _logger.warning('CBF heap without frequency received on stream %d', stream_idx)
                         continue
                     channel0 = stream_channels * stream_idx
-                if channel0 % heap_channels != 0 or channel0 < 0 or channel0 + heap_channels > self.n_chans:
+                heap_channel_range = Range(channel0, channel0 + heap_channels)
+                if not (heap_channel_range.isaligned(heap_channels) and
+                        heap_channel_range.issubset(self.channel_range)):
                     _logger.warning("CBF heap with invalid channel %d on stream %d", channel0, stream_idx)
                     continue
-                xeng_idx = channel0 // heap_channels
+                xeng_idx = (channel0 - self.channel_range.start) // heap_channels
 
                 data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
                 data_item = ig_cbf['xeng_raw'].value

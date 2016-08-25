@@ -370,14 +370,9 @@ class CBFIngest(object):
         self.jobs = resource.JobQueue()
         # Done with blocks
 
-        # Determine subset of streams to subscribe to
-        stream_channels = len(self.channel_ranges.cbf) // len(opts.cbf_spead)
-        streams = opts.cbf_spead[self.channel_ranges.subscribed.start // stream_channels :
-                                 self.channel_ranges.subscribed.stop // stream_channels]
-        self.logger.debug("Initialising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}".format(
-            [str(x) for x in streams]))
-        self.rx = receiver.Receiver(streams, telstate, cbf_name)
+        self.rx = receiver.Receiver(
+            opts.cbf_spead, self.channel_ranges.subscribed,
+            len(self.channel_ranges.cbf), telstate, cbf_name)
         self.cbf_attr = self.rx.cbf_attr
         # Instantiation of the output streams delayed until exact integration time is known
         self.tx_spectral = None

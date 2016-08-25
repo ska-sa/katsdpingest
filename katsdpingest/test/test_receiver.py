@@ -8,6 +8,7 @@ import spead2.recv.trollius
 import trollius
 from trollius import From, Return
 from katsdpingest.receiver import Receiver
+from katsdpingest.sigproc import Range
 import katsdptelstate.endpoint
 from katsdpsigproc.test.test_resource import async_test
 from nose.tools import *
@@ -103,7 +104,9 @@ class TestReceiver(object):
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+1')
         self.n_streams = 2
         self.n_xengs = 4
-        self.rx = Receiver(endpoints, active_frames=3, loop=self.loop)
+        self.n_chans = 4096
+        self.rx = Receiver(endpoints, Range(0, self.n_chans), self.n_chans,
+                           active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
@@ -157,18 +160,6 @@ class TestReceiver(object):
         self.patcher.stop()
         QueueStream.clear_instances()
         self.loop.close()
-
-    @async_test
-    def test_properties(self):
-        """Check that the computed bandwidth and n_chans properties are correct"""
-        # Start waiting for data. It won't arrive, but this will allow the
-        # metadata to be processed.
-        data_future = trollius.async(self.rx.get(), loop=self.loop)
-        # Give the asynchronous task time to put in the properties
-        yield From(trollius.sleep(0.001, loop=self.loop))
-        assert_equal(856000000, self.rx.bandwidth)
-        assert_equal(4096, self.rx.n_chans)
-        data_future.cancel()
 
     @async_test
     def test_stop(self):
