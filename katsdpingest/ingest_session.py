@@ -558,14 +558,16 @@ class CBFIngest(object):
             name=('bls_ordering'), id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
+        # Determine bandwidth of the signal display product
+        sd_bandwidth = self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output) / len(self.channel_ranges.cbf)
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.rx.bandwidth)
+            shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.rx.n_chans)
+            shape=(), dtype=None, format=inline_format, value=len(self.channel_ranges.sd_output))
 
     @trollius.coroutine
     def _initialise(self):
@@ -804,8 +806,17 @@ class CBFIngest(object):
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-            if self._center_freq is not None:
-                self.ig_sd['center_freq'].value = self._center_freq
+            # Translate CBF-width center_freq to the center_freq for the
+            # signal display product.
+            cbf_center_freq = self._center_freq
+            if cbf_center_freq is None:
+                cbf_center_freq = self.cbf_attr.get('center_freq')
+            if cbf_center_freq is not None:
+                channel_width = self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf)
+                cbf_mid = (self.channel_ranges.cbf.start + self.channel_ranges.cbf.stop) / 2
+                sd_mid = (self.channel_ranges.sd_output.start + self.channel_ranges.sd_output.stop) / 2
+                sd_center_freq = cbf_center_freq + (sd_mid - cbf_mid) * channel_width
+                self.ig_sd['center_freq'].value = sd_center_freq
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(

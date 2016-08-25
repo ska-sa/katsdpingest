@@ -20,7 +20,7 @@ CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
-    'bandwidth', 'sync_time', 'int_time', 'scale_factor_timestamp'])
+    'bandwidth', 'center_freq', 'sync_time', 'int_time', 'scale_factor_timestamp'])
 
 
 def is_cbf_sensor(name):

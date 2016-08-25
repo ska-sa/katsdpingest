@@ -108,7 +108,7 @@ class TestReceiver(object):
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         self.adc_sample_rate = 1712000000
-        self.n_chans = 4096
+        self.center_freq = 1412000000.0
         self.n_accs = 256000
         self.n_ants = 4
         self.n_bls = self.n_ants * (self.n_ants + 1) * 2
@@ -130,6 +130,8 @@ class TestReceiver(object):
                         (), format=[('u', 48)], value=self.n_chans)
             ig.add_item(0x100C, 'bls_ordering', "The X-engine baseline output ordering. The form is a list of arrays of strings of user-defined antenna names ('input1','input2'). For example [('antC23x','antC23y'), ('antB12y','antA29y')]",
                 baselines.shape, baselines.dtype, value=baselines)
+            ig.add_item(0x1011, 'center_freq', 'The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.',
+                (), format=[('f', 64)], value=self.center_freq)
             ig.add_item(0x1013, 'bandwidth', 'The analogue bandwidth of the digitally processed signal in Hz.',
                         (), format=[('f', 64)], value=self.adc_sample_rate / 2)
             ig.add_item(0x1015, 'n_accs', 'The number of spectra that are accumulated per integration.',
