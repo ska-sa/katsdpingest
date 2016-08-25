@@ -6,6 +6,7 @@ import spead2.send.trollius
 import logging
 import trollius
 from trollius import From
+from katsdpingest.sigproc import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class VisSender(object):
     int_time : float
         Time between dumps, in seconds
     channel_range : :class:`katsdpingest.sigproc.Range`
-        Range of channel numbers to be placed into this stream
+        Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
     baselines : number of baselines in output
     """
     def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, baselines):
@@ -73,7 +74,7 @@ class VisSender(object):
     def send(self, vis, flags, ts_rel):
         """Asynchronously send visibilities to the receiver, returning a
         future."""
-        idx = np.s_[self._channel_range.start : self._channel_range.stop]
+        idx = self._channel_range.asslice()
         self._ig['correlator_data'].value = vis[idx]
         self._ig['flags'].value = flags[idx]
         self._ig['timestamp'].value = ts_rel
@@ -82,7 +83,7 @@ class VisSender(object):
 
 class VisSenderSet(object):
     """Manages a collection of :class:`VisSender` objects, and provides similar
-    function that work collectively on all the streams.
+    functions that work collectively on all the streams.
     """
     def __init__(self, thread_pool, endpoints, flavour, int_time, channel_range, baselines):
         channels = len(channel_range)
@@ -95,7 +96,7 @@ class VisSenderSet(object):
             a = channel_range.start + i * sub_channels
             b = a + sub_channels
             self._senders.append(
-                VisSender(thread_pool, endpoints[i], flavour, int_time, (a, b), baselines))
+                VisSender(thread_pool, endpoints[i], flavour, int_time, Range(a, b), baselines))
 
     @trollius.coroutine
     def start(self):
