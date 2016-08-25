@@ -779,17 +779,18 @@ class IngestOperation(accel.OperationSequence):
     Raises
     ------
     ValueError
-        if `channel_range` values are not multiples of `cont_factor` and `sd_cont_factor`
+        if the length of `channel_range` values is not a multiple of
+        `cont_factor` and `sd_cont_factor`
     """
     def __init__(
             self, template, command_queue, channels, channel_range,
             cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
-        if not channel_range.isaligned(cont_factor):
-            raise ValueError('channel_range is not aligned to cont_factor')
-        if not channel_range.isaligned(sd_cont_factor):
-            raise ValueError('channel_range is not aligned to sd_cont_factor')
+        if len(channel_range) % cont_factor:
+            raise ValueError('channel_range length is not a multiple of cont_factor')
+        if len(channel_range) % sd_cont_factor:
+            raise ValueError('channel_range length is not a multiple of sd_cont_factor')
         kept_channels = len(channel_range)
         self.template = template
         self.prepare = template.prepare.instantiate(
