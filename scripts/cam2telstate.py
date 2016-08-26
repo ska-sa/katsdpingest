@@ -132,7 +132,7 @@ class Client(object):
             for sensor in RECEPTOR_SENSORS:
                 sensors.append(sensor.prefix(antenna_name))
         # Convert CAM prefixes to SDP ones
-        for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'cbf')]:
+        for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'data')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray), 'sub')]:
