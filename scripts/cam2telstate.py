@@ -239,14 +239,16 @@ class Client(object):
                 sensor = self._sensors[name]
                 try:
                     self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
+                    self._logger.debug('Updated %s to %s with timestamp %s',
+                                       sensor.sp_name, value, timestamp)
                 except katsdptelstate.ImmutableKeyError as e:
                     self._logger.error(e)
             else:
-                self._logger.debug("Sensor {} received update '{}' but we didn't subscribe (ignored)"
+                self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
                                    .format(name, value))
 
     def update_callback(self, msg):
-        self._logger.info("update_callback: %s", pprint.pformat(msg))
+        self._logger.debug("update_callback: %s", pprint.pformat(msg))
         if isinstance(msg, list):
             for item in msg:
                 self.process_update(item)
