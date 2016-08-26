@@ -9,6 +9,7 @@ futures
 h5py
 ipaddress==1.0.16
 katcp
+katversion
 linecache2
 Mako
 manhole
@@ -44,4 +45,3 @@ git+ssh://git@github.com/ska-sa/katsdpdisp#egg=katsdpdisp
 git+ssh://git@github.com/ska-sa/katsdpdata#egg=katsdpfilewriter&subdirectory=katsdpfilewriter
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
 git+ssh://git@github.com/ska-sa/katportalclient#egg=katportalclient
-git+ssh://git@github.com/ska-sa/katversion
