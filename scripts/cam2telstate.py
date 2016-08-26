@@ -198,8 +198,8 @@ class Client(object):
                     self._logger.info("Set sampling strategy on %s to %s",
                                       sensor.cam_name, sensor.sampling_strategy_and_params)
                 else:
-                    raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
-                        sensor.cam_name, result[u'info']))
+                    self._logger.error("Failed to set sampling strategy on %s: %s",
+                                       sensor.cam_name, result[u'info'])
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
                 signal.signal(
                     signal_number,
