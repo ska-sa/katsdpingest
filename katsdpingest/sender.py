@@ -12,6 +12,25 @@ from .utils import Range
 _logger = logging.getLogger(__name__)
 
 
+class Data(object):
+    """Bundles visibilities, flags and weights"""
+    def __init__(self, vis=None, flags=None, weights=None, weights_channel=None):
+        self.vis = vis
+        self.flags = flags
+        self.weights = weights
+        self.weights_channel = weights_channel
+
+    def __getitem__(self, idx):
+        """Do numpy slicing on all fields at once"""
+        return Data(self.vis[idx], self.flags[idx],
+                    self.weights[idx], self.weights_channel[idx])
+
+    @property
+    def nbytes(self):
+        return (self.vis.nbytes + self.flags.nbytes +
+                self.weights.nbytes + self.weights_channel.nbytes)
+
+
 @trollius.coroutine
 def async_send_heap(stream, heap):
     """Send a heap on a stream and wait for it to complete, but log and
@@ -41,7 +60,8 @@ class VisSender(object):
     """
     def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, baselines):
         channels = len(channel_range)
-        dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + np.dtype(np.uint8).itemsize)
+        dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
+        dump_size += channels * np.dtype(np.float32).itemsize
         # Scaling by 1.1 is to account for network overheads and to allow
         # catchup if we temporarily fall behind the rate.
         rate = dump_size / int_time * 1.1
@@ -54,6 +74,10 @@ class VisSender(object):
                           shape=(channels, baselines), dtype=np.complex64)
         self._ig.add_item(id=None, name='flags', description="Flags for visibilities",
                           shape=(channels, baselines), dtype=np.uint8)
+        self._ig.add_item(id=None, name='weights', description="Detailed weights, to be scaled by weights_channel",
+                          shape=(channels, baselines), dtype=np.uint8)
+        self._ig.add_item(id=None, name='weights_channel', description="Coarse (per-channel) weights",
+                          shape=(channels,), dtype=np.float32)
         self._ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
                           shape=(), dtype=None, format=[('f', 64)])
 
@@ -71,12 +95,14 @@ class VisSender(object):
         yield From(self._stream.async_send_heap(self._ig.get_end()))
 
     @trollius.coroutine
-    def send(self, vis, flags, ts_rel):
+    def send(self, data, ts_rel):
         """Asynchronously send visibilities to the receiver, returning a
         future."""
-        idx = self._channel_range.asslice()
-        self._ig['correlator_data'].value = vis[idx]
-        self._ig['flags'].value = flags[idx]
+        data = data[self._channel_range.asslice()]
+        self._ig['correlator_data'].value = data.vis
+        self._ig['flags'].value = data.flags
+        self._ig['weights'].value = data.weights
+        self._ig['weights_channel'].value = data.weights_channel
         self._ig['timestamp'].value = ts_rel
         return trollius.async(async_send_heap(self._stream, self._ig.get_heap()))
 
@@ -109,7 +135,7 @@ class VisSenderSet(object):
         return trollius.gather(*(trollius.async(sender.stop()) for sender in self._senders))
 
     @trollius.coroutine
-    def send(self, vis, flags, ts_rel):
+    def send(self, data, ts_rel):
         """Send a data heap to all streams, splitting the data between them."""
-        return trollius.gather(*(trollius.async(sender.send(vis, flags, ts_rel))
+        return trollius.gather(*(trollius.async(sender.send(data, ts_rel))
                                  for sender in self._senders))

@@ -414,7 +414,7 @@ class PostprocTemplate(object):
     """Postprocessing performed on each output dump:
 
     - Accumulated visibility-weight product divided by weight
-    - Weights for flagged outputs set to zero
+    - Weights for flagged outputs scaled back up
     - Computation of continuum visibilities, weights and flags (flags are ANDed)
 
     Parameters
@@ -488,7 +488,7 @@ class Postproc(accel.Operation):
     **vis** : channels × baselines, complex64
         Sum of visibility times weight (on input), average visibility (on output)
     **weights** : channels × baselines, float32
-        Sum of weights; on output, flagged results are set to zero
+        Sum of weights; on output, flagged values are re-scaled up
     **flags** : channels × baselines, uint8
         Flags (read-only)
     **cont_vis** : channels/cont_factor × baselines, complex64
@@ -561,6 +561,205 @@ class Postproc(accel.Operation):
         }
 
 
+class CompressWeightsTemplate(object):
+    """Do lossy compression of weights. Each weight is represented as the
+    product of a per-channel float32 and a per-channel, per-baseline uint8.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - wgsx, wgsy: workgroup size in each dimension
+    """
+
+    autotune_version = 1
+
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.wgsx = tuning['wgsx']
+        self.wgsy = tuning['wgsy']
+        self.program = accel.build(
+            context, 'ingest_kernels/compress_weights.mako',
+            {'wgsx': self.wgsx, 'wgsy': self.wgsy},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+
+    @classmethod
+    @tune.autotuner(test={'wgsx': 16, 'wgsy': 16})
+    def autotune(cls, context):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+        weights_in = accel.DeviceArray(context, (channels, baselines), np.float32)
+        weights_out = accel.DeviceArray(context, (channels, baselines), np.uint8)
+        weights_channel = accel.DeviceArray(context, (channels,), np.float32)
+        weights_in.set(queue, np.ones(weights_in.shape, np.float32))
+
+        def generate(wgsx, wgsy):
+            fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(queue, channels, baselines)
+            fn.bind(weights_in=weights_in, weights_out=weights_out, weights_channel=weights_channel)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(generate, wgsx=[8, 16], wgsy=[8, 16])
+
+    def instantiate(self, *args, **kwargs):
+        return CompressWeights(self, *args, **kwargs)
+
+
+class CompressWeights(accel.Operation):
+    """Concrete instance of :class:`CompressWeightsTemplate`.
+
+    .. rubric:: Slots
+
+    **weights_in** : baselines × channels, float32
+        Input weights
+    **weights_channel** : channels, float32
+        Output per-channel weight
+    **weights_out : baselines × channels, uint8
+        Output weights
+
+    Parameters
+    ----------
+    template : class:`CompressWeightsTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    baselines : int
+        Number of baselines
+    """
+    def __init__(self, template, command_queue, channels, baselines):
+        super(CompressWeights, self).__init__(command_queue)
+        self.template = template
+        self.channels = channels
+        self.baselines = baselines
+        padded_channels = accel.Dimension(channels, template.wgsy)
+        dims = (padded_channels, baselines)
+        self.slots['weights_in'] = accel.IOSlot(dims, np.float32)
+        self.slots['weights_channel'] = accel.IOSlot((padded_channels,), np.float32)
+        self.slots['weights_out'] = accel.IOSlot(dims, np.uint8)
+        self.kernel = template.program.get_kernel('compress_weights')
+
+    def _run(self):
+        weights_out = self.buffer('weights_out')
+        weights_channel = self.buffer('weights_channel')
+        weights_in = self.buffer('weights_in')
+        self.command_queue.enqueue_kernel(
+            self.kernel, [
+                weights_out.buffer,
+                weights_channel.buffer,
+                weights_in.buffer,
+                np.int32(weights_out.padded_shape[1]),
+                np.int32(weights_in.padded_shape[1]),
+                np.int32(self.baselines)
+            ],
+            global_size=(accel.roundup(self.baselines, self.template.wgsx),
+                         accel.roundup(self.channels, self.template.wgsy)),
+            local_size=(self.template.wgsx, self.template.wgsy)
+        )
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'baselines': self.baselines
+        }
+
+
+class FinaliseTemplate(object):
+    """Template for final processing on a dump. This combines the operations
+    of :class:`PostprocTemplate` and :class:`CompressWeightsTemplate`.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    """
+    def __init__(self, context):
+        self.postproc = PostprocTemplate(context)
+        self.compress_weights = CompressWeightsTemplate(context)
+
+    def instantiate(self, *args, **kwargs):
+        return Finalise(self, *args, **kwargs)
+
+
+class Finalise(accel.OperationSequence):
+    """Concrete instance of :class:`FinaliseTemplate`.
+
+    .. rubric:: Slots
+
+    **spec_vis** : channels × baselines, complex64
+        Sum of visibility times weight (on input), average visibility (on output)
+    **spec_weights_fp32** : channels × baselines, float32
+        Sum of weights; on output, flagged values are re-scaled up
+    **spec_flags** : channels × baselines, uint8
+        Flags (read-only)
+    **spec_weights** : channels × baselines, uint8
+        Output weights
+    **spec_weights_channel** : channels, float32
+        Output per-channel weight
+    **cont_vis** : channels/cont_factor × baselines, complex64
+        Output continuum visibilities
+    **cont_flags** : channels/cont_factor × baselines, uint8
+        Output continuum flags
+    **cont_weights** : channels × baselines, uint8
+        Output continuum weights
+    **cont_weights_channel** : channels, float32
+        Output continum per-channel weight
+
+    .. rubric:: Scratch slots
+
+    **cont_weights_fp32** : channels/cont_factor × baselines, float32
+        Output continuum weights
+
+    Parameters
+    ----------
+    template : :class:`PostprocTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels (must be a multiple of `template.cont_factor`)
+    baselines : int
+        Number of baselines
+    cont_factor : int
+        Number of spectral channels per continuum channel
+
+    Raises
+    ------
+    ValueError
+        If `channels` is not a multiple of `template.cont_factor`
+    """
+    def __init__(self, template, command_queue, channels, baselines, cont_factor):
+        self.postproc = template.postproc.instantiate(
+            command_queue, channels, baselines, cont_factor)
+        self.compress_weights_spec = template.compress_weights.instantiate(
+            command_queue, channels, baselines)
+        self.compress_weights_cont = template.compress_weights.instantiate(
+            command_queue, channels // cont_factor, baselines)
+        operations = [
+            ('postproc', self.postproc),
+            ('compress_weights_spec', self.compress_weights_spec),
+            ('compress_weights_cont', self.compress_weights_cont)
+        ]
+        compounds = {
+            'spec_vis': ['postproc:vis'],
+            'spec_flags': ['postproc:flags'],
+            'spec_weights_fp32': ['postproc:weights', 'compress_weights_spec:weights_in'],
+            'spec_weights_channel': ['compress_weights_spec:weights_channel'],
+            'spec_weights': ['compress_weights_spec:weights_out'],
+            'cont_vis': ['postproc:cont_vis'],
+            'cont_flags': ['postproc:cont_flags'],
+            'cont_weights_fp32': ['postproc:cont_weights', 'compress_weights_cont:weights_in'],
+            'cont_weights_channel': ['compress_weights_cont:weights_channel'],
+            'cont_weights': ['compress_weights_cont:weights_out']
+        }
+        super(Finalise, self).__init__(command_queue, operations, compounds)
+
+
 class IngestTemplate(object):
     """Template for the entire on-device ingest processing
 
@@ -588,7 +787,8 @@ class IngestTemplate(object):
                 context, np.complex64, 'float2')
         self.flagger = flagger
         self.accum = AccumTemplate(context, 2)
-        self.postproc = PostprocTemplate(context)
+        self.finalise = FinaliseTemplate(context)
+        self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
         self.percentiles = [percentile.Percentile5Template(
             context, max(size, 1), False) for size in percentile_sizes]
@@ -624,14 +824,18 @@ class IngestOperation(accel.OperationSequence):
 
     **spec_vis** : kept-channels × baselines, complex64
         Spectral visibilities
-    **spec_weights** : kept-channels × baselines, float32
+    **spec_weights** : kept-channels × baselines, uint8
         Spectral weights
+    **spec_weights_channel** : kept-channels, float32
+        Per-channel scale factor for **spec_weights**
     **spec_flags** : kept-channels × baselines, uint8
         Spectral flags
     **cont_vis** : kept-channels/`cont_factor` × baselines, complex64
         Continuum visibilities
-    **cont_weights** : kept-channels/`cont_factor` × baselines, float32
+    **cont_weights** : kept-channels/`cont_factor` × baselines, uint8
         Continuum weights
+    **cont_weights_channel** : kept-channels/`cont_factor`, float32
+        Per-channel scale factor for **cont_weights**
     **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
         Continuum flags
     **sd_spec_vis**, **sd_spec_weights**, **sd_spec_flags**, **sd_cont_vis**, **sd_cont_weights**, **sd_cont_flags**
@@ -703,12 +907,20 @@ class IngestOperation(accel.OperationSequence):
                 command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
         self.accum = template.accum.instantiate(
                 command_queue, channels, channel_range, baselines)
-        self.postproc = template.postproc.instantiate(
+        self.finalise = template.finalise.instantiate(
                 command_queue, kept_channels, baselines, cont_factor)
-        self.sd_postproc = template.postproc.instantiate(
+        self.sd_finalise = template.finalise.instantiate(
                 command_queue, kept_channels, baselines, sd_cont_factor)
         self.timeseries = template.timeseries.instantiate(
                 command_queue, (kept_channels, baselines))
+        self.compress_weights_spec = template.compress_weights.instantiate(
+                command_queue, kept_channels, baselines)
+        self.compress_weights_cont = template.compress_weights.instantiate(
+                command_queue, kept_channels // cont_factor, baselines)
+        self.compress_weights_sd_spec = template.compress_weights.instantiate(
+                command_queue, kept_channels, baselines)
+        self.compress_weights_sd_cont = template.compress_weights.instantiate(
+                command_queue, kept_channels // sd_cont_factor, baselines)
         self.percentiles = []
         self.percentiles_flags = []
         for prange in percentile_ranges:
@@ -745,8 +957,8 @@ class IngestOperation(accel.OperationSequence):
                 ('transpose_vis', self.transpose_vis),
                 ('flagger', self.flagger),
                 ('accum', self.accum),
-                ('postproc', self.postproc),
-                ('sd_postproc', self.sd_postproc),
+                ('finalise', self.finalise),
+                ('sd_finalise', self.sd_finalise),
                 ('timeseries', self.timeseries)
         ]
         for i in range(len(self.percentiles)):
@@ -765,23 +977,21 @@ class IngestOperation(accel.OperationSequence):
                 'deviations':   ['flagger:deviations'],
                 'noise':        ['flagger:noise'],
                 'flags':        ['flagger:flags_t', 'accum:flags_in'],
-                'spec_vis':     ['accum:vis_out0', 'zero_spec:vis', 'postproc:vis'],
-                'spec_weights': ['accum:weights_out0', 'zero_spec:weights', 'postproc:weights'],
-                'spec_flags':   ['accum:flags_out0', 'zero_spec:flags', 'postproc:flags'],
-                'cont_vis':     ['postproc:cont_vis'],
-                'cont_weights': ['postproc:cont_weights'],
-                'cont_flags':   ['postproc:cont_flags'],
-                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis',
-                                 'sd_postproc:vis', 'timeseries:src'],
-                'sd_spec_weights': ['accum:weights_out1', 'zero_sd_spec:weights',
-                                    'sd_postproc:weights'],
-                'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags', 'sd_postproc:flags'],
-                'sd_cont_vis':  ['sd_postproc:cont_vis'],
-                'sd_cont_weights': ['sd_postproc:cont_weights'],
-                'sd_cont_flags': ['sd_postproc:cont_flags'],
+                'spec_vis':     ['accum:vis_out0', 'zero_spec:vis'],
+                'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
+                'spec_flags':   ['accum:flags_out0', 'zero_spec:flags'],
+                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'timeseries:src'],
+                'sd_spec_weights_fp32': ['accum:weights_out1', 'zero_sd_spec:weights'],
+                'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags'],
                 'timeseries_weights': ['timeseries:mask'],
                 'timeseries':   ['timeseries:dest']
         }
+        for i in ['', 'sd_']:
+            for j in ['spec', 'cont']:
+                for k in ['vis', 'flags', 'weights_fp32', 'weights', 'weights_channel']:
+                    source = '{i}finalise:{j}_{k}'.format(i=i, j=j, k=k)
+                    sink = '{i}{j}_{k}'.format(i=i, j=j, k=k)
+                    compounds.setdefault(sink, []).append(source)
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
             # The :data slots are used when NaN-filling. Unused slots are ignored,
@@ -792,7 +1002,8 @@ class IngestOperation(accel.OperationSequence):
             compounds[name + '_flags'] = [name + '_flags:dest', name + '_flags:data']
 
         aliases = {
-                'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags']
+            'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags',
+                         'cont_weights_fp32', 'sd_cont_weights_fp32']
         }
 
         super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
@@ -818,7 +1029,7 @@ class IngestOperation(accel.OperationSequence):
         """Perform postprocessing for an output dump. This only does
         on-device processing; it does not transfer the results to the host.
         """
-        self.postproc()
+        self.finalise()
 
     def start_sd_sum(self, **kwargs):
         """Reset accumulation buffers for a new signal display dump"""
@@ -831,7 +1042,7 @@ class IngestOperation(accel.OperationSequence):
         """Perform postprocessing for a signal display dump. This only does
         on-device processing; it does not transfer the results to the host.
         """
-        self.sd_postproc()
+        self.sd_finalise()
         self.timeseries()
         for p, f in zip(self.percentiles, self.percentiles_flags):
             p()
