@@ -1,4 +1,6 @@
 # coding: utf-8
+
+from __future__ import print_function, division, absolute_import
 import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
@@ -92,13 +94,10 @@ class PrepareTemplate(object):
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
-        channel_range = Range(128, channels - 128)
-        kept_channels = len(channel_range)
 
         vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
         vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
         permutation = accel.DeviceArray(context, (baselines,), np.int16)
-        weights = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
         vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
         permutation.set(queue, np.arange(baselines).astype(np.int16))
 
@@ -110,9 +109,9 @@ class PrepareTemplate(object):
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
-                'vty': vty}).instantiate(queue, channels, channel_range, baselines, baselines)
+                'vty': vty}).instantiate(queue, channels, baselines, baselines)
             fn.bind(vis_in=vis_in, vis_out=vis_out,
-                    permutation=permutation, weights=weights)
+                    permutation=permutation)
             return tune.make_measure(queue, fn)
         return tune.autotune(
             generate,
@@ -120,12 +119,15 @@ class PrepareTemplate(object):
             vtx=[1, 2, 3, 4],
             vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, channel_range, in_baselines, out_baselines):
-        return Prepare(self, command_queue, channels, channel_range, in_baselines, out_baselines)
+    def instantiate(self, command_queue, channels, in_baselines, out_baselines):
+        return Prepare(self, command_queue, channels, in_baselines, out_baselines)
 
 
 class Prepare(accel.Operation):
     """Concrete instance of :class:`PrepareTemplate`.
+
+    The number of accumulations (by which visibilities will be divided) should
+    be set by assigning the :attr:`n_accs` attribute.
 
     .. rubric:: Slots
 
@@ -135,8 +137,6 @@ class Prepare(accel.Operation):
         Permutation mapping original to new baseline index, or -1 to discard
     **vis_out** : out_baselines × channels, complex64
         Transformed visibilities
-    **weights** : out_baselines × kept-channels, float32
-        Weights corresponding to visibilities
 
     Parameters
     ----------
@@ -146,14 +146,12 @@ class Prepare(accel.Operation):
         Command queue for the operation
     channels : int
         Number of channels
-    channel_range : :class:`Range`
-        Range of channels that will be written to **weights**
     in_baselines : int
         Number of baselines in the input
     out_baselines : int
         Number of baselines in the output
     """
-    def __init__(self, template, command_queue, channels, channel_range,
+    def __init__(self, template, command_queue, channels,
                  in_baselines, out_baselines):
         if in_baselines < out_baselines:
             raise ValueError('Baselines can only be discarded, not amplified')
@@ -162,10 +160,9 @@ class Prepare(accel.Operation):
         tiley = template.block * template.vty
         self.template = template
         self.channels = channels
-        self.channel_range = channel_range
         self.in_baselines = in_baselines
         self.out_baselines = out_baselines
-        self.scale = 1.0
+        self.n_accs = 1
         padded_channels = accel.Dimension(channels, tiley)
         padded_in_baselines = accel.Dimension(in_baselines, tilex)
         complex_parts = accel.Dimension(2, exact=True)
@@ -175,19 +172,12 @@ class Prepare(accel.Operation):
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
                 (out_baselines, padded_channels), np.complex64)
-        # Channels need to be range-checked anyway here, so no padding
-        self.slots['weights'] = accel.IOSlot(
-                (out_baselines, len(channel_range)), np.float32)
         self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
-
-    def set_scale(self, scale):
-        self.scale = scale
 
     def _run(self):
         vis_in = self.buffer('vis_in')
         permutation = self.buffer('permutation')
         vis_out = self.buffer('vis_out')
-        weights = self.buffer('weights')
 
         block = self.template.block
         tilex = block * self.template.vtx
@@ -198,16 +188,12 @@ class Prepare(accel.Operation):
                 self.template.kernel,
                 [
                     vis_out.buffer,
-                    weights.buffer,
                     vis_in.buffer,
                     permutation.buffer,
                     np.int32(vis_out.padded_shape[1]),
-                    np.int32(weights.padded_shape[1]),
                     np.int32(vis_in.padded_shape[1]),
-                    np.int32(self.channel_range.start),
-                    np.int32(self.channel_range.stop),
                     np.int32(self.in_baselines),
-                    np.float32(self.scale)
+                    np.float32(1.0 / self.n_accs)
                 ],
                 global_size=(xblocks * block, yblocks * block),
                 local_size=(block, block))
@@ -215,10 +201,272 @@ class Prepare(accel.Operation):
     def parameters(self):
         return {
             'channels': self.channels,
-            'channel_range': self.channel_range,
             'in_baselines': self.in_baselines,
             'out_baselines': self.out_baselines,
-            'scale': self.scale
+            'n_accs': self.n_accs
+        }
+
+
+class AutoWeightsTemplate(object):
+    """Compute square root of the weight for each autocorrelation. These are
+    combined by :class:`InitWeightsTemplate` to give all the initial weights.
+
+    It operates on transposed (channel-minor) visibilities and weights.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - wgsx, wgsy: workgroup size
+    """
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.wgsx = tuning['wgsx']
+        self.wgsy = tuning['wgsy']
+        self.program = accel.build(
+            context, 'ingest_kernels/auto_weights.mako',
+            {'wgsx': self.wgsx, 'wgsy': self.wgsy},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+
+    @classmethod
+    @tune.autotuner(test={'wgsx': 16, 'wgsy': 16})
+    def autotune(cls, context):
+        queue = context.create_tuning_command_queue()
+        antennas = 16
+        inputs = 2 * antennas
+        baselines = antennas * (antennas + 1) * 2
+        channels = 2048
+
+        vis = accel.DeviceArray(context, (baselines, channels), np.complex64)
+        weights = accel.DeviceArray(context, (inputs, channels), np.float32)
+        baseline_map = accel.DeviceArray(context, (inputs,), np.uint16)
+
+        h_baseline_map = baseline_map.empty_like()
+        for i in range(antennas):
+            h_baseline_map[2 * i] = i * (i + 1) * 2
+            h_baseline_map[2 * i + 1] = i * (i + 1) * 2 + 3
+        vis.set(queue, np.ones(vis.shape, np.complex64))
+        baseline_map.set(queue, h_baseline_map)
+
+        def generate(wgsx, wgsy):
+            fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(
+                queue, channels, Range(0, channels), inputs, baselines)
+            fn.bind(vis=vis, weights=weights, baseline_map=baseline_map)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(
+            generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
+
+    def instantiate(self, *args, **kwargs):
+        return AutoWeights(self, *args, **kwargs)
+
+
+class AutoWeights(accel.Operation):
+    """Concrete instantiation of :class:`AutoWeightsTemplate`.
+
+    The number of accumulations (by which visibilities will be divided) should
+    be set by assigning the :attr:`n_accs` attribute.
+
+    .. rubric:: Slots
+
+    **vis** : baselines × channels, complex64
+        Input visibilities
+    **weights** : inputs × kept-channels, float32
+        Output square roots of auto-correlation weights
+    **baseline_map** : inputs, uint16
+        Baseline containing the autocorrelations for each input
+
+    Parameters
+    ----------
+    template : :class:`AutoWeightsTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels in **vis**
+    channel_range : :class:`~katsdpsigproc.utils.Range`
+        Range of channels from **vis** that are stored in **weights**
+    inputs : int
+        Number of inputs (typically twice the number of antennas)
+    baselines : int
+        Number of baselines in the visibilities
+    """
+    def __init__(self, template, command_queue, channels, channel_range, inputs, baselines):
+        super(AutoWeights, self).__init__(command_queue)
+        self.kernel = template.program.get_kernel('auto_weights')
+        self.template = template
+        self.channels = channels
+        self.channel_range = channel_range
+        self.inputs = inputs
+        self.baselines = baselines
+        self.n_accs = 1
+        # The visibility channels are accessed at an offset from the weights,
+        # so we need to determine the padding boundary by hand
+        vis_padded_channels = channel_range.start + accel.roundup(len(channel_range), template.wgsx)
+        vis_padded_channels = max(channels, vis_padded_channels)
+        self.slots['vis'] = accel.IOSlot(
+                (baselines, accel.Dimension(channels, min_padded_size=vis_padded_channels)),
+                np.complex64)
+        self.slots['weights'] = accel.IOSlot(
+                (inputs, accel.Dimension(len(channel_range), template.wgsx)), np.float32)
+        self.slots['baseline_map'] = accel.IOSlot(
+                (inputs,), np.uint16)
+
+    def _run(self):
+        vis = self.buffer('vis')
+        weights = self.buffer('weights')
+        baseline_map = self.buffer('baseline_map')
+        self.command_queue.enqueue_kernel(
+            self.kernel, [
+                weights.buffer,
+                vis.buffer,
+                baseline_map.buffer,
+                np.int32(weights.padded_shape[1]),
+                np.int32(vis.padded_shape[1]),
+                np.int32(self.inputs),
+                np.int32(self.channel_range.start),
+                np.float32(np.sqrt(self.n_accs))
+            ],
+            global_size=(accel.roundup(len(self.channel_range), self.template.wgsx),
+                         accel.roundup(self.inputs, self.template.wgsy)),
+            local_size=(self.template.wgsx, self.template.wgsy))
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'channel_range': self.channel_range,
+            'baselines': self.baselines,
+            'inputs': self.inputs,
+            'n_accs': self.n_accs
+        }
+
+
+class InitWeightsTemplate(object):
+    """Use the output of :class:`AutoWeightsTemplate` to initialise all the
+    weights from the visibilities.
+
+    Parameters
+    ----------
+    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+        Context for which kernels will be compiled
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - wgsx, wgsy: workgroup size
+    """
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.wgsx = tuning['wgsx']
+        self.wgsy = tuning['wgsy']
+        self.program = accel.build(
+            context, 'ingest_kernels/init_weights.mako',
+            {'wgsx': self.wgsx, 'wgsy': self.wgsy},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+
+    @classmethod
+    @tune.autotuner(test={'wgsx': 16, 'wgsy': 16})
+    def autotune(cls, context):
+        queue = context.create_tuning_command_queue()
+        antennas = 16
+        inputs = 2 * antennas
+        baselines = antennas * (antennas + 1) * 2
+        channels = 2048
+
+        auto_weights = accel.DeviceArray(context, (inputs, channels), np.float32)
+        weights = accel.DeviceArray(context, (baselines, channels), np.float32)
+        input_map = accel.DeviceArray(context, (baselines, 2), np.uint16)
+
+        h_input_map = input_map.empty_like()
+        next_idx = 0
+        for i in range(antennas):
+            for j in range(i, antennas):
+                for p in range(2):
+                    for q in range(2):
+                        h_input_map[next_idx, 0] = 2 * i + p
+                        h_input_map[next_idx, 1] = 2 * j + q
+                        next_idx += 1
+        input_map.set(queue, h_input_map)
+        auto_weights.set(queue, np.ones(auto_weights.shape, np.float32))
+
+        def generate(wgsx, wgsy):
+            fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(
+                queue, channels, inputs, baselines)
+            fn.bind(weights=weights, auto_weights=auto_weights, input_map=input_map)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(
+            generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
+
+    def instantiate(self, *args, **kwargs):
+        return InitWeights(self, *args, **kwargs)
+
+
+class InitWeights(accel.Operation):
+    """Concrete instantiation of :class:`InitWeightsTemplate`.
+
+    .. rubric:: Slots
+
+    **weights** : baselines × channels, float32
+        Output weights
+    **auto_weights** : inputs × channels, float32
+        Input square roots of autocorrelation weights
+    **input_map : inputs × 2, uint16
+        The indices of the two inputs making up each baseline
+
+    Parameters
+    ----------
+    template : :class:`InitWeightsTemplate`
+        Template containing the code
+    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+        Command queue for the operation
+    channels : int
+        Number of channels
+    inputs : int
+        Number of inputs (typically twice the number of antennas)
+    baselines : int
+        Number of baselines
+    """
+    def __init__(self, template, command_queue, channels, inputs, baselines):
+        super(InitWeights, self).__init__(command_queue)
+        self.kernel = template.program.get_kernel('init_weights')
+        self.template = template
+        self.channels = channels
+        self.inputs = inputs
+        self.baselines = baselines
+        self.slots['weights'] = accel.IOSlot(
+                (baselines, accel.Dimension(channels, template.wgsx)), np.float32)
+        self.slots['auto_weights'] = accel.IOSlot(
+                (inputs, accel.Dimension(channels, template.wgsx)), np.float32)
+        self.slots['input_map'] = accel.IOSlot(
+                (baselines, accel.Dimension(2, exact=True)), np.uint16)
+
+    def _run(self):
+        weights = self.buffer('weights')
+        auto_weights = self.buffer('auto_weights')
+        input_map = self.buffer('input_map')
+        self.command_queue.enqueue_kernel(
+            self.kernel, [
+                weights.buffer,
+                auto_weights.buffer,
+                input_map.buffer,
+                np.int32(weights.padded_shape[1]),
+                np.int32(auto_weights.padded_shape[1]),
+                np.int32(self.baselines)
+            ],
+            global_size=(accel.roundup(self.channels, self.template.wgsx),
+                         accel.roundup(self.baselines, self.template.wgsy)),
+            local_size=(self.template.wgsx, self.template.wgsy))
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'baselines': self.baselines,
+            'inputs': self.inputs
         }
 
 
@@ -785,6 +1033,8 @@ class IngestTemplate(object):
     def __init__(self, context, flagger, percentile_sizes):
         self.context = context
         self.prepare = PrepareTemplate(context)
+        self.auto_weights = AutoWeightsTemplate(context)
+        self.init_weights = InitWeightsTemplate(context)
         self.zero = ZeroTemplate(context)
         self.transpose_vis = transpose.TransposeTemplate(
                 context, np.complex64, 'float2')
@@ -801,14 +1051,8 @@ class IngestTemplate(object):
         self.nan_percentiles = fill.FillTemplate(context, np.float32, 'float')
         self.zero_percentiles_flags = fill.FillTemplate(context, np.uint8, 'unsigned char')
 
-    def instantiate(
-            self, command_queue, channels, channel_range,
-            cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
-            background_args={}, noise_est_args={}, threshold_args={}):
-        return IngestOperation(
-                self, command_queue, channels, channel_range,
-                cbf_baselines, baselines, cont_factor, sd_cont_factor, percentile_ranges,
-                background_args, noise_est_args, threshold_args)
+    def instantiate(self, *args, **kwargs):
+        return IngestOperation(self, *args, **kwargs)
 
 
 class IngestOperation(accel.OperationSequence):
@@ -820,6 +1064,10 @@ class IngestOperation(accel.OperationSequence):
         Input visibilities from the correlator
     **permutation** : baselines, int16
         Permutation mapping original to new baseline index
+    **baseline_map** : inputs, uint16
+        Maps inputs to their baselines, post-permutation
+    **input_map** : baselines × 2, uint16
+        Maps post-permutation baselines to their inputs
     **timeseries_weights** : kept-channels, float32
         Per-channel weights for timeseries averaging
 
@@ -864,6 +1112,8 @@ class IngestOperation(accel.OperationSequence):
         Number of channels
     channel_range : :class:`Range`
         Range of channels that will be written to **weights**
+    inputs : int
+        Number of input signals, after antenna masking
     cbf_baselines : int
         Number of baselines received from CBF
     baselines : int
@@ -890,7 +1140,7 @@ class IngestOperation(accel.OperationSequence):
     """
     def __init__(
             self, template, command_queue, channels, channel_range,
-            cbf_baselines, baselines,
+            inputs, cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
         if len(channel_range) % cont_factor:
@@ -900,7 +1150,11 @@ class IngestOperation(accel.OperationSequence):
         kept_channels = len(channel_range)
         self.template = template
         self.prepare = template.prepare.instantiate(
-                command_queue, channels, channel_range, cbf_baselines, baselines)
+                command_queue, channels, cbf_baselines, baselines)
+        self.auto_weights = template.auto_weights.instantiate(
+                command_queue, channels, channel_range, inputs, baselines)
+        self.init_weights = template.init_weights.instantiate(
+                command_queue, kept_channels, inputs, baselines)
         self.zero_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         self.zero_sd_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
@@ -955,6 +1209,8 @@ class IngestOperation(accel.OperationSequence):
         # done by methods in this class.
         operations = [
                 ('prepare', self.prepare),
+                ('auto_weights', self.auto_weights),
+                ('init_weights', self.init_weights),
                 ('zero_spec', self.zero_spec),
                 ('zero_sd_spec', self.zero_sd_spec),
                 ('transpose_vis', self.transpose_vis),
@@ -974,8 +1230,12 @@ class IngestOperation(accel.OperationSequence):
         compounds = {
                 'vis_in':       ['prepare:vis_in'],
                 'permutation':  ['prepare:permutation'],
-                'vis_t':        ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
-                'weights':      ['prepare:weights', 'accum:weights_in'],
+                'vis_t':        ['prepare:vis_out', 'auto_weights:vis',
+                                 'transpose_vis:src', 'accum:vis_in'],
+                'auto_weights': ['auto_weights:weights', 'init_weights:auto_weights'],
+                'baseline_map': ['auto_weights:baseline_map'],
+                'input_map':    ['init_weights:input_map'],
+                'weights':      ['init_weights:weights', 'accum:weights_in'],
                 'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
                 'deviations':   ['flagger:deviations'],
                 'noise':        ['flagger:noise'],
@@ -1005,18 +1265,27 @@ class IngestOperation(accel.OperationSequence):
             compounds[name + '_flags'] = [name + '_flags:dest', name + '_flags:data']
 
         aliases = {
-            'scratch1': ['vis_in', 'vis_mid', 'flagger:deviations_t', 'flagger:flags',
+            'scratch1': ['vis_in', 'auto_weights', 'vis_mid',
+                         'flagger:deviations_t', 'flagger:flags',
                          'cont_weights_fp32', 'sd_cont_weights_fp32']
         }
 
         super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
 
-    def set_scale(self, scale):
-        self.prepare.set_scale(scale)
+    @property
+    def n_accs(self):
+        return self.prepare.n_accs
+
+    @n_accs.setter
+    def n_accs(self, n):
+        self.prepare.n_accs = n
+        self.auto_weights.n_accs = n
 
     def _run(self):
         """Process a single input dump"""
         self.prepare()
+        self.auto_weights()
+        self.init_weights()
         self.transpose_vis()
         self.flagger()
         self.accum()

@@ -82,7 +82,7 @@ class TestCBFIngest(unittest.TestCase):
         """Test that an ingest processor can be created on the device"""
         template = ingest_session.CBFIngest.create_proc_template(context, 8, 4096)
         template.instantiate(
-            queue, 1024, Range(96, 1024 - 96), 544, 512,
+            queue, 1024, Range(96, 1024 - 96), 16, 544, 512,
             8, 16, [(0, 4), (500, 512)],
             threshold_args={'n_sigma': 11.0})
 
@@ -125,10 +125,26 @@ class TestCBFIngest(unittest.TestCase):
             ['m000v', 'm001v'],
             ['m000h', 'm001v'],
             ['m000v', 'm001h']])
+        expected_input_map = np.array([
+            [0, 0],
+            [1, 1],
+            [2, 2],
+            [3, 3],
+            [0, 2],
+            [1, 3],
+            [2, 0],
+            [3, 1],
+            [0, 1],
+            [2, 3],
+            [0, 3],
+            [2, 1]
+        ])
 
-        permutation, new_ordering = ingest_session.CBFIngest.baseline_permutation(orig_ordering)
+        permutation, baseline_map, input_map, new_ordering = ingest_session.CBFIngest.baseline_permutation(orig_ordering)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], permutation)
+        np.testing.assert_equal([0, 1, 2, 3], baseline_map)
+        np.testing.assert_equal(expected_input_map, input_map)
 
     def test_baseline_permutation_masked(self):
         orig_ordering = np.array([
@@ -151,7 +167,9 @@ class TestCBFIngest(unittest.TestCase):
             ['m001v', 'm001h']])
         antenna_mask = set(['m001'])
 
-        permutation, new_ordering = \
+        permutation, baseline_map, input_map, new_ordering = \
             ingest_session.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
         np.testing.assert_equal(expected_ordering, new_ordering)
         np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], permutation)
+        np.testing.assert_equal([0, 1], baseline_map)
+        np.testing.assert_equal([[0, 0], [1, 1], [0, 1], [1, 0]], input_map)

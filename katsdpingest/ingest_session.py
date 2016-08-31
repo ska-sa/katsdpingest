@@ -421,6 +421,10 @@ class CBFIngest(object):
             The permutation specifying the reordering. Element *i* indicates
             the position in the new order corresponding to element *i* of
             the original order, or -1 if the baseline was masked out.
+        baseline_map : list
+            The post-permutation baseline index for each autocorrelation
+        input_map : list
+            Inputs (indexed as for `baseline_map`) for each baseline
         new_ordering : ndarray
             Replacement ordering, in the same format as `bls_ordering`
         """
@@ -440,6 +444,13 @@ class CBFIngest(object):
             pol2 = input2[-1]
             return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
 
+        def input_idx(input):
+            try:
+                return inputs.index(input)
+            except ValueError:
+                inputs.append(input)
+                return len(inputs) - 1
+
         # Eliminate baselines not covered by antenna_mask
         filtered = [x for x in enumerate(bls_ordering) if keep(x[1])]
         # Sort what's left
@@ -449,7 +460,19 @@ class CBFIngest(object):
         permutation = [-1] * len(bls_ordering)
         for i in range(len(reordered)):
             permutation[reordered[i][0]] = i
-        return permutation, np.array([x[1] for x in reordered])
+        # Can now discard the indices from reordered
+        reordered = [x[1] for x in reordered]
+        # Construct baseline_map and input_map
+        inputs = []
+        input_map = [ [input_idx(x[0]), input_idx(x[1])] for x in reordered]
+        baseline_map = [-1] * len(inputs)
+        for i, inputs in enumerate(input_map):
+            if inputs[0] == inputs[1]:
+                baseline_map[inputs[0]] = i
+        if -1 in baseline_map:
+            idx = baseline_map.index(-1)
+            raise ValueError('No auto-correlation baseline found for ' + inputs[idx])
+        return permutation, baseline_map, input_map, np.array(reordered)
 
     @trollius.coroutine
     def _stop_stream(self, stream, ig):
@@ -570,7 +593,7 @@ class CBFIngest(object):
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
         # Configure the masking and reordering of baselines
         orig_bls_ordering = self.cbf_attr['bls_ordering']
-        permutation, self.cbf_attr['bls_ordering'] = \
+        permutation, baseline_map, input_map, self.cbf_attr['bls_ordering'] = \
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
         n_accs = self.cbf_attr['n_accs']
@@ -606,15 +629,20 @@ class CBFIngest(object):
         self.proc = self.proc_template.instantiate(
                 self.command_queue, len(self.channel_ranges.input),
                 self.channel_ranges.computed.relative_to(self.channel_ranges.input),
+                len(baseline_map),
                 cbf_baselines, baselines,
                 self.channel_ranges.cont_factor,
                 self.channel_ranges.sd_cont_factor,
                 percentile_ranges,
                 threshold_args={'n_sigma': 11.0})
-        self.proc.set_scale(1.0 / n_accs)
+        self.proc.n_accs = n_accs
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(
             self.command_queue, np.asarray(permutation, dtype=np.int16))
+        self.proc.buffer('baseline_map').set(
+            self.command_queue, np.asarray(baseline_map, dtype=np.uint16))
+        self.proc.buffer('input_map').set(
+            self.command_queue, np.asarray(input_map, dtype=np.uint16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
         # Set up resources
