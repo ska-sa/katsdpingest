@@ -603,7 +603,7 @@ class CompressWeightsTemplate(object):
             fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(queue, channels, baselines)
             fn.bind(weights_in=weights_in, weights_out=weights_out, weights_channel=weights_channel)
             return tune.make_measure(queue, fn)
-        return tune.autotune(generate, wgsx=[8, 16], wgsy=[8, 16])
+        return tune.autotune(generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
 
     def instantiate(self, *args, **kwargs):
         return CompressWeights(self, *args, **kwargs)
@@ -639,9 +639,12 @@ class CompressWeights(accel.Operation):
         self.baselines = baselines
         padded_channels = accel.Dimension(channels, template.wgsy)
         dims = (padded_channels, baselines)
-        self.slots['weights_in'] = accel.IOSlot(dims, np.float32)
-        self.slots['weights_channel'] = accel.IOSlot((padded_channels,), np.float32)
-        self.slots['weights_out'] = accel.IOSlot(dims, np.uint8)
+        self.slots['weights_in'] = accel.IOSlot(
+            (accel.Dimension(channels, template.wgsy), baselines), np.float32)
+        self.slots['weights_channel'] = accel.IOSlot(
+            (accel.Dimension(channels, template.wgsy),), np.float32)
+        self.slots['weights_out'] = accel.IOSlot(
+            (accel.Dimension(channels, template.wgsy), baselines), np.uint8)
         self.kernel = template.program.get_kernel('compress_weights')
 
     def _run(self):
