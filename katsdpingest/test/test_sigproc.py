@@ -463,7 +463,9 @@ class TestIngestOperation(object):
         for i in range(new_baselines):
             bl1 = baseline_map[input_map[i][0]]
             bl2 = baseline_map[input_map[i][1]]
-            weights[..., i] = np.float32(n_accs) / ((vis[..., bl1].real * vis[..., bl2].real))
+            with np.errstate(divide='ignore'):
+                weights[..., i] = np.float32(n_accs) / ((vis[..., bl1].real * vis[..., bl2].real))
+                weights = np.where(np.isfinite(weights), weights, np.float32(2**-64))
         # Compute flags
         flags = np.empty(vis.shape, dtype=np.uint8)
         for i in range(len(vis)):
@@ -611,11 +613,11 @@ class TestIngestOperation(object):
         # Make sure input_map is consistent with baseline_map
         for i in range(inputs):
             input_map[baseline_map, :] = i
-        # Make the designated autocorrelations look like autocorrelations (positive real)
+        # Make the designated autocorrelations look like autocorrelations (non-negative real)
         for baseline in baseline_map:
             orig_baseline = list(permutation).index(baseline)
             vis_in[..., orig_baseline, 0] = \
-                rs.random_integers(1, 1000, (dumps, channels)).astype(np.int32)
+                rs.random_integers(0, 100, (dumps, channels)).astype(np.int32)
             vis_in[..., orig_baseline, 1].fill(0)
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
@@ -675,7 +677,7 @@ class TestIngestOperation(object):
         for name in data_keys + sd_keys:
             err_msg = '{0} is not equal'.format(name)
             if expected[name].dtype in (np.dtype(np.float32), np.dtype(np.complex64)):
-                np.testing.assert_allclose(expected[name], actual[name], rtol=1e-5, err_msg=err_msg)
+                np.testing.assert_allclose(expected[name], actual[name], rtol=1e-5, atol=1e-5, err_msg=err_msg)
             elif name.endswith('_weights'):
                 # Integer parts of weights can end up slightly different due to rounding
                 np.testing.assert_allclose(expected[name], actual[name], atol=1, err_msg=err_msg)
