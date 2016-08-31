@@ -322,8 +322,6 @@ class TestIngestOperation(object):
             ('ingest:percentile1', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (10, 22), 'is_amplitude': False, 'max_columns': 12, 'shape': (80, 192)}),
             ('ingest:percentile1_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (10, 22), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)})
         ]
-        import pprint
-        print(pprint.pprint(fn.descriptions()))
         self.maxDiff = None
         assert_equal(expected, fn.descriptions())
 
