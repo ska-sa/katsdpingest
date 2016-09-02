@@ -116,13 +116,13 @@ def configure_logging():
 
 def parse_args():
     parser = katsdptelstate.ArgumentParser()
-    parser.add_argument('subarray', type=int, help='Subarray number')
-    parser.add_argument('url', type=str, help='WebSocket URL to connect to')
+    parser.add_argument('--subarray-numeric-id', required=True, type=int, help='Subarray number')
+    parser.add_argument('--url', required=True, type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
     parser.add_argument('--antenna', dest='antennas', type=str, default=[], action='append', help='An antenna name in the subarray (repeat for each antenna)')
     args = parser.parse_args()
     if args.namespace is None:
-        args.namespace = 'sp_subarray_{}'.format(args.subarray)
+        args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
     if not args.telstate:
         print('--telstate is required', file=sys.stderr)
         parser.print_help()
@@ -158,7 +158,7 @@ class Client(object):
         for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'data')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
-        for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray), 'sub')]:
+        for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
             for sensor in SUBARRAY_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
         sensors.extend(OTHER_SENSORS)
@@ -169,7 +169,7 @@ class Client(object):
         """Query subarray_N_pool_resources to find out which data_M resource is
         assigned to the subarray.
         """
-        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray)
+        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
         status = yield self._portal_client.subscribe(
             self._args.namespace, sensor)
         if status != 1:
@@ -232,7 +232,7 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == 'subarray_{}_pool_resources'.format(self._args.subarray):
+        if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
             if not self._data_name.done():
                 resources = value.split(',')
                 for resource in resources:
@@ -240,7 +240,7 @@ class Client(object):
                         self._data_name.set_result(resource)
                         return
                 self._data_name.set_exception(RuntimeError(
-                    'No data_* resource found for subarray {}'.format(self._args.subarray)))
+                    'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
         else:
             if status == 'unknown':
                 self._logger.warn("Sensor {} received update '{}' with status 'unknown' (ignored)"
