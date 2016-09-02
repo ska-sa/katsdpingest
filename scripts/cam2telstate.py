@@ -55,7 +55,17 @@ RECEPTOR_SENSORS = [
 # Data proxy sensors without the data proxy prefix
 DATA_SENSORS = [
     Sensor('target'),
-    Sensor('auto_delay_enabled')
+    Sensor('auto_delay_enabled'),
+    Sensor('cbf_corr_adc_sample_rate', immutable=True),
+    Sensor('cbf_corr_bandwidth', immutable=True),
+    Sensor('cbf_corr_baseline_ordering', immutable=True),
+    Sensor('cbf_corr_center_frequency', immutable=True),
+    Sensor('cbf_corr_integration_time', immutable=True),
+    Sensor('cbf_corr_n_accs', immutable=True),
+    Sensor('cbf_corr_n_chans', immutable=True),
+    Sensor('cbf_corr_n_inputs', immutable=True),
+    Sensor('cbf_corr_scale_factor_timestamp', immutable=True),
+    Sensor('cbf_corr_sync_epoch', immutable=True)
 ]
 # Subarray sensors with the subarray name prefix
 SUBARRAY_SENSORS = [
