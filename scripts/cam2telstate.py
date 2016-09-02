@@ -139,6 +139,7 @@ class Client(object):
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
         self._pool_resources = tornado.concurrent.Future()
+        self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
         self._data_name = None    #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
 
@@ -167,11 +168,15 @@ class Client(object):
         return sensors
 
     @tornado.gen.coroutine
-    def get_pool_resources(self):
-        """Query subarray_N_pool_resources to find out which data_M resource and
-        which receptors are assigned to the subarray.
+    def subscribe_one(self, sensor):
+        """Utility for subscribing to a single sensor. This is only used for
+        "special" sensors used during startup.
+
+        Parameters
+        ----------
+        sensor : str
+            Name of the sensor to subscribe to
         """
-        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
         status = yield self._portal_client.subscribe(
             self._args.namespace, sensor)
         if status != 1:
@@ -184,8 +189,26 @@ class Client(object):
         else:
             raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
                 sensor, result[u'info']))
+
+    @tornado.gen.coroutine
+    def get_pool_resources(self):
+        """Query subarray_N_pool_resources to find out which data_M resource and
+        which receptors are assigned to the subarray.
+        """
+        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
+        yield self.subscribe_one(sensor)
         # Wait until we get a callback with the value
         yield self._pool_resources
+        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+
+    @tornado.gen.coroutine
+    def wait_active(self):
+        """Subscribe to subarray_N_state and wait for its value to become
+        'active'."""
+        sensor = 'subarray_{}_state'.format(self._args.subarray_numeric_id)
+        yield self.subscribe_one(sensor)
+        # Wait until we get a callback to say that its active
+        yield self._active
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
     @tornado.gen.coroutine
@@ -194,6 +217,8 @@ class Client(object):
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
+            # Wait to be sure that the subarray is fully activated
+            yield self.wait_active()
             # First find out which resources are allocated to the subarray
             yield self.get_pool_resources()
             # Now we can tell which sensors to subscribe to
@@ -234,8 +259,11 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
-            if not self._pool_resources.done():
+        if name == 'subarray_{}_state'.format(self._args.subarray_numeric_id):
+            if not self._active.done() and value == 'active' and status == 'nominal':
+                self._active.set_result(None)
+        elif name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
+            if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
                 data_found = False
                 self._receptors = []
