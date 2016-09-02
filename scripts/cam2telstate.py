@@ -289,7 +289,8 @@ class Client(object):
                     self._logger.debug('Updated %s to %s with timestamp %s',
                                        sensor.sp_name, value, timestamp)
                 except katsdptelstate.ImmutableKeyError as e:
-                    self._logger.error(e)
+                    self._logger.error('Failed to set %s to %s with timestamp %s',
+                                       sensor.sp_name, value, timestamp, exc_info=True)
             else:
                 self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
                                    .format(name, value))
