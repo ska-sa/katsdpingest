@@ -11,6 +11,7 @@ import pprint
 import katsdptelstate
 import six
 import signal
+import re
 
 
 class Sensor(object):
@@ -119,7 +120,6 @@ def parse_args():
     parser.add_argument('--subarray-numeric-id', required=True, type=int, help='Subarray number')
     parser.add_argument('--url', required=True, type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument('--antenna', dest='antennas', type=str, default=[], action='append', help='An antenna name in the subarray (repeat for each antenna)')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -138,12 +138,14 @@ class Client(object):
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
-        self._data_name = tornado.concurrent.Future()
+        self._pool_resources = tornado.concurrent.Future()
+        self._data_name = None    #: Set once _pool_resources result is set
+        self._receptors = []      #: Set once _pool_resources result is set
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
         replaced to use kattelmod. It must only be called after
-        :attr:`_data_name` is resolved.
+        :attr:`_pool_resources` is resolved.
 
         Returns
         -------
@@ -151,11 +153,11 @@ class Client(object):
         """
 
         sensors = []
-        for antenna_name in self._args.antennas:
+        for receptor_name in self._receptors:
             for sensor in RECEPTOR_SENSORS:
-                sensors.append(sensor.prefix(antenna_name))
+                sensors.append(sensor.prefix(receptor_name))
         # Convert CAM prefixes to SDP ones
-        for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'data')]:
+        for (cam_prefix, sp_prefix) in [(self._data_name, 'data')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
@@ -165,9 +167,9 @@ class Client(object):
         return sensors
 
     @tornado.gen.coroutine
-    def get_data_name(self):
-        """Query subarray_N_pool_resources to find out which data_M resource is
-        assigned to the subarray.
+    def get_pool_resources(self):
+        """Query subarray_N_pool_resources to find out which data_M resource and
+        which receptors are assigned to the subarray.
         """
         sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
         status = yield self._portal_client.subscribe(
@@ -183,7 +185,7 @@ class Client(object):
             raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
                 sensor, result[u'info']))
         # Wait until we get a callback with the value
-        yield self._data_name
+        yield self._pool_resources
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
     @tornado.gen.coroutine
@@ -192,8 +194,8 @@ class Client(object):
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
-            # First find out which data_* resource is allocated to the subarray
-            yield self.get_data_name()
+            # First find out which resources are allocated to the subarray
+            yield self.get_pool_resources()
             # Now we can tell which sensors to subscribe to
             self._sensors = {x.cam_name: x for x in self.get_sensors()}
 
@@ -233,14 +235,21 @@ class Client(object):
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
         if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
-            if not self._data_name.done():
+            if not self._pool_resources.done():
                 resources = value.split(',')
+                data_found = False
+                self._receptors = []
                 for resource in resources:
                     if resource.startswith('data_'):
-                        self._data_name.set_result(resource)
-                        return
-                self._data_name.set_exception(RuntimeError(
-                    'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
+                        self._data_name = resource
+                        data_found = True
+                    elif re.match(r'^m\d+$', resource):
+                        self._receptors.append(resource)
+                if not data_found:
+                    self._pool_resources.set_exception(RuntimeError(
+                        'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
+                else:
+                    self._pool_resources.set_result(resources)
         else:
             if status == 'unknown':
                 self._logger.warn("Sensor {} received update '{}' with status 'unknown' (ignored)"
