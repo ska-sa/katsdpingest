@@ -39,6 +39,7 @@ class Sensor(object):
 
 # Per-receptor sensors, without the prefix for the receptor name
 RECEPTOR_SENSORS = [
+    Sensor('observer'),
     Sensor('activity'),
     Sensor('target'),
     Sensor('pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
@@ -46,11 +47,16 @@ RECEPTOR_SENSORS = [
     Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
     Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('dig_noise_diode'),
+    Sensor('dig_synchronisation_epoch'),
     Sensor('ap_indexer_position'),
+    Sensor('ap_point_error_tiltmeter_enabled'),
+    Sensor('ap_tilt_corr_azim'),
+    Sensor('ap_tilt_corr_elev'),
     Sensor('rsc_rxl_serial_number'),
     Sensor('rsc_rxs_serial_number'),
     Sensor('rsc_rxu_serial_number'),
-    Sensor('rsc_rxx_serial_number')
+    Sensor('rsc_rxx_serial_number'),
+    Sensor('ap_version_list', immutable=True)
 ]
 # Data proxy sensors without the data proxy prefix
 DATA_SENSORS = [
@@ -65,22 +71,29 @@ DATA_SENSORS = [
     Sensor('cbf_corr_n_chans', immutable=True),
     Sensor('cbf_corr_n_inputs', immutable=True),
     Sensor('cbf_corr_scale_factor_timestamp', immutable=True),
-    Sensor('cbf_corr_sync_epoch', immutable=True)
+    Sensor('cbf_corr_sync_epoch', immutable=True),
+    Sensor('cbf_version_list', immutable=True),
+    Sensor('loaded_delay_correction'),
+    Sensor('spmc_version_list', immutable=True)
 ]
 # Subarray sensors with the subarray name prefix
 SUBARRAY_SENSORS = [
     Sensor('config_label', immutable=True),
     Sensor('band', immutable=True),
     Sensor('product', immutable=True),
-    Sensor('sub_nr', immutable=True)
+    Sensor('sub_nr', immutable=True),
+    Sensor('dump_rate', immutable=True),
+    Sensor('pool_resources', immutable=True)
 ]
 # All other sensors
 OTHER_SENSORS = [
-    Sensor('anc_weather_pressure'),
-    Sensor('anc_weather_relative_humidity'),
-    Sensor('anc_weather_temperature'),
-    Sensor('anc_weather_wind_direction'),
-    Sensor('anc_weather_wind_speed')
+    Sensor('anc_air_pressure'),
+    Sensor('anc_air_relative_humidity'),
+    Sensor('anc_air_temperature'),
+    Sensor('anc_wind_direction'),
+    Sensor('anc_mean_wind_speed'),
+    Sensor('mcp_dmc_version_list', immutable=True),
+    Sensor('mcp_cmc_version_list', immutable=True)
 ]
 
 
@@ -142,7 +155,7 @@ class Client(object):
             for sensor in RECEPTOR_SENSORS:
                 sensors.append(sensor.prefix(antenna_name))
         # Convert CAM prefixes to SDP ones
-        for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'cbf')]:
+        for (cam_prefix, sp_prefix) in [(self._data_name.result(), 'data')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray), 'sub')]:
@@ -195,8 +208,8 @@ class Client(object):
                     self._logger.info("Set sampling strategy on %s to %s",
                                       sensor.cam_name, sensor.sampling_strategy_and_params)
                 else:
-                    raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
-                        sensor.cam_name, result[u'info']))
+                    self._logger.error("Failed to set sampling strategy on %s: %s",
+                                       sensor.cam_name, result[u'info'])
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
                 signal.signal(
                     signal_number,
@@ -236,14 +249,16 @@ class Client(object):
                 sensor = self._sensors[name]
                 try:
                     self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
+                    self._logger.debug('Updated %s to %s with timestamp %s',
+                                       sensor.sp_name, value, timestamp)
                 except katsdptelstate.ImmutableKeyError as e:
                     self._logger.error(e)
             else:
-                self._logger.debug("Sensor {} received update '{}' but we didn't subscribe (ignored)"
+                self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
                                    .format(name, value))
 
     def update_callback(self, msg):
-        self._logger.info("update_callback: %s", pprint.pformat(msg))
+        self._logger.debug("update_callback: %s", pprint.pformat(msg))
         if isinstance(msg, list):
             for item in msg:
                 self.process_update(item)
