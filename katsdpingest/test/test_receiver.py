@@ -8,6 +8,7 @@ import spead2.recv.trollius
 import trollius
 from trollius import From, Return
 from katsdpingest.receiver import Receiver
+from katsdpingest.sigproc import Range
 import katsdptelstate.endpoint
 from katsdpsigproc.test.test_resource import async_test
 from nose.tools import *
@@ -103,12 +104,14 @@ class TestReceiver(object):
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+1')
         self.n_streams = 2
         self.n_xengs = 4
-        self.rx = Receiver(endpoints, active_frames=3, loop=self.loop)
+        self.n_chans = 4096
+        self.rx = Receiver(endpoints, Range(0, self.n_chans), self.n_chans,
+                           active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         self.adc_sample_rate = 1712000000
-        self.n_chans = 4096
+        self.center_freq = 1412000000.0
         self.n_accs = 256000
         self.n_ants = 4
         self.n_bls = self.n_ants * (self.n_ants + 1) * 2
@@ -130,6 +133,8 @@ class TestReceiver(object):
                         (), format=[('u', 48)], value=self.n_chans)
             ig.add_item(0x100C, 'bls_ordering', "The X-engine baseline output ordering. The form is a list of arrays of strings of user-defined antenna names ('input1','input2'). For example [('antC23x','antC23y'), ('antB12y','antA29y')]",
                 baselines.shape, baselines.dtype, value=baselines)
+            ig.add_item(0x1011, 'center_freq', 'The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.',
+                (), format=[('f', 64)], value=self.center_freq)
             ig.add_item(0x1013, 'bandwidth', 'The analogue bandwidth of the digitally processed signal in Hz.',
                         (), format=[('f', 64)], value=self.adc_sample_rate / 2)
             ig.add_item(0x1015, 'n_accs', 'The number of spectra that are accumulated per integration.',
@@ -155,18 +160,6 @@ class TestReceiver(object):
         self.patcher.stop()
         QueueStream.clear_instances()
         self.loop.close()
-
-    @async_test
-    def test_properties(self):
-        """Check that the computed bandwidth and n_chans properties are correct"""
-        # Start waiting for data. It won't arrive, but this will allow the
-        # metadata to be processed.
-        data_future = trollius.async(self.rx.get(), loop=self.loop)
-        # Give the asynchronous task time to put in the properties
-        yield From(trollius.sleep(0.001, loop=self.loop))
-        assert_equal(856000000, self.rx.bandwidth)
-        assert_equal(4096, self.rx.n_chans)
-        data_future.cancel()
 
     @async_test
     def test_stop(self):

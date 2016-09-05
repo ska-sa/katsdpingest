@@ -4,6 +4,7 @@
 import mock
 import numpy as np
 from katsdpingest import sigproc
+from katsdpingest.utils import Range
 from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
@@ -35,8 +36,8 @@ class TestPrepare(object):
     def test_prepare(self, context, queue):
         """Basic test of data preparation"""
         channels = 73
-        channel_range = (10, 55)
-        keep_channels = channel_range[1] - channel_range[0]
+        channel_range = Range(10, 55)
+        keep_channels = len(channel_range)
         in_baselines = 99
         out_baselines = 91
         scale = 3.625
@@ -66,8 +67,8 @@ class TestPrepare(object):
                 row = permutation[j]
                 if row >= 0:
                     expected_vis[row, i] = value
-                    if i >= channel_range[0] and i < channel_range[1]:
-                        col = i - channel_range[0]
+                    if i in channel_range:
+                        col = i - channel_range.start
                         expected_weights[row, col] = 1.0
         np.testing.assert_equal(expected_vis, vis_out)
         np.testing.assert_equal(expected_weights, weights)
@@ -97,7 +98,7 @@ class TestAccum(object):
         }
 
         template = sigproc.AccumTemplate(context, 1)
-        fn = template.instantiate(queue, 5, [1, 4], 1)
+        fn = template.instantiate(queue, 5, Range(1, 4), 1)
         fn.ensure_all_bound()
         for name, value in host.iteritems():
             fn.buffer(name).set(queue, value)
@@ -118,8 +119,8 @@ class TestAccum(object):
         flag_scale = 2 ** -64
         channels = 203
         baselines = 171
-        channel_range = [7, 198]
-        kept_channels = channel_range[1] - channel_range[0]
+        channel_range = Range(7, 198)
+        kept_channels = len(channel_range)
         outputs = 2
         rs = np.random.RandomState(1)
 
@@ -151,8 +152,8 @@ class TestAccum(object):
         fn()
 
         # Perform the operation on the host
-        kept_vis = vis_in[:, channel_range[0] : channel_range[1]]
-        kept_flags = flags_in[:, channel_range[0] : channel_range[1]]
+        kept_vis = vis_in[:, channel_range.start : channel_range.stop]
+        kept_flags = flags_in[:, channel_range.start : channel_range.stop]
         flagged_weights = weights_in * ((kept_flags == 0) + flag_scale)
         for i in range(outputs):
             vis_out[i] += (kept_vis * flagged_weights).T
@@ -237,7 +238,7 @@ class TestIngestOperation(object):
     @mock.patch('katsdpsigproc.accel.build', spec=True)
     def test_descriptions(self, *args):
         channels = 128
-        channel_range = (16, 96)
+        channel_range = Range(16, 96)
         cbf_baselines = 220
         baselines = 192
 
@@ -345,7 +346,7 @@ class TestIngestOperation(object):
         flags = reduce_flags(flags, axis=0)
 
         # Clip to the channel range
-        rng = slice(channel_range[0], channel_range[1])
+        rng = slice(channel_range.start, channel_range.stop)
         vis = vis[rng, ...]
         weights = weights[rng, ...]
         flags = flags[rng, ...]
@@ -446,8 +447,8 @@ class TestIngestOperation(object):
     def test_random(self, context, queue):
         """Test with random data against a CPU implementation"""
         channels = 128
-        channel_range = (16, 96)
-        kept_channels = channel_range[1] - channel_range[0]
+        channel_range = Range(16, 96)
+        kept_channels = len(channel_range)
         cbf_baselines = 220
         baselines = 192
         cont_factor = 4

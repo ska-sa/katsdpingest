@@ -8,6 +8,7 @@ import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
 import time
+import fractions
 import katsdpingest.sigproc as sp
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
@@ -139,6 +140,111 @@ def _slot_shape(x, split_dtype=None):
     return {'dtype': dtype, 'shape': shape}
 
 
+class ChannelRanges(object):
+    """
+    Tracks the various channel ranges involved in ingest. Each channel range
+    is represented as a pair of integers (start and past-the-end), relative to
+    the full band being correlated by CBF.
+
+    Parameters
+    ----------
+    channels : int
+        Number of input channels from CBF
+    cont_factor : int
+        Number of output channels averaged to produce a continuum output channel
+    sd_cont_factor : int
+        Number of channels averaged to produce a signal display continuum channel
+    streams : int
+        Number of input streams available for subscription (must divide `channels`)
+    guard : int
+        Minimum number of channels to keep on either side of the output for RFI
+        flagging.
+    output : :class:`katsdpingest.utils.Range`
+        Output spectral channel range
+    sd_output : :class:`katsdpingest.utils.Range`
+        Signal display channel range
+
+    Raises
+    ------
+    ValueError
+        if `channels` is not a multiple of `cont_factor`, `sd_cont_factor` and
+        `streams`
+    ValueError
+        if `output` is not aligned to `cont_factor`
+    ValueError
+        if `sd_output` is not aligned to `sd_cont_factor`
+    ValueError
+        if `output` or `sd_output` overflows the whole channel range
+
+    Attributes
+    ----------
+    cont_factor : int
+        Number of output channels averaged to produce a continuum output channel
+    sd_cont_factor : int
+        Number of channels averaged to produce a signal display continuum channel
+    guard : int
+        Minimum number of channels to keep on either side of the output for RFI
+        flagging.
+    cbf : :class:`katsdpingest.utils.Range`
+        The full range of channels correlated by CBF (first element is always
+        0)
+    subscribed : :class:`katsdpingest.utils.Range`
+        The set of channels we receive from the CBF from our multicast
+        subscriptions (subset of `cbf`)
+    input : :class:`katsdpingest.utils.Range`
+        The set of channels transferred to the compute device (subset of
+        `subscribed`).
+    computed : :class:`katsdpingest.utils.Range`
+        The set of channels for which we compute visibilities, flags and
+        weights on the compute device (subset of `input`). This will be inset
+        from `input` by at least `guard`, except where there is insufficient space
+        in `cbf`.
+
+        These channels are all read back to host memory. This
+        range is guaranteed to be a multiple of both the signal display and
+        output continuum factors.
+    output : :class:`katsdpingest.utils.Range`
+        The set of channels contained in the L0 spectral output (subset of
+        `computed`). This range is guaranteed to be a multiple of the output
+        continuum factor.
+    sd_output : :class:`katsdpingest.utils.Range`
+        The set of channels contained in the signal display output (subset of
+        `computed`). This range is guaranteed to be a multiple of the signal
+        display continuum factor.
+    """
+
+    def __init__(self, channels, cont_factor, sd_cont_factor, streams, guard,
+                 output, sd_output):
+        self.cont_factor = cont_factor
+        self.sd_cont_factor = sd_cont_factor
+        self.guard = guard
+        self.cbf = utils.Range(0, channels)
+        if not self.cbf.isaligned(streams):
+            raise ValueError('channel count is not a multiple of the number of streams')
+        if not self.cbf.isaligned(cont_factor):
+            raise ValueError('channel count is not a multiple of the continuum factor')
+        if not self.cbf.isaligned(sd_cont_factor):
+            raise ValueError('channel count is not a multiple of the sd continuum factor')
+        if not output.issubset(self.cbf):
+            raise ValueError('output range overflows full channel range')
+        if not sd_output.issubset(self.cbf):
+            raise ValueError('sd output range overflows full channel range')
+        if not output.isaligned(cont_factor):
+            raise ValueError('output range is not aligned to continuum factor')
+        if not sd_output.isaligned(sd_cont_factor):
+            raise ValueError('sd output range is not aligned to continuum factor')
+        self.output = output
+        self.sd_output = sd_output
+        # Compute least common multiple
+        alignment = cont_factor * sd_cont_factor // fractions.gcd(cont_factor, sd_cont_factor)
+        self.computed = output.union(sd_output).alignto(alignment)
+        self.input = utils.Range(self.computed.start - guard, self.computed.stop + guard)
+        self.input = self.input.intersection(self.cbf)
+        stream_channels = channels // streams
+        self.subscribed = self.input.alignto(stream_channels)
+        assert self.subscribed.issubset(self.cbf)
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -167,7 +273,7 @@ class CBFIngest(object):
     # lists are also used by ingest_autotune.py for pre-tuning standard
     # configurations.
     tune_antennas = [2, 4, 8, 16]
-    tune_channels = [4096, 32768]
+    tune_channels = [4096, 8192, 9216, 32768]
 
     @classmethod
     def _tune_next(cls, value, predef):
@@ -189,7 +295,7 @@ class CBFIngest(object):
         return out
 
     @classmethod
-    def create_proc_template(cls, context, antennas, channels):
+    def create_proc_template(cls, context, antennas, max_channels):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -199,12 +305,12 @@ class CBFIngest(object):
             Context in which to compile device code
         antennas : int
             Number of antennas, *after* any masking
-        channels : int
-            Number of channels, *prior* to any clipping
+        max_channels : int
+            Maximum number of incoming channels to support
         """
         # Quantise to reduce number of options to autotune
         max_antennas = cls._tune_next_antennas(antennas)
-        max_channels = cls._tune_next(channels, cls.tune_channels)
+        max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
@@ -219,7 +325,7 @@ class CBFIngest(object):
                 n_cross, 2 * n_cross]
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
 
-    def __init__(self, opts, proc_template,
+    def __init__(self, opts, channel_ranges, proc_template,
                  my_sensors, telstate, cbf_name, logger):
         self._sdisp_ips = {}
         self._center_freq = None
@@ -232,9 +338,7 @@ class CBFIngest(object):
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
-        self.cont_factor = opts.continuum_factor
-        self.sd_cont_factor = opts.sd_continuum_factor
-        self.channels = opts.cbf_channels
+        self.channel_ranges = channel_ranges
         if opts.antenna_mask is not None:
             self.antenna_mask = set(opts.antenna_mask)
         else:
@@ -266,10 +370,9 @@ class CBFIngest(object):
         self.jobs = resource.JobQueue()
         # Done with blocks
 
-        self.logger.debug("Initialising SPEAD transports at %f" % time.time())
-        self.logger.info("CBF SPEAD stream reception on {0}".format(
-            [str(x) for x in opts.cbf_spead]))
-        self.rx = receiver.Receiver(opts.cbf_spead, telstate, cbf_name)
+        self.rx = receiver.Receiver(
+            opts.cbf_spead, self.channel_ranges.subscribed,
+            len(self.channel_ranges.cbf), telstate, cbf_name)
         self.cbf_attr = self.rx.cbf_attr
         # Instantiation of the output streams delayed until exact integration time is known
         self.tx_spectral = None
@@ -450,14 +553,16 @@ class CBFIngest(object):
             name=('bls_ordering'), id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
+        # Determine bandwidth of the signal display product
+        sd_bandwidth = self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output) / len(self.channel_ranges.cbf)
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=self.rx.bandwidth)
+            shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=self.rx.n_chans)
+            shape=(), dtype=None, format=inline_format, value=len(self.channel_ranges.sd_output))
 
     @trollius.coroutine
     def _initialise(self):
@@ -468,15 +573,11 @@ class CBFIngest(object):
         permutation, self.cbf_attr['bls_ordering'] = \
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
-        channels = self.rx.n_chans
-        channel_range = (0, channels)
         n_accs = self.cbf_attr['n_accs']
         self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 orig_bls_ordering, self.antenna_mask))
-        if channels <= 0:
-            raise ValueError('No channels')
 
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
@@ -503,8 +604,12 @@ class CBFIngest(object):
                 percentile_ranges.append((0, 0))
 
         self.proc = self.proc_template.instantiate(
-                self.command_queue, channels, channel_range, cbf_baselines, baselines,
-                self.cont_factor, self.sd_cont_factor, percentile_ranges,
+                self.command_queue, len(self.channel_ranges.input),
+                self.channel_ranges.computed.relative_to(self.channel_ranges.input),
+                cbf_baselines, baselines,
+                self.channel_ranges.cont_factor,
+                self.channel_ranges.sd_cont_factor,
+                percentile_ranges,
                 threshold_args={'n_sigma': 11.0})
         self.proc.set_scale(1.0 / n_accs)
         self.proc.ensure_all_bound()
@@ -529,22 +634,24 @@ class CBFIngest(object):
         yield From(self._send_sd_data(self.ig_sd.get_start()))
 
         # Initialise the output streams
-        kept_channels = channel_range[1] - channel_range[0]
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         thread_pool = spead2.ThreadPool(2)
+        spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
+        continuum_channels = utils.Range(spectral_channels.start // self.channel_ranges.cont_factor,
+                                         spectral_channels.stop // self.channel_ranges.cont_factor)
         self.tx_spectral = sender.VisSenderSet(
             thread_pool,
             self.spectral_spead_endpoints,
             l0_flavour,
             self._output_avg.int_time,
-            channel_range,
+            spectral_channels,
             baselines)
         self.tx_continuum = sender.VisSenderSet(
             thread_pool,
             self.continuum_spead_endpoints,
             l0_flavour,
             self._output_avg.int_time,
-            (0, kept_channels // self.cont_factor),
+            continuum_channels,
             baselines)
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
@@ -596,7 +703,7 @@ class CBFIngest(object):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
         custom_signals_indices = None
-        mask = None
+        full_mask = None
         if self.telstate is not None:
             try:
                 custom_signals_indices = np.array(
@@ -605,7 +712,7 @@ class CBFIngest(object):
             except KeyError:
                 pass
             try:
-                mask = np.array(
+                full_mask = np.array(
                     self.telstate['sdp_sdisp_timeseries_mask'],
                     dtype=np.float32, copy=False)
             except KeyError:
@@ -613,8 +720,14 @@ class CBFIngest(object):
 
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
-        if mask is None:
-            mask = np.ones(self.channels, np.float32) / self.channels
+        if full_mask is None:
+            n_channels = len(self.channel_ranges.cbf)
+            full_mask = np.ones(n_channels, np.float32) / n_channels
+        # Create mask from full_mask. mask contains a weight for each channel
+        # in computed, but those outside of sd_output are zero.
+        mask = np.zeros(len(self.channel_ranges.computed), np.float32)
+        used = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed)
+        mask[used.asslice()] = full_mask[self.channel_ranges.sd_output.asslice()]
 
         proc_a = self.proc_resource.acquire()
         sd_output_a = self.sd_output_resource.acquire()
@@ -671,22 +784,34 @@ class CBFIngest(object):
 
             # populate new datastructure to supersede sd_data etc
             yield From(resource.async_wait_for_events([transfer_done]))
+            spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
+            cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
+                                        spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             self.ig_sd['sd_timestamp'].value = int(ts * 100)
             if np.all(custom_signals_indices < spec_vis.shape[1]):
                 self.ig_sd['sd_data'].value = \
-                    _split_array(spec_vis, np.float32)[:, custom_signals_indices, :]
+                    _split_array(spec_vis, np.float32)[spec_channels, custom_signals_indices, :]
                 self.ig_sd['sd_data_index'].value = custom_signals_indices
-                self.ig_sd['sd_flags'].value = spec_flags[:, custom_signals_indices]
+                self.ig_sd['sd_flags'].value = spec_flags[spec_channels, custom_signals_indices]
             else:
                 self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
                                  custom_signals_indices)
-            self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis, np.float32)
-            self.ig_sd['sd_blmxflags'].value = cont_flags
+            self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
+            self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-            if self._center_freq is not None:
-                self.ig_sd['center_freq'].value = self._center_freq
+            # Translate CBF-width center_freq to the center_freq for the
+            # signal display product.
+            cbf_center_freq = self._center_freq
+            if cbf_center_freq is None:
+                cbf_center_freq = self.cbf_attr.get('center_freq')
+            if cbf_center_freq is not None:
+                channel_width = self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf)
+                cbf_mid = (self.channel_ranges.cbf.start + self.channel_ranges.cbf.stop) / 2
+                sd_mid = (self.channel_ranges.sd_output.start + self.channel_ranges.sd_output.stop) / 2
+                sd_center_freq = cbf_center_freq + (sd_mid - cbf_mid) * channel_width
+                self.ig_sd['center_freq'].value = sd_center_freq
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
@@ -698,13 +823,18 @@ class CBFIngest(object):
             # Load data
             events = yield From(vis_in_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
-            channel = 0
+            item_channel = self.channel_ranges.subscribed.start
             for item in frame.items:
-                vis_in_buffer.set_region(self.command_queue, item,
-                        np.s_[channel : channel + item.shape[0]],
-                        np.s_[:], blocking=False)
-            vis_in = np.concatenate(frame.items)
-            vis_in_buffer.set_async(self.command_queue, vis_in)
+                item_range = utils.Range(item_channel, item_channel + item.shape[0])
+                item_channel += item.shape[0]
+                use_range = item_range.intersection(self.channel_ranges.input)
+                if not use_range:
+                    continue
+                dest_range = use_range.relative_to(self.channel_ranges.input)
+                src_range = use_range.relative_to(item_range)
+                vis_in_buffer.set_region(
+                    self.command_queue, item,
+                    dest_range.asslice(), src_range.asslice(), blocking=False)
             transfer_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
 
@@ -822,10 +952,12 @@ class CBFIngest(object):
                 acq.ready()
         yield From(self.jobs.finish())
         self.logger.info("CBF ingest complete at %f" % time.time())
-        yield From(self.tx_spectral.stop())
-        self.tx_spectral = None
-        yield From(self.tx_continuum.stop())
-        self.tx_continuum = None
+        if self.tx_spectral is not None:
+            yield From(self.tx_spectral.stop())
+            self.tx_spectral = None
+        if self.tx_continuum is not None:
+            yield From(self.tx_continuum.stop())
+            self.tx_continuum = None
         if self.ig_sd is not None:
             for tx in self._sdisp_ips.itervalues():
                 yield From(self._stop_stream(tx, self.ig_sd))

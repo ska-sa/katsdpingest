@@ -2,6 +2,7 @@
 import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
+from .utils import Range
 
 
 class ZeroTemplate(object):
@@ -91,8 +92,8 @@ class PrepareTemplate(object):
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
-        channel_range = (128, channels - 128)
-        kept_channels = channel_range[1] - channel_range[0]
+        channel_range = Range(128, channels - 128)
+        kept_channels = len(channel_range)
 
         vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
         vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
@@ -145,8 +146,8 @@ class Prepare(accel.Operation):
         Command queue for the operation
     channels : int
         Number of channels
-    channel_range : tuple of two ints
-        Half-open interval of channels that will be written to **weights**
+    channel_range : :class:`Range`
+        Range of channels that will be written to **weights**
     in_baselines : int
         Number of baselines in the input
     out_baselines : int
@@ -174,9 +175,9 @@ class Prepare(accel.Operation):
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
                 (out_baselines, padded_channels), np.complex64)
-        # Channels need to be range-checked anywhere here, so no padding
+        # Channels need to be range-checked anyway here, so no padding
         self.slots['weights'] = accel.IOSlot(
-                (out_baselines, channel_range[1] - channel_range[0]), np.float32)
+                (out_baselines, len(channel_range)), np.float32)
         self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
 
     def set_scale(self, scale):
@@ -203,8 +204,8 @@ class Prepare(accel.Operation):
                     np.int32(vis_out.padded_shape[1]),
                     np.int32(weights.padded_shape[1]),
                     np.int32(vis_in.padded_shape[1]),
-                    np.int32(self.channel_range[0]),
-                    np.int32(self.channel_range[1]),
+                    np.int32(self.channel_range.start),
+                    np.int32(self.channel_range.stop),
                     np.int32(self.in_baselines),
                     np.float32(self.scale)
                 ],
@@ -214,7 +215,7 @@ class Prepare(accel.Operation):
     def parameters(self):
         return {
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'in_baselines': self.in_baselines,
             'out_baselines': self.out_baselines,
             'scale': self.scale
@@ -266,8 +267,8 @@ class AccumTemplate(object):
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
-        channel_range = (128, channels - 128)
-        kept_channels = channel_range[1] - channel_range[0]
+        channel_range = Range(128, channels - 128)
+        kept_channels = len(channel_range)
 
         vis_in = accel.DeviceArray(context, (baselines, channels), np.complex64)
         weights_in = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
@@ -353,12 +354,12 @@ class Accum(accel.Operation):
         self.channels = channels
         self.channel_range = channel_range
         self.baselines = baselines
-        kept_channels = channel_range[1] - channel_range[0]
+        kept_channels = len(channel_range)
         padded_kept_channels = accel.Dimension(kept_channels, tilex)
         padded_baselines = accel.Dimension(baselines, tiley)
         padded_channels = accel.Dimension(
             channels,
-            min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range[0]))
+            min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range.start))
         self.slots['vis_in'] = accel.IOSlot(
                 (padded_baselines, padded_channels), np.complex64)
         self.slots['weights_in'] = accel.IOSlot(
@@ -385,9 +386,9 @@ class Accum(accel.Operation):
             np.int32(buffers[0].padded_shape[1]),
             np.int32(buffers[-3].padded_shape[1]),
             np.int32(buffers[-2].padded_shape[1]),
-            np.int32(self.channel_range[0])]
+            np.int32(self.channel_range.start)]
 
-        kept_channels = self.channel_range[1] - self.channel_range[0]
+        kept_channels = len(self.channel_range)
         block = self.template.block
         tilex = block * self.template.vtx
         tiley = block * self.template.vty
@@ -404,7 +405,7 @@ class Accum(accel.Operation):
         return {
             'outputs': self.template.outputs,
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines
         }
 
@@ -571,9 +572,9 @@ class IngestTemplate(object):
         Template for RFI flagging. It must have transposed flag outputs.
     percentile_sizes : list of int
         Set of number of baselines per percentile calculation. These do not need to exactly
-        match the actual sizes of the ranges passed to the instance. The smaller template
+        match the actual sizes of the ranges passed to the instance. The smallest template
         that is big enough will be used, so an exact match is best for good performance,
-        and there must be one that is at least big enough.
+        and there must be at least one that is big enough.
     """
 
     flag_names = ['reserved0', 'static', 'cam', 'reserved3', 'ingest_rfi',
@@ -654,8 +655,8 @@ class IngestOperation(accel.OperationSequence):
         Command queue for the operation
     channels : int
         Number of channels
-    channel_range : tuple of two ints
-        Half-open interval of channels that will be written to **weights**
+    channel_range : :class:`Range`
+        Range of channels that will be written to **weights**
     cbf_baselines : int
         Number of baselines received from CBF
     baselines : int
@@ -673,13 +674,23 @@ class IngestOperation(accel.OperationSequence):
         Extra keyword arguments to pass to the noise estimation instantiation
     threshold_args : dict, optional
         Extra keyword arguments to pass to the threshold instantiation
+
+    Raises
+    ------
+    ValueError
+        if the length of `channel_range` values is not a multiple of
+        `cont_factor` and `sd_cont_factor`
     """
     def __init__(
             self, template, command_queue, channels, channel_range,
             cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
-        kept_channels = channel_range[1] - channel_range[0]
+        if len(channel_range) % cont_factor:
+            raise ValueError('channel_range length is not a multiple of cont_factor')
+        if len(channel_range) % sd_cont_factor:
+            raise ValueError('channel_range length is not a multiple of sd_cont_factor')
+        kept_channels = len(channel_range)
         self.template = template
         self.prepare = template.prepare.instantiate(
                 command_queue, channels, channel_range, cbf_baselines, baselines)

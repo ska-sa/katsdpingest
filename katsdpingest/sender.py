@@ -6,6 +6,7 @@ import spead2.send.trollius
 import logging
 import trollius
 from trollius import From
+from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -34,12 +35,12 @@ class VisSender(object):
         SPEAD flavour to use on `stream`
     int_time : float
         Time between dumps, in seconds
-    channel_range : tuple of 2 ints
-        Range of channel numbers to be placed into this stream
+    channel_range : :class:`katsdpingest.utils.Range`
+        Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
     baselines : number of baselines in output
     """
     def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, baselines):
-        channels = channel_range[1] - channel_range[0]
+        channels = len(channel_range)
         dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + np.dtype(np.uint8).itemsize)
         # Scaling by 1.1 is to account for network overheads and to allow
         # catchup if we temporarily fall behind the rate.
@@ -73,7 +74,7 @@ class VisSender(object):
     def send(self, vis, flags, ts_rel):
         """Asynchronously send visibilities to the receiver, returning a
         future."""
-        idx = np.s_[self._channel_range[0] : self._channel_range[1]]
+        idx = self._channel_range.asslice()
         self._ig['correlator_data'].value = vis[idx]
         self._ig['flags'].value = flags[idx]
         self._ig['timestamp'].value = ts_rel
@@ -82,20 +83,20 @@ class VisSender(object):
 
 class VisSenderSet(object):
     """Manages a collection of :class:`VisSender` objects, and provides similar
-    function that work collectively on all the streams.
+    functions that work collectively on all the streams.
     """
     def __init__(self, thread_pool, endpoints, flavour, int_time, channel_range, baselines):
-        channels = channel_range[1] - channel_range[0]
+        channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
             raise ValueError('Number of channels not evenly divisible by number of endpoints')
         sub_channels = channels // n
         self._senders = []
         for i in range(n):
-            a = channel_range[0] + i * sub_channels
+            a = channel_range.start + i * sub_channels
             b = a + sub_channels
             self._senders.append(
-                VisSender(thread_pool, endpoints[i], flavour, int_time, (a, b), baselines))
+                VisSender(thread_pool, endpoints[i], flavour, int_time, Range(a, b), baselines))
 
     @trollius.coroutine
     def start(self):
