@@ -35,7 +35,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         cf &= f;
         float scale = 1.0f / w;
         if (f)
-            *wptr = 0.0f;
+            *wptr = 1.8446744e19f * w;  // scale by 2^64, to compensate for previous 2^-64
         v.x *= scale;
         v.y *= scale;
         *vptr = v;
@@ -45,7 +45,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     cv.x *= scale;
     cv.y *= scale;
     if (cf)
-        cw = 0.0f;
+        cw *= 1.8446744e19;     // scale by 2^64, to compensate for previous 2^-64
     int cont_addr = cont_channel * stride + baseline;
     cont_vis[cont_addr] = cv;
     cont_weights[cont_addr] = cw;

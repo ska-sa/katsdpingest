@@ -208,15 +208,16 @@ class TestPostproc(object):
 
         # Compute expected spectral values
         expected_vis = vis_in / weights_in
-        # Flagged visibilities have their weights set to zero
-        expected_weights = weights_in * (flags_in == 0)
 
         # Compute expected continuum values.
         indices = range(0, channels, cont_factor)
         cont_weights = np.add.reduceat(weights_in, indices, axis=0)
         cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
         cont_flags = reduceat_flags(flags_in, indices, axis=0)
-        cont_weights *= (cont_flags == 0)
+
+        # Flagged visibilities have their weights re-scaled
+        expected_weights = weights_in * ((flags_in != 0) * np.float32(2**64) + 1)
+        cont_weights *= (cont_flags != 0) * np.float32(2**64) + 1
 
         # Verify results
         np.testing.assert_allclose(expected_vis, fn.buffer('vis').get(queue), rtol=1e-5)
@@ -229,6 +230,36 @@ class TestPostproc(object):
     @force_autotune
     def test_autotune(self, context, queue):
         sigproc.PostprocTemplate(context)
+
+
+class TestCompressWeights(object):
+    """Tests for :class:`katsdpingest.sigproc.CompressWeights`"""
+    @device_test
+    def test_simple(self, context, queue):
+        """Test with random data against a CPU implementation"""
+        channels = 123
+        baselines = 235
+        rs = np.random.RandomState(1)
+        weights_in = rs.uniform(0.01, 1000.0, (channels, baselines)).astype(np.float32)
+
+        template = sigproc.CompressWeightsTemplate(context)
+        fn = template.instantiate(queue, channels, baselines)
+        fn.ensure_all_bound()
+        fn.buffer('weights_in').set(queue, weights_in)
+        fn.buffer('weights_out').zero(queue)
+        fn.buffer('weights_channel').zero(queue)
+        fn()
+
+        expected_channel = np.max(weights_in, axis=1) * np.float32(1.0 / 255.0)
+        scale = np.reciprocal(expected_channel)[..., np.newaxis]
+        expected_out = (weights_in * scale).astype(np.uint8)
+        np.testing.assert_allclose(expected_channel, fn.buffer('weights_channel').get(queue), rtol=1e-5)
+        np.testing.assert_equal(expected_out, fn.buffer('weights_out').get(queue))
+
+    @device_test
+    @force_autotune
+    def test_autotune(self, context, queue):
+        sigproc.CompressWeightsTemplate(context)
 
 
 class TestIngestOperation(object):
@@ -277,8 +308,14 @@ class TestIngestOperation(object):
             ('ingest:flagger:threshold', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.ThresholdSimpleDevice', 'flag_value': 16, 'n_sigma': 11.0, 'transposed': True}),
             ('ingest:flagger:transpose_flags', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)}),
             ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'outputs': 2}),
-            ('ingest:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8}),
-            ('ingest:sd_postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16}),
+            ('ingest:finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
+            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8}),
+            ('ingest:finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
+            ('ingest:finalise:compress_weights_cont', {'baselines': 192, 'channels': 10, 'class': 'katsdpingest.sigproc.CompressWeights'}),
+            ('ingest:sd_finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
+            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16}),
+            ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
+            ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192)}),
             ('ingest:percentile0', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (0, 8), 'is_amplitude': False, 'max_columns': 8, 'shape': (80, 192)}),
             ('ingest:percentile0_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (0, 8), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)}),
@@ -287,6 +324,18 @@ class TestIngestOperation(object):
         ]
         self.maxDiff = None
         assert_equal(expected, fn.descriptions())
+
+    def finalise_host(self, vis, flags, weights):
+        """Does the final steps of run_host_basic, for either the continuum or spectral
+        product. The inputs are modified in-place.
+        """
+        vis /= weights
+        weights *= (flags != 0) * np.float32(2**64) + 1
+        weights_channel = np.max(weights, axis=1) * np.float32(1.0 / 255.0)
+        inv_weights_channel = np.float32(1.0) / weights_channel
+        weights = (weights * inv_weights_channel[..., np.newaxis]).astype(np.uint8)
+        return vis, flags, weights, weights_channel
+
 
     def run_host_basic(self, vis, scale, permutation, cont_factor, channel_range, n_sigma):
         """Simple CPU implementation. All inputs and outputs are channel-major.
@@ -357,18 +406,20 @@ class TestIngestOperation(object):
         cont_weights = np.add.reduceat(weights, indices, axis=0)
         cont_flags = reduceat_flags(flags, indices, axis=0)
 
-        # Division by weight, and set weight to zero where flagged
-        vis /= weights
-        weights *= (flags == 0)
-        cont_vis /= cont_weights
-        cont_weights *= (cont_flags == 0)
+        # Finalisation
+        spec_vis, spec_flags, spec_weights, spec_weights_channel = \
+            self.finalise_host(vis, flags, weights)
+        cont_vis, cont_flags, cont_weights, cont_weights_channel = \
+            self.finalise_host(cont_vis, cont_flags, cont_weights)
         return {
-            'spec_vis': vis,
-            'spec_weights': weights,
-            'spec_flags': flags,
+            'spec_vis': spec_vis,
+            'spec_flags': spec_flags,
+            'spec_weights': spec_weights,
+            'spec_weights_channel': spec_weights_channel,
             'cont_vis': cont_vis,
+            'cont_flags': cont_flags,
             'cont_weights': cont_weights,
-            'cont_flags': cont_flags
+            'cont_weights_channel': cont_weights_channel
         }
 
     def run_host(
@@ -487,14 +538,16 @@ class TestIngestOperation(object):
         fn.buffer('permutation').set(queue, permutation)
         fn.buffer('timeseries_weights').set(queue, timeseries_weights)
 
-        data_keys = ['spec_vis', 'spec_weights', 'spec_flags',
-                     'cont_vis', 'cont_weights', 'cont_flags']
+        data_keys = ['spec_vis', 'spec_weights', 'spec_weights_channel', 'spec_flags',
+                     'cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags']
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
                    'timeseries']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))
+        for name in data_keys + sd_keys:
+            fn.buffer(name).zero(queue)
 
         actual = {}
         fn.start_sum()

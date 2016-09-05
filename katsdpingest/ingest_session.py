@@ -676,10 +676,11 @@ class CBFIngest(object):
             proc_a.ready([proc_done])
 
             # Transfer (TODO: use pre-allocated pinned memory, with corresponding resource)
-            spec_flags = proc.buffer('spec_flags').get_async(self.command_queue)
-            spec_vis = proc.buffer('spec_vis').get_async(self.command_queue)
-            cont_flags = proc.buffer('cont_flags').get_async(self.command_queue)
-            cont_vis = proc.buffer('cont_vis').get_async(self.command_queue)
+            spec = sender.Data()
+            cont = sender.Data()
+            for field in ['vis', 'flags', 'weights', 'weights_channel']:
+                setattr(spec, field, proc.buffer('spec_' + field).get_async(self.command_queue))
+                setattr(cont, field, proc.buffer('cont_' + field).get_async(self.command_queue))
             transfer_done = self.command_queue.enqueue_marker()
             # Prepare for the next group (which only touches the output
             # buffers).
@@ -691,11 +692,11 @@ class CBFIngest(object):
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             # Shift to the centre of the dump
             ts_rel += 0.5 * self.cbf_attr['int_time']
-            self.output_bytes += spec_flags.nbytes + spec_vis.nbytes + cont_flags.nbytes + cont_vis.nbytes
+            self.output_bytes += spec.nbytes + cont.nbytes
             yield From(resource.async_wait_for_events([transfer_done]))
             yield From(trollius.gather(
-                self.tx_spectral.send(spec_vis, spec_flags, ts_rel),
-                self.tx_continuum.send(cont_vis, cont_flags, ts_rel)))
+                self.tx_spectral.send(spec, ts_rel),
+                self.tx_continuum.send(cont, ts_rel)))
             self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
                 timestamps, time.time()))
 
