@@ -72,7 +72,7 @@ DATA_SENSORS = [
     Sensor('cbf_corr_n_chans', immutable=True),
     Sensor('cbf_corr_n_inputs', immutable=True),
     Sensor('cbf_corr_scale_factor_timestamp', immutable=True),
-    Sensor('cbf_corr_sync_epoch', immutable=True),
+    Sensor('cbf_corr_synch_epoch', immutable=True),
     Sensor('cbf_version_list', immutable=True),
     Sensor('loaded_delay_correction'),
     Sensor('spmc_version_list', immutable=True)
