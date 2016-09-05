@@ -338,7 +338,7 @@ class AutoWeights(accel.Operation):
     def parameters(self):
         return {
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines,
             'inputs': self.inputs,
             'n_accs': self.n_accs
@@ -653,7 +653,7 @@ class Accum(accel.Operation):
         return {
             'outputs': self.template.outputs,
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines
         }
 

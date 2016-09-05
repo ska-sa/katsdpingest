@@ -362,7 +362,7 @@ class TestIngestOperation(object):
         expected = [
             ('ingest', {'class': 'katsdpingest.sigproc.IngestOperation'}),
             ('ingest:prepare', {'channels': 128, 'class': 'katsdpingest.sigproc.Prepare', 'in_baselines': 220, 'out_baselines': 192, 'n_accs': 1}),
-            ('ingest:auto_weights', {'baselines': 192, 'channel_range': Range(16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.AutoWeights', 'inputs': 32, 'n_accs': 1}),
+            ('ingest:auto_weights', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.AutoWeights', 'inputs': 32, 'n_accs': 1}),
             ('ingest:init_weights', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.InitWeights', 'inputs': 32}),
             ('ingest:zero_spec', {'class': 'katsdpingest.sigproc.Zero'}),
             ('ingest:zero_spec:zero_vis', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'float2', 'dtype': 'complex64', 'shape': (80, 192), 'value': 0j}),
@@ -379,7 +379,7 @@ class TestIngestOperation(object):
             ('ingest:flagger:noise_est', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.NoiseEstMADTDevice', 'max_channels': 10240}),
             ('ingest:flagger:threshold', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.ThresholdSimpleDevice', 'flag_value': 16, 'n_sigma': 11.0, 'transposed': True}),
             ('ingest:flagger:transpose_flags', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)}),
-            ('ingest:accum', {'baselines': 192, 'channel_range': Range(16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'outputs': 2}),
+            ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'outputs': 2}),
             ('ingest:finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
             ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8}),
             ('ingest:finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
