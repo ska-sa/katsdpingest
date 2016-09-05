@@ -215,7 +215,7 @@ class Prepare(accel.Operation):
     def parameters(self):
         return {
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'in_baselines': self.in_baselines,
             'out_baselines': self.out_baselines,
             'scale': self.scale
@@ -405,7 +405,7 @@ class Accum(accel.Operation):
         return {
             'outputs': self.template.outputs,
             'channels': self.channels,
-            'channel_range': self.channel_range,
+            'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines
         }
 

@@ -59,7 +59,7 @@ def parse_opts():
     parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
     parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--output-channels', type=range_str, help='output spectral channels, in format A:B [default=all]')
-    parser.add_argument('--sd-output-channels', type=range_str, help='signal displat channels, in format A:B [default=all]')
+    parser.add_argument('--sd-output-channels', type=range_str, help='signal display channels, in format A:B [default=all]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
