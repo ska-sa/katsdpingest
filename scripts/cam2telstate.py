@@ -279,9 +279,9 @@ class Client(object):
                 else:
                     self._pool_resources.set_result(resources)
         else:
-            if status == 'unknown':
-                self._logger.warn("Sensor {} received update '{}' with status 'unknown' (ignored)"
-                                  .format(name, value))
+            if status not in ['nominal', 'warn', 'error']:
+                self._logger.warn("Sensor {} received update '{}' with status '{}' (ignored)"
+                                  .format(name, value, status))
             elif name in self._sensors:
                 sensor = self._sensors[name]
                 try:
