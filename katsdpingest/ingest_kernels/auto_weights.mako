@@ -7,7 +7,7 @@
 KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void auto_weights(
     GLOBAL float * RESTRICT weights,
     const GLOBAL float * RESTRICT vis,
-    const GLOBAL unsigned short * RESTRICT baseline_map,
+    const GLOBAL unsigned short * RESTRICT input_auto_baseline,
     int weights_stride,
     int vis_stride,
     int inputs,
@@ -18,7 +18,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void auto_weights(
     int input = get_global_id(1);
     if (input >= inputs)
         return;
-    int baseline = baseline_map[input];
+    int baseline = input_auto_baseline[input];
     int out_idx = input * weights_stride + channel;
     int in_idx = (baseline * vis_stride + channel + channel_start) * 2;
     weights[out_idx] = scale / vis[in_idx];

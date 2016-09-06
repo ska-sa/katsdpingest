@@ -244,19 +244,19 @@ class AutoWeightsTemplate(object):
 
         vis = accel.DeviceArray(context, (baselines, channels), np.complex64)
         weights = accel.DeviceArray(context, (inputs, channels), np.float32)
-        baseline_map = accel.DeviceArray(context, (inputs,), np.uint16)
+        input_auto_baseline = accel.DeviceArray(context, (inputs,), np.uint16)
 
-        h_baseline_map = baseline_map.empty_like()
+        h_input_auto_baseline = input_auto_baseline.empty_like()
         for i in range(antennas):
-            h_baseline_map[2 * i] = i * (i + 1) * 2
-            h_baseline_map[2 * i + 1] = i * (i + 1) * 2 + 3
+            h_input_auto_baseline[2 * i] = i * (i + 1) * 2
+            h_input_auto_baseline[2 * i + 1] = i * (i + 1) * 2 + 3
         vis.set(queue, np.ones(vis.shape, np.complex64))
-        baseline_map.set(queue, h_baseline_map)
+        input_auto_baseline.set(queue, h_input_auto_baseline)
 
         def generate(wgsx, wgsy):
             fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(
                 queue, channels, Range(0, channels), inputs, baselines)
-            fn.bind(vis=vis, weights=weights, baseline_map=baseline_map)
+            fn.bind(vis=vis, weights=weights, input_auto_baseline=input_auto_baseline)
             return tune.make_measure(queue, fn)
         return tune.autotune(
             generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
@@ -277,7 +277,7 @@ class AutoWeights(accel.Operation):
         Input visibilities
     **weights** : inputs × kept-channels, float32
         Output square roots of auto-correlation weights
-    **baseline_map** : inputs, uint16
+    **input_auto_baseline** : inputs, uint16
         Baseline containing the autocorrelations for each input
 
     Parameters
@@ -313,18 +313,18 @@ class AutoWeights(accel.Operation):
                 np.complex64)
         self.slots['weights'] = accel.IOSlot(
                 (inputs, accel.Dimension(len(channel_range), template.wgsx)), np.float32)
-        self.slots['baseline_map'] = accel.IOSlot(
+        self.slots['input_auto_baseline'] = accel.IOSlot(
                 (inputs,), np.uint16)
 
     def _run(self):
         vis = self.buffer('vis')
         weights = self.buffer('weights')
-        baseline_map = self.buffer('baseline_map')
+        input_auto_baseline = self.buffer('input_auto_baseline')
         self.command_queue.enqueue_kernel(
             self.kernel, [
                 weights.buffer,
                 vis.buffer,
-                baseline_map.buffer,
+                input_auto_baseline.buffer,
                 np.int32(weights.padded_shape[1]),
                 np.int32(vis.padded_shape[1]),
                 np.int32(self.inputs),
@@ -380,24 +380,24 @@ class InitWeightsTemplate(object):
 
         auto_weights = accel.DeviceArray(context, (inputs, channels), np.float32)
         weights = accel.DeviceArray(context, (baselines, channels), np.float32)
-        input_map = accel.DeviceArray(context, (baselines, 2), np.uint16)
+        baseline_inputs = accel.DeviceArray(context, (baselines, 2), np.uint16)
 
-        h_input_map = input_map.empty_like()
+        h_baseline_inputs = baseline_inputs.empty_like()
         next_idx = 0
         for i in range(antennas):
             for j in range(i, antennas):
                 for p in range(2):
                     for q in range(2):
-                        h_input_map[next_idx, 0] = 2 * i + p
-                        h_input_map[next_idx, 1] = 2 * j + q
+                        h_baseline_inputs[next_idx, 0] = 2 * i + p
+                        h_baseline_inputs[next_idx, 1] = 2 * j + q
                         next_idx += 1
-        input_map.set(queue, h_input_map)
+        baseline_inputs.set(queue, h_baseline_inputs)
         auto_weights.set(queue, np.ones(auto_weights.shape, np.float32))
 
         def generate(wgsx, wgsy):
             fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(
                 queue, channels, inputs, baselines)
-            fn.bind(weights=weights, auto_weights=auto_weights, input_map=input_map)
+            fn.bind(weights=weights, auto_weights=auto_weights, baseline_inputs=baseline_inputs)
             return tune.make_measure(queue, fn)
         return tune.autotune(
             generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
@@ -415,7 +415,7 @@ class InitWeights(accel.Operation):
         Output weights
     **auto_weights** : inputs × channels, float32
         Input square roots of autocorrelation weights
-    **input_map : inputs × 2, uint16
+    **baseline_inputs : inputs × 2, uint16
         The indices of the two inputs making up each baseline
 
     Parameters
@@ -442,18 +442,18 @@ class InitWeights(accel.Operation):
                 (baselines, accel.Dimension(channels, template.wgsx)), np.float32)
         self.slots['auto_weights'] = accel.IOSlot(
                 (inputs, accel.Dimension(channels, template.wgsx)), np.float32)
-        self.slots['input_map'] = accel.IOSlot(
+        self.slots['baseline_inputs'] = accel.IOSlot(
                 (baselines, accel.Dimension(2, exact=True)), np.uint16)
 
     def _run(self):
         weights = self.buffer('weights')
         auto_weights = self.buffer('auto_weights')
-        input_map = self.buffer('input_map')
+        baseline_inputs = self.buffer('baseline_inputs')
         self.command_queue.enqueue_kernel(
             self.kernel, [
                 weights.buffer,
                 auto_weights.buffer,
-                input_map.buffer,
+                baseline_inputs.buffer,
                 np.int32(weights.padded_shape[1]),
                 np.int32(auto_weights.padded_shape[1]),
                 np.int32(self.baselines)
@@ -1064,9 +1064,9 @@ class IngestOperation(accel.OperationSequence):
         Input visibilities from the correlator
     **permutation** : baselines, int16
         Permutation mapping original to new baseline index
-    **baseline_map** : inputs, uint16
+    **input_auto_baseline** : inputs, uint16
         Maps inputs to their baselines, post-permutation
-    **input_map** : baselines × 2, uint16
+    **baseline_inputs** : baselines × 2, uint16
         Maps post-permutation baselines to their inputs
     **timeseries_weights** : kept-channels, float32
         Per-channel weights for timeseries averaging
@@ -1233,8 +1233,8 @@ class IngestOperation(accel.OperationSequence):
                 'vis_t':        ['prepare:vis_out', 'auto_weights:vis',
                                  'transpose_vis:src', 'accum:vis_in'],
                 'auto_weights': ['auto_weights:weights', 'init_weights:auto_weights'],
-                'baseline_map': ['auto_weights:baseline_map'],
-                'input_map':    ['init_weights:input_map'],
+                'input_auto_baseline': ['auto_weights:input_auto_baseline'],
+                'baseline_inputs': ['init_weights:baseline_inputs'],
                 'weights':      ['init_weights:weights', 'accum:weights_in'],
                 'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
                 'deviations':   ['flagger:deviations'],

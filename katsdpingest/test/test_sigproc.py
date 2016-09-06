@@ -87,14 +87,14 @@ class TestAutoWeights(object):
         rs = np.random.RandomState(seed=1)
         vis = (rs.standard_normal((baselines, channels)) +
                rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
-        baseline_map = rs.permutation(baselines)[:inputs].astype(np.uint16)
+        input_auto_baseline = rs.permutation(baselines)[:inputs].astype(np.uint16)
 
         template = sigproc.AutoWeightsTemplate(context)
         fn = template.instantiate(queue, channels, channel_range, inputs, baselines)
         fn.n_accs = n_accs
         fn.ensure_all_bound()
         fn.buffer('vis').set(queue, vis)
-        fn.buffer('baseline_map').set(queue, baseline_map)
+        fn.buffer('input_auto_baseline').set(queue, input_auto_baseline)
         fn.buffer('weights').zero(queue)
         fn()
         weights = fn.buffer('weights').get(queue)
@@ -103,7 +103,7 @@ class TestAutoWeights(object):
         expected = np.zeros_like(weights)
         scale = np.float32(np.sqrt(n_accs))
         for i in range(inputs):
-            expected[i, :] = scale / vis[baseline_map[i], channel_range.asslice()].real
+            expected[i, :] = scale / vis[input_auto_baseline[i], channel_range.asslice()].real
         np.testing.assert_allclose(expected, weights)
 
     @device_test
@@ -124,13 +124,13 @@ class TestInitWeights(object):
 
         rs = np.random.RandomState(seed=1)
         auto_weights = rs.uniform(1.0, 2.0, size=(inputs, channels)).astype(np.float32)
-        input_map = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
 
         template = sigproc.InitWeightsTemplate(context)
         fn = template.instantiate(queue, channels, inputs, baselines)
         fn.ensure_all_bound()
         fn.buffer('auto_weights').set(queue, auto_weights)
-        fn.buffer('input_map').set(queue, input_map)
+        fn.buffer('baseline_inputs').set(queue, baseline_inputs)
         fn.buffer('weights').zero(queue)
         fn()
         weights = fn.buffer('weights').get(queue)
@@ -138,7 +138,7 @@ class TestInitWeights(object):
         assert_equal((baselines, channels), weights.shape)
         expected = np.zeros_like(weights)
         for i in range(baselines):
-            expected[i, :] = auto_weights[input_map[i, 0], :] * auto_weights[input_map[i, 1], :]
+            expected[i, :] = auto_weights[baseline_inputs[i, 0], :] * auto_weights[baseline_inputs[i, 1], :]
         np.testing.assert_allclose(expected, weights)
 
     @device_test
@@ -409,7 +409,8 @@ class TestIngestOperation(object):
         return vis, flags, weights, weights_channel
 
 
-    def run_host_basic(self, vis, n_accs, permutation, baseline_map, input_map,
+    def run_host_basic(self, vis, n_accs, permutation,
+                       input_auto_baseline, baseline_inputs,
                        cont_factor, channel_range, n_sigma):
         """Simple CPU implementation. All inputs and outputs are channel-major.
         There is no support for separate cadences for main and signal display
@@ -424,9 +425,9 @@ class TestIngestOperation(object):
             Number of correlations accumulated in `vis`
         permutation : sequence
             Maps input baseline numbers to output numbers (with -1 indicating discard)
-        baseline_map : sequence
+        input_auto_baseline : sequence
             Maps input signal to its post-permutation baseline
-        input_map : sequence of pairs
+        baseline_inputs : sequence of pairs
             Maps baseline to pair of input signals
         cont_factor : int
             Number of spectral channels per continuum channel
@@ -461,8 +462,8 @@ class TestIngestOperation(object):
         vis = new_vis
         # Compute initial weights
         for i in range(new_baselines):
-            bl1 = baseline_map[input_map[i][0]]
-            bl2 = baseline_map[input_map[i][1]]
+            bl1 = input_auto_baseline[baseline_inputs[i][0]]
+            bl2 = input_auto_baseline[baseline_inputs[i][1]]
             with np.errstate(divide='ignore'):
                 weights[..., i] = np.float32(n_accs) / ((vis[..., bl1].real * vis[..., bl2].real))
                 weights = np.where(np.isfinite(weights), weights, np.float32(2**-64))
@@ -507,7 +508,8 @@ class TestIngestOperation(object):
         }
 
     def run_host(
-            self, vis, n_vis, n_sd_vis, scale, permutation, baseline_map, input_map,
+            self, vis, n_vis, n_sd_vis, scale, permutation,
+            input_auto_baseline, baseline_inputs,
             cont_factor, sd_cont_factor, channel_range,
             n_sigma, timeseries_weights, percentile_ranges):
         """Simple CPU implementation. All inputs and outputs are channel-major.
@@ -526,9 +528,9 @@ class TestIngestOperation(object):
             Scale factor for integral visibilities
         permutation : sequence
             Maps input baseline numbers to output numbers (with -1 indicating discard)
-        baseline_map : sequence
+        input_auto_baseline : sequence
             Maps input signal to its post-permutation baseline
-        input_map : sequence of pairs
+        baseline_inputs : sequence of pairs
             Maps baseline to pair of input signals
         cont_factor : int
             Number of spectral channels per continuum channel
@@ -555,10 +557,10 @@ class TestIngestOperation(object):
             - percentileN (where N is a non-negative integer)
         """
         expected = self.run_host_basic(
-            vis[:n_vis], scale, permutation, baseline_map, input_map,
+            vis[:n_vis], scale, permutation, input_auto_baseline, baseline_inputs,
             cont_factor, channel_range, n_sigma)
         sd_expected = self.run_host_basic(
-            vis[:n_sd_vis], scale, permutation, baseline_map, input_map,
+            vis[:n_sd_vis], scale, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, n_sigma)
         for (name, value) in sd_expected.iteritems():
             expected['sd_' + name] = value
@@ -608,13 +610,13 @@ class TestIngestOperation(object):
             rs.random_integers(-1000, 1000, (dumps, channels, cbf_baselines, 2)).astype(np.int32)
         permutation = rs.permutation(cbf_baselines).astype(np.int16)
         permutation[permutation >= baselines] = -1
-        baseline_map = rs.permutation(baselines)[:inputs].astype(np.uint16)
-        input_map = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
-        # Make sure input_map is consistent with baseline_map
+        input_auto_baseline = rs.permutation(baselines)[:inputs].astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        # Make sure baseline_inputs is consistent with input_auto_baseline
         for i in range(inputs):
-            input_map[baseline_map, :] = i
+            baseline_inputs[input_auto_baseline, :] = i
         # Make the designated autocorrelations look like autocorrelations (non-negative real)
-        for baseline in baseline_map:
+        for baseline in input_auto_baseline:
             orig_baseline = list(permutation).index(baseline)
             vis_in[..., orig_baseline, 0] = \
                 rs.random_integers(0, 100, (dumps, channels)).astype(np.int32)
@@ -639,8 +641,8 @@ class TestIngestOperation(object):
         fn.ensure_all_bound()
         fn.n_accs = n_accs
         fn.buffer('permutation').set(queue, permutation)
-        fn.buffer('baseline_map').set(queue, baseline_map)
-        fn.buffer('input_map').set(queue, input_map)
+        fn.buffer('input_auto_baseline').set(queue, input_auto_baseline)
+        fn.buffer('baseline_inputs').set(queue, baseline_inputs)
         fn.buffer('timeseries_weights').set(queue, timeseries_weights)
 
         data_keys = ['spec_vis', 'spec_weights', 'spec_weights_channel', 'spec_flags',
@@ -670,7 +672,8 @@ class TestIngestOperation(object):
                     actual[name] = fn.buffer(name).get(queue)
 
         expected = self.run_host(
-                vis_in, dumps, sd_dumps, n_accs, permutation, baseline_map, input_map,
+                vis_in, dumps, sd_dumps, n_accs, permutation,
+                input_auto_baseline, baseline_inputs,
                 cont_factor, sd_cont_factor, channel_range, n_sigma,
                 timeseries_weights, percentile_ranges)
 
