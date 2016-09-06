@@ -117,16 +117,20 @@ def configure_logging():
 
 def parse_args():
     parser = katsdptelstate.ArgumentParser()
-    parser.add_argument('--subarray-numeric-id', required=True, type=int, help='Subarray number')
-    parser.add_argument('--url', required=True, type=str, help='WebSocket URL to connect to')
+    parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
+    parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
-    if not args.telstate:
-        print('--telstate is required', file=sys.stderr)
-        parser.print_help()
-        sys.exit(1)
+    # Can't use required= on the parser, because telstate-provided arguments
+    # are treated only as defaults rather than having set a value.
+    if args.telstate is None:
+        parser.error('argument --telstate is required')
+    if args.subarray_numeric_id is None:
+        parser.error('argument --subarray-numeric-id is required')
+    if args.url is None:
+        parser.error('argument --url is required')
     return args
 
 
