@@ -72,17 +72,16 @@ def main():
 
     devices = []
     db_filename = None
-    if old is None:
-        command = ['ingest_autotune.py']
-    else:
-        # put_archive makes the cache owned by root. The archive is put in
-        # a temporary directory and we copy it to where it should go.
+    # put_archive makes the cache owned by root. To deal with this, we run as
+    # root, then fix up permissions afterwards.
+    command = ['sh', '-c', 'HOME=/home/kat ingest_autotune.py && chown -R kat:kat /home/kat/.cache']
     for device in glob.glob('/dev/nvidia*'):
         devices.append('{device}:{device}'.format(device=device))
     try:
         container = cli.create_container(
                 image=args.base_image,
                 command=command,
+                user='root',
                 host_config=cli.create_host_config(devices=devices))
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
@@ -104,7 +103,9 @@ def main():
             if result == 0:
                 msg = 'Autotuning run at {}'.format(datetime.datetime.now().isoformat())
                 image, tag = split_tag(args.image)
-                cli.commit(container_id, image, tag, msg)
+                # Passing 'USER kat' sets the user back to kat, since we
+                # override it to root earlier.
+                cli.commit(container_id, image, tag, msg, changes='USER kat')
                 print('Committed to', args.image)
                 return 0
             else:
