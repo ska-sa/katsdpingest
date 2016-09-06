@@ -72,7 +72,11 @@ def main():
 
     devices = []
     db_filename = None
-    command = ['ingest_autotune.py']
+    if old is None:
+        command = ['ingest_autotune.py']
+    else:
+        # put_archive makes the cache owned by root. The archive is put in
+        # a temporary directory and we copy it to where it should go.
     for device in glob.glob('/dev/nvidia*'):
         devices.append('{device}:{device}'.format(device=device))
     try:

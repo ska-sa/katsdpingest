@@ -13,12 +13,45 @@ import katsdpingest.sigproc as sp
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
-import katsdpdisp.data as sdispdata
 import katsdptelstate
 import logging
 import trollius
 from trollius import From
 from . import utils, receiver, sender
+
+
+def get_collection_products(bls_ordering):
+    """
+    This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`.
+    """
+    auto = []
+    autohh = []
+    autovv = []
+    autohv = []
+    cross = []
+    crosshh = []
+    crossvv = []
+    crosshv = []
+    for ibls, bls in enumerate(bls_ordering):
+        if bls[0][:-1] == bls[1][:-1]:       # auto
+            if bls[0][-1] == bls[1][-1]:     # autohh or autovv
+                auto.append(ibls)
+                if bls[0][-1] == 'h':
+                    autohh.append(ibls)
+                else:
+                    autovv.append(ibls)
+            else:                            # autohv or vh
+                autohv.append(ibls)
+        else:                                # cross
+            if bls[0][-1] == bls[1][-1]:     # crosshh or crossvv
+                cross.append(ibls)
+                if bls[0][-1] == 'h':
+                    crosshh.append(ibls)
+                else:
+                    crossvv.append(ibls)
+            else:                            # crosshv or vh
+                crosshv.append(ibls)
+    return [auto, autohh, autovv, autohv, cross, crosshh, crossvv, crosshv]
 
 
 class _TimeAverage(object):
@@ -614,7 +647,7 @@ class CBFIngest(object):
             self._sd_avg.ratio))
 
         # configure the signal processing blocks
-        collection_products = sdispdata.set_bls(self.cbf_attr['bls_ordering'])[0]
+        collection_products = get_collection_products(self.cbf_attr['bls_ordering'])
         percentile_ranges = []
         for p in collection_products:
             if p:

@@ -23,6 +23,7 @@ def autotune_device(device):
 
 
 def main():
+    logging.basicConfig(level='INFO')
     logging.getLogger('katsdpsigproc.tune').setLevel(logging.INFO)
     for device in accel.all_devices():
         autotune_device(device)

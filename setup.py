@@ -61,7 +61,6 @@ setup(
         'ipaddress',
         'katcp',
         'katsdpsigproc',
-        'katsdpdisp',
         'katsdpfilewriter',
         'katsdptelstate',
         'psutil',
