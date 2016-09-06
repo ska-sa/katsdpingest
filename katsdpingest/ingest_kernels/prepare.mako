@@ -6,14 +6,10 @@
 
 KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
     GLOBAL float2 * RESTRICT vis_out,
-    GLOBAL float * RESTRICT weights,
     const GLOBAL int2 * RESTRICT vis_in,
     const GLOBAL short * RESTRICT permutation,
     int vis_out_stride,
-    int weights_stride,
     int vis_in_stride,
-    int channel_start,
-    int channel_end,
     int baselines,
     float scale)
 {
@@ -37,9 +33,6 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
     /* Write value back to memory, applying baseline permutation.
      * Due to the permutation, we now have to check for out-of-range
      * baseline, but not channel.
-     *
-     * For now the weights are all set to 1, but this may change with
-     * Van Vleck correction.
      */
     <%transpose:transpose_store coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         if (${r} < baselines)
@@ -49,11 +42,6 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
             {
                 float2 vis = values.arr[${lr}][${lc}];
                 vis_out[baseline * vis_out_stride + ${c}] = vis;
-                if (${c} >= channel_start && ${c} < channel_end)
-                {
-                    int weight_addr = baseline * weights_stride + ${c} - channel_start;
-                    weights[weight_addr] = 1.0f;
-                }
             }
         }
     </%transpose:transpose_store>
