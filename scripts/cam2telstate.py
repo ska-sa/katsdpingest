@@ -15,6 +15,9 @@ import re
 import numpy as np
 
 
+STATUS_KEY = 'sdp_cam2telstate_status'
+
+
 def comma_split(value):
     return value.split(',')
 
@@ -44,6 +47,7 @@ class Sensor(object):
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
         self.convert = convert
+        self.waiting = True     #: Waiting for an initial value
 
     def prefix(self, cam_prefix, sp_prefix=None):
         """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
@@ -169,6 +173,7 @@ class Client(object):
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
         self._data_name = None    #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
+        self._waiting = 0         #: Number of sensors whose initial value is still outstanding
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
@@ -238,19 +243,26 @@ class Client(object):
         yield self._active
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
+    def set_status(self, status):
+        self._telstate.add(STATUS_KEY, status)
+
     @tornado.gen.coroutine
     def start(self):
         try:
+            self.set_status('connecting')
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
+            self.set_status('waiting for subarray activation')
             # Wait to be sure that the subarray is fully activated
             yield self.wait_active()
+            self.set_status('initialising')
             # First find out which resources are allocated to the subarray
             yield self.get_pool_resources()
             # Now we can tell which sensors to subscribe to
             self._sensors = {x.cam_name: x for x in self.get_sensors()}
 
+            self._waiting = len(self._sensors)
             status = yield self._portal_client.subscribe(
                 self._args.namespace, self._sensors.keys())
             self._logger.info("Subscribed to %d channels", status)
@@ -264,6 +276,9 @@ class Client(object):
                 else:
                     self._logger.error("Failed to set sampling strategy on %s: %s",
                                        sensor.cam_name, result[u'info'])
+                    # Not going to get any values, so don't wait for it
+                    self._waiting -= 1
+                    sensor.waiting = False
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
                 signal.signal(
                     signal_number,
@@ -274,6 +289,27 @@ class Client(object):
             self._loop.stop()
         else:
             self._logger.info("Startup complete")
+
+    def sensor_update(self, sensor, value, status, timestamp):
+        name = sensor.cam_name
+        if status not in ['nominal', 'warn', 'error']:
+            self._logger.warn("Sensor {} received update '{}' with status '{}' (ignored)"
+                              .format(name, value, status))
+            return
+        try:
+            if sensor.convert is not None:
+                value = sensor.convert(value)
+        except Exception:
+            self._logger.warn('Failed to convert %s, ignoring (value was %r)',
+                              name, value, exc_info=True)
+            return
+        try:
+            self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
+            self._logger.debug('Updated %s to %s with timestamp %s',
+                               sensor.sp_name, value, timestamp)
+        except katsdptelstate.ImmutableKeyError as e:
+            self._logger.error('Failed to set %s to %s with timestamp %s',
+                               sensor.sp_name, value, timestamp, exc_info=True)
 
     def process_update(self, item):
         self._logger.debug("Received update %s", pprint.pformat(item))
@@ -289,6 +325,7 @@ class Client(object):
         if name == 'subarray_{}_state'.format(self._args.subarray_numeric_id):
             if not self._active.done() and value == 'active' and status == 'nominal':
                 self._active.set_result(None)
+            return
         elif name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
@@ -305,29 +342,25 @@ class Client(object):
                         'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
                 else:
                     self._pool_resources.set_result(resources)
+        if self._sensors is None:
+            return
+        if name not in self._sensors:
+            self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
+                               .format(name, value))
         else:
-            if status not in ['nominal', 'warn', 'error']:
-                self._logger.warn("Sensor {} received update '{}' with status '{}' (ignored)"
-                                  .format(name, value, status))
-            elif name in self._sensors:
-                sensor = self._sensors[name]
-                if sensor.convert is not None:
-                    try:
-                        value = sensor.convert(value)
-                    except Exception:
-                        self._logger.warn('Failed to convert %s, ignoring (value was %r)',
-                                          name, value, exc_info=True)
-                        return
-                try:
-                    self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
-                    self._logger.debug('Updated %s to %s with timestamp %s',
-                                       sensor.sp_name, value, timestamp)
-                except katsdptelstate.ImmutableKeyError as e:
-                    self._logger.error('Failed to set %s to %s with timestamp %s',
-                                       sensor.sp_name, value, timestamp, exc_info=True)
-            else:
-                self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
-                                   .format(name, value))
+            sensor = self._sensors[name]
+            last = False
+            if sensor.waiting:
+                sensor.waiting = False
+                self._waiting -= 1
+                if self._waiting == 0:
+                    last = True
+            try:
+                self.sensor_update(sensor, value, status, timestamp)
+            finally:
+                if last:
+                    self._logger.info('Initial values for all sensors seen')
+                    self.set_status('ready')
 
     def update_callback(self, msg):
         self._logger.debug("update_callback: %s", pprint.pformat(msg))
