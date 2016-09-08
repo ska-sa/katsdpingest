@@ -12,17 +12,38 @@ import katsdptelstate
 import six
 import signal
 import re
+import numpy as np
+
+
+def comma_split(value):
+    return value.split(',')
 
 
 class Sensor(object):
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
+
+    Parameters
+    ----------
+    cam_name : str
+        Name of the sensor to pass to katportalclient
+    sp_name : str, optional
+        Name of the sensor within katsdptelstate (defaults to `cam_name`)
+    sampling_strategy_and_params : str, optional
+        Sampling method to pass to katportalclient
+    immutable : bool, optional
+        Passed to :meth:`katsdptelstate.TelescopeState.add`
+    convert : callable, optional
+        If provided, it is used to transform the sensor value before storing
+        it in telescope state.
     """
-    def __init__(self, cam_name, sp_name=None, sampling_strategy_and_params='event', immutable=False):
+    def __init__(self, cam_name, sp_name=None, sampling_strategy_and_params='event',
+                 immutable=False, convert=None):
         self.cam_name = cam_name
         self.sp_name = sp_name or cam_name
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
+        self.convert = convert
 
     def prefix(self, cam_prefix, sp_prefix=None):
         """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
@@ -35,7 +56,8 @@ class Sensor(object):
         return Sensor(cam_prefix + '_' + self.cam_name,
                       sp_prefix + '_' + self.sp_name,
                       self.sampling_strategy_and_params,
-                      self.immutable)
+                      self.immutable,
+                      self.convert)
 
 
 # Per-receptor sensors, without the prefix for the receptor name
@@ -65,7 +87,7 @@ DATA_SENSORS = [
     Sensor('auto_delay_enabled'),
     Sensor('cbf_corr_adc_sample_rate', immutable=True),
     Sensor('cbf_corr_bandwidth', immutable=True),
-    Sensor('cbf_corr_baseline_ordering', immutable=True),
+    Sensor('cbf_corr_baseline_ordering', immutable=True, convert=np.safe_eval),
     Sensor('cbf_corr_center_frequency', immutable=True),
     Sensor('cbf_corr_integration_time', immutable=True),
     Sensor('cbf_corr_n_accs', immutable=True),
@@ -74,6 +96,7 @@ DATA_SENSORS = [
     Sensor('cbf_corr_scale_factor_timestamp', immutable=True),
     Sensor('cbf_corr_synch_epoch', immutable=True),
     Sensor('cbf_version_list', immutable=True),
+    Sensor('input_labels', immutable=True, convert=comma_split),
     Sensor('loaded_delay_correction'),
     Sensor('spmc_version_list', immutable=True)
 ]
@@ -288,6 +311,13 @@ class Client(object):
                                   .format(name, value, status))
             elif name in self._sensors:
                 sensor = self._sensors[name]
+                if sensor.convert is not None:
+                    try:
+                        value = sensor.convert(value)
+                    except Exception:
+                        self._logger.warn('Failed to convert %s, ignoring (value was %r)',
+                                          name, value, exc_info=True)
+                        return
                 try:
                     self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
                     self._logger.debug('Updated %s to %s with timestamp %s',
