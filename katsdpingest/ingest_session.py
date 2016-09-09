@@ -288,6 +288,8 @@ class CBFIngest(object):
     ----------
     vis_in_resource : :class:`katsdpsigproc.resource.Resource`
         Resource wrapping the `vis_in` device buffer
+    channel_flags_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `channel_flags` device buffer
     timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
         Resource wrapping the `timeseries_weights` device buffer
     output_resource : :class:`katsdpsigproc.resource.Resource`
@@ -397,6 +399,7 @@ class CBFIngest(object):
         self.proc = None
         self.proc_resource = None
         self.vis_in_resource = None
+        self.channel_flags_resource = None
         self.timeseries_weights_resource = None
         self.output_resource = None
         self.sd_output_resource = None
@@ -670,7 +673,6 @@ class CBFIngest(object):
                 threshold_args={'n_sigma': 11.0})
         self.proc.n_accs = n_accs
         self.proc.ensure_all_bound()
-        self.proc.buffer('channel_flags').zero(self.command_queue)
         self.proc.buffer('permutation').set(
             self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.buffer('input_auto_baseline').set(
@@ -682,6 +684,7 @@ class CBFIngest(object):
         # Set up resources
         self.proc_resource = resource.Resource(self.proc)
         self.vis_in_resource = resource.Resource(self.proc.buffer('vis_in'))
+        self.channel_flags_resource = resource.Resource(self.proc.buffer('channel_flags'))
         self.timeseries_weights_resource = resource.Resource(self.proc.buffer('timeseries_weights'))
         self.output_resource = resource.Resource(None)
         self.sd_output_resource = resource.Resource(None)
@@ -881,23 +884,47 @@ class CBFIngest(object):
                 timestamps, time.time()))
 
     @trollius.coroutine
-    def _frame_job(self, proc_a, vis_in_a, frame):
-        with proc_a as proc, vis_in_a as vis_in_buffer:
+    def _frame_job(self, proc_a, vis_in_a, channel_flags_a, frame):
+        with proc_a as proc, \
+             vis_in_a as vis_in_buffer, \
+             channel_flags_a as channel_flags_buffer:
             # Load data
-            events = yield From(vis_in_a.wait())
+            events = (yield From(vis_in_a.wait())) + (yield From(channel_flags_a.wait()))
             self.command_queue.enqueue_wait_for_events(events)
+            # First channel of the current item
             item_channel = self.channel_ranges.subscribed.start
+            # We only receive frames with at least one populated item, so we
+            # can always find out the number of channels per item
+            channels_per_item = None
             for item in frame.items:
-                item_range = utils.Range(item_channel, item_channel + item.shape[0])
-                item_channel += item.shape[0]
+                if item is not None:
+                    channels_per_item = item.shape[0]
+                    break
+            assert channels_per_item is not None
+            if not frame.ready():
+                # We want missing data to be zero-filled. katsdpsigproc doesn't
+                # currently have a zero_region, and device bandwidth is so much
+                # higher than PCIe transfer bandwidth that it doesn't really
+                # cost much more to zero-fill the entire buffer.
+                vis_in_buffer.zero(self.command_queue)
+            channel_flags = channel_flags_buffer.empty_like()
+            channel_flags.fill(0)
+            data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
+            for item in frame.items:
+                item_range = utils.Range(item_channel, item_channel + channels_per_item)
+                item_channel = item_range.stop
+                channel_flags_range = item_range.intersection(self.channel_ranges.computed)
+                if item is None:
+                    channel_flags[channel_flags_range.asslice()] = data_lost_flag
                 use_range = item_range.intersection(self.channel_ranges.input)
-                if not use_range:
+                if not use_range or item is None:
                     continue
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
                 vis_in_buffer.set_region(
                     self.command_queue, item,
                     dest_range.asslice(), src_range.asslice(), blocking=False)
+            channel_flags_buffer.set_async(self.command_queue, channel_flags)
             transfer_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
 
@@ -907,6 +934,7 @@ class CBFIngest(object):
             proc()
             done_event = self.command_queue.enqueue_marker()
             vis_in_a.ready([done_event])
+            channel_flags_a.ready([done_event])
             proc_a.ready([done_event])
 
             # Keep vis_in live until the transfer is complete
@@ -980,11 +1008,12 @@ class CBFIngest(object):
 
             proc_a = self.proc_resource.acquire()
             vis_in_a = self.vis_in_resource.acquire()
+            channel_flags_a = self.channel_flags_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # enqueuing its work before trying to carry on.
             yield From(proc_a.wait())
             self.input_bytes += frame.nbytes
-            self.jobs.add(self._frame_job(proc_a, vis_in_a, frame))
+            self.jobs.add(self._frame_job(proc_a, vis_in_a, channel_flags_a, frame))
 
             # Done with reading this frame
             idx += 1

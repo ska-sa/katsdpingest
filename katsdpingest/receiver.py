@@ -330,8 +330,17 @@ class Receiver(object):
                                     data_ts, stream_idx)
                     continue
                 while data_ts >= ts0 + self._interval * self.active_frames:
-                    _logger.warning('Frame with timestamp %d is incomplete, discarding', ts0)
+                    frame = self._frames[0]
                     self._pop_frame()
+                    if frame.empty():
+                        _logger.warning('Frame with timestamp %d is empty, discarding', ts0)
+                    else:
+                        expected = len(frame.items)
+                        actual = sum(item is not None for item in frame.items)
+                        _logger.warning('Frame with timestamp %d is %d/%d complete', ts0,
+                                        actual, expected)
+                        yield From(self._frames_complete.put(frame))
+                    del frame   # Free it up, particularly if discarded
                     yield From(self._flush_frames())
                     ts0 = self._frames[0].timestamp
                 frame_idx = (data_ts - ts0) // self._interval

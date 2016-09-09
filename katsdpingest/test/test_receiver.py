@@ -235,7 +235,7 @@ class TestReceiver(object):
             (1, 0), (2, 2),
             # Finish frame 0; frames 0, 1 should flush
             (0, 2),
-            # Jump ahead by more than the window; frames 2-4 should be dropped
+            # Jump ahead by more than the window; frames 2-4 should be flushed/dropped
             (7, 0),
             # Finish off frame 2; should be discarded
             (2, 0), (2, 1), (2, 3),
@@ -265,12 +265,15 @@ class TestReceiver(object):
         xeng_raw, timestamps = self._make_data(n_frames)
         send_future = trollius.async(self._send_out_of_order(xeng_raw, timestamps), loop=self.loop)
         try:
-            for t in [0, 1, 6, 8]:
+            for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []), (8, [])]:
                 frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
                 assert_equal(timestamps[t], frame.timestamp)
                 assert_equal(self.n_xengs, len(frame.items))
                 for i in range(self.n_xengs):
-                    np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
+                    if i in missing:
+                        assert_is_none(frame.items[i])
+                    else:
+                        np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
                 yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
         finally:
