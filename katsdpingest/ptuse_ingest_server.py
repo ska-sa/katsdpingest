@@ -88,6 +88,8 @@ class _CaptureSession(object):
         self._speadmeta_process = None
         self._dada_header_process = None
 
+        _logger.info(args.telstate.get("cbf_sync_time"))
+
         self._create_dada_buffer()
         self._create_dada_header()
         _logger.info("Created dada_buffer\n")
@@ -205,7 +207,7 @@ class _CaptureSession(object):
         with open("/tmp/digifits.log","a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="%s.writing"%self.save_dir
             )
 
     def get_dspsr_args(self, backend_args):
@@ -282,17 +284,17 @@ class _CaptureSession(object):
         _logger.info(passed_args)
 
         self.save_dir = "/data/%.0far"%time.time()
-        os.mkdir(self.save_dir)
+        os.mkdir("%s.writing"%self.save_dir)
  
         with open("/tmp/dspsr.log","a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
             cmd = ["numactl","-C","4","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd=self.save_dir
+            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="%s.writing"%self.save_dir
             )
 
-    def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.3.30", pol_h_port = 7148):
+    def _create_metaspead (self, pol_h_host = "10.100.205.11", pol_h_mcast = "239.9.23.31", pol_h_port = 7148):
         print ("IN METADATA")
         cmd = ["meerkat_speadmeta", pol_h_host, pol_h_mcast, "-p", "%d"%pol_h_port]
 
@@ -359,47 +361,49 @@ class _CaptureSession(object):
         print ("capture_process+++++++______!!")
         _logger.info("IN METADATA")
         cmd = ["meerkat_speadmeta", _get_interface_address("p4p1"), beam_y_multicast, "-p", data_port]
+        _logger.info(cmd)
         self.run = True
         #keys = [kv[0].split(' ', 1)[0] for kv in args.telstate.get_range('obs_params', st=0)]
         #values = [eval(kv[0].split(' ', 1)[1]) for kv in t.get_range('obs_params', st=0)]
         #obs_params = dict(zip(keys, values))
         #_logger.info(obs_params)
-
-        with open("/tmp/metadata.log","w") as logfile: 
-            self._speadmeta_process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile
-            )
+        import re
+        #timestamp_regex = re.compile("\D\d{10}\D")
+        #with open("/tmp/metadata.log","w+") as logfile: 
+        #    self._speadmeta_process = subprocess.Popen(
+        #    cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile
+        #    )
 
         #error, adc_sync_time = self._speadmeta_process.communicate()
         #self._speadmeta_process = None
         #_logger.info((error,adc_sync_time))
-        content = ""
-        with open("/tmp/metadata.log","r") as metafile:
-            content = metafile.read()
-            _logger.info("content is %s"%content)
-            count = 0
-            while count < 5000 and content == "":
-                count+=1
-                time.sleep(0.1)
-                content = metafile.read()
-                _logger.info("content is %s"%content)
+        #content = ""
+        #with open("/tmp/metadata.log","r") as metafile:
+        #    content = metafile.read()
+        #    _logger.info("content is %s"%content)
+        #    count = 0
+        #    while count < 500 and timestamp_regex.search(content) is None:
+        #        count+=1
+        #        time.sleep(0.1)
+        #        content = metafile.read()
+        #        _logger.info("content is %s"%content)
             #print(self._speadmeta_process.poll())
 
-        if content == "":
-            self._speadmeta_process.kill()
-            self._speadmeta_process = None
-            _logger.info("metadata packet did not arrive by timeout")
-            self.run == False
-            return
-        _logger.info("passed exit")
+        #if timestamp_regex.search(content) is None:
+        #    self._speadmeta_process.kill()
+        #    self._speadmeta_process = None
+        #    _logger.info("metadata packet did not arrive by timeout")
+        #    self.run == False
+        #    return
+        #_logger.info("passed exit")
         #_logger.info(dir(self._metadata_process))
 
         #error, adc_sync_time = self._speadmeta_process.communicate()
         #self._speadmeta_process = None
-        split_content = content.splitlines()
-        _logger.info(content)
-        adc_sync_time = split_content[-1]
-        _logger.info(adc_sync_time)
+        #split_content = content.splitlines()
+        #_logger.info(content)
+        #adc_sync_time = split_content[-1]
+        #_logger.info(adc_sync_time)
         #adc_sync_time = content
 
         #keys = [kv[0].split(' ', 1)[0] for kv in t.get_range('obs_params', st=0)]
@@ -407,9 +411,10 @@ class _CaptureSession(object):
         #obs_params = dict(zip(keys, values))
 
 
-        import re
-        replace = "ADC_SYNC_TIME %s"%adc_sync_time.strip()
+        #import re
+        replace = "ADC_SYNC_TIME %s"%self.args.telstate.get("cbf_sync_time")
         content = ""
+        #timestamp_regex = re.compile("\d{10}")
         if halfband:
             c_file = '/home/kat/hardware_cbf_2048chan_2pol.cfg'
         else:
@@ -449,7 +454,7 @@ class _CaptureSession(object):
         #    print ("metadata packet did not arrive by timeout")
         #    return
  
-        _logger.info("meta complete with ts = %s"%adc_sync_time)
+        _logger.info("meta complete with ts = %s"%self.args.telstate.get("cbf_sync_time"))
         self._speadmeta_process = None
         self.startTime=time.strftime("%Y-%m%dT%H:%M:%S")
         cap_env = os.environ.copy()
@@ -465,9 +470,9 @@ class _CaptureSession(object):
         )
 
         _logger.info("capture started_________________------12-----!!")
-        #import signal
-        _logger.info ("obs_length")
-        _logger.info(obs_length - 5)
+        ##import signal
+        #_logger.info ("obs_length")
+        #_logger.info(obs_length - 5)
         #time.sleep(int(obs_length-2))
         #_logger.info("kill cap--------------11!!--------------------")
         #time.sleep(1)
@@ -502,7 +507,7 @@ class _CaptureSession(object):
             self._capture_process.send_signal(signal.SIGINT)
             _logger.info(self._capture_process.communicate())
             self.capture_log.close()
-        time.sleep(5)
+        #time.sleep(5)
         if self._dada_dbdisk_process is not None and self._dada_dbdisk_process.poll() is None:
             self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process is not None and self._digifits_process.poll() is None:
@@ -524,7 +529,7 @@ class _CaptureSession(object):
        
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'): 
-            obs_info = open ("%s/obs_info.dat"%self.save_dir, "w+")
+            obs_info = open ("%s.writing/obs_info.dat"%self.save_dir, "w+")
             script_args = self.args.telstate.get('obs_script_arguments')
             obs_info.write ("observer;%s\n"%script_args['observer'])
             obs_info.write ("program_block_id;%s\n"%script_args["program_block_id"])
@@ -544,9 +549,9 @@ class _CaptureSession(object):
 
         if self.backend and self.backend == 'digifits':
             try:
-                data_files = os.listdir(self.save_dir)
+                data_files = os.listdir("%s.writing"%self.save_dir)
                 _logger.info(data_files)
-                data = pyfits.open("%s/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
+                data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
                 target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
                 _logger.info(target)
                 hduPrimary=data[0].header
@@ -579,7 +584,7 @@ class _CaptureSession(object):
                 hduSubint["NCHNOFFS"] = 0 
             except:
                 _logger.info("Oh no failed header update")
-
+        os.rename("%s.writing"%self.save_dir,self.save_dir)
         _logger.info("KILLED ALL CAPTURE PROCESSES")
         #yield From(self._run_future)
 
