@@ -670,6 +670,7 @@ class CBFIngest(object):
                 threshold_args={'n_sigma': 11.0})
         self.proc.n_accs = n_accs
         self.proc.ensure_all_bound()
+        self.proc.buffer('channel_flags').zero(self.command_queue)
         self.proc.buffer('permutation').set(
             self.command_queue, np.asarray(permutation, dtype=np.int16))
         self.proc.buffer('input_auto_baseline').set(

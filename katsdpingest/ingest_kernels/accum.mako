@@ -27,6 +27,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
     const GLOBAL float2 * RESTRICT in_vis,
     const GLOBAL float * RESTRICT in_weights,
     const GLOBAL unsigned char * RESTRICT in_flags,
+    const GLOBAL unsigned char * RESTRICT channel_flags,
     int out_stride,
     int in_full_stride,
     int in_kept_stride,
@@ -55,13 +56,16 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
         float2 vis = local_vis.arr[${lr}][${lc}];
         float weight = local_weights.arr[${lr}][${lc}];
         unsigned int flag = local_flags.arr[${lr}][${lc}];
+        flag |= channel_flags[${r}];
         if (flag != 0)
             weight *= 5.42101086e-20f;  // 2^-64
+        else
+            flag = ${unflagged_bit};
         int addr = ${r} * out_stride + ${c};
 % for i in range(outputs):
         accum_vis(&out_vis${i}[addr], vis, weight);
         out_weights${i}[addr] += weight;
-        out_flags${i}[addr] &= flag;
+        out_flags${i}[addr] |= flag;
 % endfor
     </%transpose:transpose_store>
 }
