@@ -584,7 +584,10 @@ class _CaptureSession(object):
                 hduSubint["NCHNOFFS"] = 0 
             except:
                 _logger.info("Oh no failed header update")
-        os.rename("%s.writing"%self.save_dir,self.save_dir)
+        try:
+            os.rename("%s.writing"%self.save_dir,self.save_dir)
+        except:
+            _logger.info ("No save_dir, never started capturing data")
         _logger.info("KILLED ALL CAPTURE PROCESSES")
         #yield From(self._run_future)
 
