@@ -23,7 +23,6 @@ import katsdptelstate
 
 
 logger = logging.getLogger("katsdpingest.ingest")
-cbf_logger = logging.getLogger("katsdpingest.cbf_ingest")
 opts = None
 
 
@@ -63,11 +62,10 @@ def parse_opts():
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
-    parser.add_argument('-p', '--port', dest='port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
-    parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
-    parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
-                        help='level to use for basic logging or name of logging configuration file; '
-                        'default is /log/log.<SITENAME>.conf')
+    parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
+    parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
+    parser.add_argument('-l', '--log-level', type=str, default='INFO', metavar='LEVEL',
+                        help='log level to use [default=%(default)s]')
     opts = parser.parse_args()
     if opts.output_channels is None:
         opts.output_channels = Range(0, opts.cbf_channels)
@@ -82,8 +80,6 @@ class IngestDeviceServer(DeviceServer):
 
     Parameters
     ----------
-    logger : `logging.Logger`
-        Logger for log messages
     sdisp_endpoints : list of `katsdptelstate.endpoint.Endpoint`
         Endpoints for signal display data
     antennas : int
@@ -97,8 +93,7 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
-    def __init__(self, logger, sdisp_endpoints, antennas, channel_ranges, *args, **kwargs):
-        self.logger = logger
+    def __init__(self, sdisp_endpoints, antennas, channel_ranges, *args, **kwargs):
         # reference to the CBF ingest session
         self.cbf_session = None
         self.sdisp_ips = {}
@@ -188,7 +183,7 @@ class IngestDeviceServer(DeviceServer):
 
         self.cbf_session = CBFIngest(
                 opts, self.channel_ranges, self.proc_template,
-                self._my_sensors, opts.telstate, 'cbf', cbf_logger)
+                self._my_sensors, opts.telstate, 'cbf')
         # add in existing signal display recipients...
         for (ip, port) in self.sdisp_ips.iteritems():
             self.cbf_session.add_sdisp_ip(ip, port)
@@ -282,8 +277,6 @@ def on_shutdown(server):
     # is an exception in the shutdown path.
     for sig in [signal.SIGINT, signal.SIGTERM]:
         trollius.get_event_loop().remove_signal_handler(sig)
-        trollius.get_event_loop().remove_signal_handler(sig)
-    logger = logging.getLogger("katsdpingest.ingest")
     logger.info("Shutting down katsdpingest server...")
     yield From(to_asyncio_future(server.handle_interrupt()))
     yield From(to_asyncio_future(server.stop()))
@@ -301,14 +294,7 @@ def main():
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
-
-    logger.setLevel(logging.INFO)
-
-    # configure SPEAD to display warnings about dropped packets etc...
-    logging.getLogger('spead2').setLevel(logging.WARNING)
-
-    cbf_logger.setLevel(logging.INFO)
-    cbf_logger.info("CBF ingest logging started")
+    logging.root.setLevel(opts.log_level)
 
     ioloop = AsyncIOMainLoop()
     ioloop.install()
@@ -317,7 +303,7 @@ def main():
     channel_ranges = ChannelRanges(
         opts.cbf_channels, opts.continuum_factor, opts.sd_continuum_factor,
         len(opts.cbf_spead), 64, opts.output_channels, opts.sd_output_channels)
-    server = IngestDeviceServer(logger, opts.sdisp_spead, antennas,
+    server = IngestDeviceServer(opts.sdisp_spead, antennas,
                                 channel_ranges,
                                 opts.host, opts.port)
     server.set_concurrency_options(thread_safe=False, handler_thread=False)
