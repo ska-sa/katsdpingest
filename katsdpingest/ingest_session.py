@@ -20,6 +20,9 @@ from trollius import From
 from . import utils, receiver, sender
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_collection_products(bls_ordering):
     """
     This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`.
@@ -359,13 +362,12 @@ class CBFIngest(object):
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
 
     def __init__(self, opts, channel_ranges, proc_template,
-                 my_sensors, telstate, cbf_name, logger):
+                 my_sensors, telstate, cbf_name):
         self._sdisp_ips = {}
         self._center_freq = None
         self._run_future = None
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
-        self.logger = logger
         self.spectral_spead_endpoints = opts.l0_spectral_spead
         self.continuum_spead_endpoints = opts.l0_continuum_spead
         self.sd_spead_rate = opts.sd_spead_rate
@@ -413,9 +415,9 @@ class CBFIngest(object):
 
     def enable_debug(self, debug):
         if debug:
-            self.logger.setLevel(logging.DEBUG)
+            logger.setLevel(logging.DEBUG)
         else:
-            self.logger.setLevel(logging.INFO)
+            logger.setLevel(logging.INFO)
 
     def _send_sd_data(self, data):
         """Send a heap to all signal display servers, asynchronously.
@@ -525,7 +527,7 @@ class CBFIngest(object):
         KeyError
             if `ip` is not currently in the list
         """
-        self.logger.info("Removing ip %s from the signal display list." % (ip))
+        logger.info("Removing ip %s from the signal display list." % (ip))
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
         if self.ig_sd is not None:
@@ -549,7 +551,7 @@ class CBFIngest(object):
         if ip in self._sdisp_ips:
             raise ValueError('{0} is already in the active list of recipients'.format(ip))
         config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
-        self.logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
+        logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
         self._sdisp_ips[ip] = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
 
     def set_center_freq(self, center_freq):
@@ -639,12 +641,12 @@ class CBFIngest(object):
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
         self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
-        self.logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
+        logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
         self._sd_avg.flush = self._flush_sd
-        self.logger.info("Averaging {0} input dumps per signal display dump".format(
-            self._sd_avg.ratio))
+        logger.info("Averaging {0} input dumps per signal display dump".format(
+                    self._sd_avg.ratio))
 
         # configure the signal processing blocks
         collection_products = get_collection_products(self.cbf_attr['bls_ordering'])
@@ -758,8 +760,8 @@ class CBFIngest(object):
             yield From(trollius.gather(
                 self.tx_spectral.send(spec, ts_rel),
                 self.tx_continuum.send(cont, ts_rel)))
-            self.logger.info("Finished dump group with raw timestamps {0} (local: {1:.3f})".format(
-                timestamps, time.time()))
+            logger.info("Finished dump group with raw timestamps {0}".format(
+                        timestamps))
 
     def _flush_sd(self, timestamps):
         """Finalise averaging of a group of dumps for signal display, and send
@@ -808,7 +810,7 @@ class CBFIngest(object):
             try:
                 timeseries_weights.set_async(self.command_queue, mask)
             except Exception:
-                self.logger.warn('Failed to set timeseries_weights', exc_info=True)
+                logger.warn('Failed to set timeseries_weights', exc_info=True)
 
             # Compute
             events = yield From(proc_a.wait())
@@ -856,8 +858,8 @@ class CBFIngest(object):
                 self.ig_sd['sd_data_index'].value = custom_signals_indices
                 self.ig_sd['sd_flags'].value = spec_flags[spec_channels, custom_signals_indices]
             else:
-                self.logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
-                                 custom_signals_indices)
+                logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                            custom_signals_indices)
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
@@ -876,8 +878,8 @@ class CBFIngest(object):
                 self.ig_sd['center_freq'].value = sd_center_freq
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
-            self.logger.info("Finished SD group with raw timestamps {0} (local: {1:.3f})".format(
-                timestamps, time.time()))
+            logger.info("Finished SD group with raw timestamps {0}".format(
+                        timestamps))
 
     @trollius.coroutine
     def _frame_job(self, proc_a, vis_in_a, frame):
@@ -945,7 +947,7 @@ class CBFIngest(object):
                     # Drop last references to all the objects
                     self.proc = None
         except Exception:
-            self.logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
+            logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
     @trollius.coroutine
@@ -995,9 +997,9 @@ class CBFIngest(object):
                 self.output_bytes = 0
                 rate_timer = time.time()
             tt = time.time() - st
-            self.logger.info(
-                "Captured CBF frame with timestamp %i (local: %.3f, process_time: %.2f, index: %i)",
-                current_ts, tt+st, tt, idx)
+            logger.info(
+                "Captured CBF frame with timestamp %i (process_time: %.2f, index: %i)",
+                current_ts, tt, idx)
             # Clear completed processing, so that any related exceptions are
             # thrown as soon as possible.
             self.jobs.clean()
@@ -1013,7 +1015,7 @@ class CBFIngest(object):
                 self._sd_avg.finish()
                 acq.ready()
         yield From(self.jobs.finish())
-        self.logger.info("CBF ingest complete at %f" % time.time())
+        logger.info("CBF ingest complete")
         if self.tx_spectral is not None:
             yield From(self.tx_spectral.stop())
             self.tx_spectral = None
@@ -1024,7 +1026,7 @@ class CBFIngest(object):
             for tx in self._sdisp_ips.itervalues():
                 yield From(self._stop_stream(tx, self.ig_sd))
         if self.proc is not None:   # Could be None if no heaps arrived
-            self.logger.debug("\nProcessing Blocks\n=================\n")
+            logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
-                self.logger.debug("\t".join([str(x) for x in description]))
+                logger.debug("\t".join([str(x) for x in description]))
         self.status_sensor.set_value("complete")
