@@ -6,7 +6,9 @@ import logging
 
 # This must be as early as possible to intercept all logger registrations
 class Logger(logging.getLoggerClass()):
-    loggers = {}
+    # Have to include the root logger explicitly, because it is created before
+    # we get to call setLoggerClass
+    loggers = {'': logging.getLogger()}
 
     def __init__(self, name, level=logging.NOTSET):
         super(Logger, self).__init__(name, level)
