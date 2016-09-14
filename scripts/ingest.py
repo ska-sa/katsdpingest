@@ -2,8 +2,30 @@
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
-import time
 import logging
+import threading
+
+# This must be as early as possible to intercept all logger registrations
+class Logger(logging.getLoggerClass()):
+    # Have to include the root logger explicitly, because it is created before
+    # we get to call setLoggerClass
+    _loggers = {'': logging.getLogger()}
+    _lock = threading.RLock()
+
+    def __init__(self, name, level=logging.NOTSET):
+        super(Logger, self).__init__(name, level)
+        with Logger._lock:
+            Logger._loggers[name] = self
+
+    @classmethod
+    def get_loggers(cls):
+        with cls._lock:
+            # Make a copy, which is safe to use outside the lock
+            return dict(cls._loggers)
+
+logging.setLoggerClass(Logger)
+
+import time
 import manhole
 import signal
 import trollius
@@ -160,19 +182,36 @@ class IngestDeviceServer(DeviceServer):
         if self.cbf_session is not None:
             self.cbf_session.enable_debug(debug)
 
-    @request(Str(), Str())
+    @request(Str(optional=True), Str(optional=True))
     @return_reply(Str())
     def request_internal_log_level(self, req, component, level):
-        """Set the log level of an internal component to the specified value.
-           ?internal-log-level <component> <level>
         """
-        level = level.upper()
-        logger = logging.getLogger(component)
-        try:
-            logger.setLevel(level)
-        except ValueError:
-            return ("fail", "Unknown log level specified {}".format(level))
-        return ("ok", "Log level set to {}".format(level))
+        Set the log level of an internal component to the specified value.
+        ?internal-log-level <component> <level>
+
+        If <level> is omitted, the current log level is shown. If component
+        is also omitted, the current log levels of all loggers are shown.
+        """
+        if component is None:
+            loggers = Logger.get_loggers()
+            for name, logger in sorted(loggers.iteritems()):
+                req.inform(name, logging.getLevelName(logger.level))
+            return ('ok', '{} logger(s) reported'.format(len(loggers)))
+        elif level is None:
+            logger = Logger.get_loggers().get(component)
+            if logger is None:
+                return ('fail', 'Unknown logger component {}'.format(component))
+            else:
+                req.inform(component, logging.getLevelName(logger.level))
+                return ('ok', '1 logger reported')
+        else:
+            level = level.upper()
+            logger = logging.getLogger(component)
+            try:
+                logger.setLevel(level)
+            except ValueError:
+                return ("fail", "Unknown log level specified {}".format(level))
+            return ("ok", "Log level set to {}".format(level))
 
     @return_reply(Str())
     def request_capture_init(self, req, msg):
@@ -284,6 +323,7 @@ def on_shutdown(server):
 
 
 def main():
+    logging.setLoggerClass(Logger)
     global opts
     opts = parse_opts()
 
