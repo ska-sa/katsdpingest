@@ -3,16 +3,25 @@
 # Capture utility for a relatively generic packetised correlator data output stream.
 
 import logging
+import threading
 
 # This must be as early as possible to intercept all logger registrations
 class Logger(logging.getLoggerClass()):
     # Have to include the root logger explicitly, because it is created before
     # we get to call setLoggerClass
-    loggers = {'': logging.getLogger()}
+    _loggers = {'': logging.getLogger()}
+    _lock = threading.RLock()
 
     def __init__(self, name, level=logging.NOTSET):
         super(Logger, self).__init__(name, level)
-        Logger.loggers[name] = self
+        with Logger._lock:
+            Logger._loggers[name] = self
+
+    @classmethod
+    def get_loggers(cls):
+        with cls._lock:
+            # Make a copy, which is safe to use outside the lock
+            return dict(cls._loggers)
 
 logging.setLoggerClass(Logger)
 
@@ -184,11 +193,12 @@ class IngestDeviceServer(DeviceServer):
         is also omitted, the current log levels of all loggers are shown.
         """
         if component is None:
-            for name, logger in sorted(Logger.loggers.iteritems()):
+            loggers = Logger.get_loggers()
+            for name, logger in sorted(loggers.iteritems()):
                 req.inform(name, logging.getLevelName(logger.level))
-            return ('ok', '{} logger(s) reported'.format(len(Logger.loggers)))
+            return ('ok', '{} logger(s) reported'.format(len(loggers)))
         elif level is None:
-            logger = Logger.loggers.get(component)
+            logger = Logger.get_loggers().get(component)
             if logger is None:
                 return ('fail', 'Unknown logger component {}'.format(component))
             else:
