@@ -12,7 +12,7 @@ MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 # system version and needs to be recompiled
 USER root
 RUN cd /tmp && \
-    wget http://www.hdfgroup.org/ftp/HDF5/current/src/hdf5-1.8.17.tar.bz2 && \
+    wget http://sdp-services.kat.ac.za/mirror/support.hdfgroup.org/ftp/HDF5/current/src/hdf5-1.8.17.tar.bz2 && \
     tar -jxf hdf5-1.8.17.tar.bz2 && \
     cd hdf5-1.8.17 && \
     ./configure --prefix=/usr/local --enable-production --enable-threadsafe \
