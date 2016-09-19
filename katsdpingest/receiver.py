@@ -264,7 +264,7 @@ class Receiver(object):
 
             # Ready to receive data (using the same item group, since it has
             # the descriptors)
-            prev_ts = -1
+            prev_ts = None
             ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
             ts_wrap_period = 2**48
             while True:
@@ -297,7 +297,7 @@ class Receiver(object):
 
                 data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
                 data_item = ig_cbf['xeng_raw'].value
-                if data_ts < prev_ts - ts_wrap_period // 2:
+                if prev_ts is not None and data_ts < prev_ts - ts_wrap_period // 2:
                     # This happens either because packets ended up out-of-order,
                     # or because the CBF timestamp wrapped. Out-of-order should
                     # jump backwards a tiny amount while wraps should jump back by
@@ -305,7 +305,7 @@ class Receiver(object):
                     ts_wrap_offset += ts_wrap_period
                     data_ts += ts_wrap_period
                     _logger.warning('Data timestamps wrapped')
-                elif data_ts > prev_ts + ts_wrap_period // 2:
+                elif prev_ts is not None and data_ts > prev_ts + ts_wrap_period // 2:
                     # This happens if we wrapped, then received another heap
                     # (probably from a different X engine) from before the
                     # wrap. We need to undo the wrap.
