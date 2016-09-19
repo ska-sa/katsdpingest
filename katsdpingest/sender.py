@@ -67,7 +67,7 @@ class VisSender(object):
         rate = dump_size / int_time * 1.1
         self._stream = spead2.send.trollius.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=9172, rate=rate))
+            spead2.send.StreamConfig(max_packet_size=8972, rate=rate))
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
         self._ig.add_item(id=None, name='correlator_data', description="Visibilities",

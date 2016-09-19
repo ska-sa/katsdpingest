@@ -550,7 +550,7 @@ class CBFIngest(object):
         """
         if ip in self._sdisp_ips:
             raise ValueError('{0} is already in the active list of recipients'.format(ip))
-        config = spead2.send.StreamConfig(max_packet_size=9172, rate=self.sd_spead_rate / 8)
+        config = spead2.send.StreamConfig(max_packet_size=8972, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
         self._sdisp_ips[ip] = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
 
