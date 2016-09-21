@@ -13,6 +13,7 @@ import os
 import numpy as np
 import threading
 import socket
+import time
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str
@@ -26,9 +27,7 @@ def parse_opts():
     parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2041, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
-    parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
-                      help='level to use for basic logging or name of logging configuration file; '
-                           'default is /log/log.<SITENAME>.conf')
+    parser.add_argument('-l', '--log-level', metavar='LEVEL', help='log level [%(default)s]')
     return parser.parse_args()
 
 
@@ -225,14 +224,15 @@ if __name__ == '__main__':
     opts = parse_opts()
 
     if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
-    formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
+    formatter = logging.Formatter("%(asctime)s.%(msecs)03dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
+    formatter.converter = time.gmtime
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
 
     logger = logging.getLogger("katsdpingest.ingest")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(opts.log_level.upper())
 
     logging.getLogger('spead2').setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...
