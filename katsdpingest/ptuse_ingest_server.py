@@ -201,7 +201,7 @@ class _CaptureSession(object):
         passed_args = self.get_digifits_args(backend_args)
         cmd =["numactl", "-C", "5", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
-        os.mkdir(self.save_dir)
+        os.mkdir("%s.writing"%self.save_dir)
         #_logger.info(passed_args)
         #_logger.info(cmd)
         with open("/tmp/digifits.log","a") as logfile:
