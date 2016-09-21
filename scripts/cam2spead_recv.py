@@ -27,9 +27,7 @@ def parse_opts():
     parser.add_argument('--cam-spead', type=endpoint.endpoint_list_parser(7147, single_port=True), default=':7147', help='endpoints to listen for CAM SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('-p', '--port', dest='port', type=int, default=2041, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', dest='host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
-    parser.add_argument('-l', '--logging', dest='logging', type=str, default=None, metavar='LOGGING',
-                      help='level to use for basic logging or name of logging configuration file; '
-                           'default is /log/log.<SITENAME>.conf')
+    parser.add_argument('-l', '--log-level', metavar='LEVEL', help='log level [%(default)s]')
     return parser.parse_args()
 
 
@@ -234,7 +232,7 @@ if __name__ == '__main__':
     logging.root.addHandler(sh)
 
     logger = logging.getLogger("katsdpingest.ingest")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(opts.log_level.upper())
 
     logging.getLogger('spead2').setLevel(logging.WARNING)
      # configure SPEAD to display warnings about dropped packets etc...

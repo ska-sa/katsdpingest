@@ -336,7 +336,7 @@ def main():
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
-    logging.root.setLevel(opts.log_level)
+    logging.root.setLevel(opts.log_level.upper())
 
     ioloop = AsyncIOMainLoop()
     ioloop.install()
