@@ -13,6 +13,7 @@ import os
 import numpy as np
 import threading
 import socket
+import time
 
 from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str
@@ -225,8 +226,9 @@ if __name__ == '__main__':
     opts = parse_opts()
 
     if len(logging.root.handlers) > 0: logging.root.removeHandler(logging.root.handlers[0])
-    formatter = logging.Formatter("%(asctime)s.%(msecs)dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
+    formatter = logging.Formatter("%(asctime)s.%(msecs)03dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
                                       datefmt="%Y-%m-%d %H:%M:%S")
+    formatter.converter = time.gmtime
     sh = logging.StreamHandler()
     sh.setFormatter(formatter)
     logging.root.addHandler(sh)
