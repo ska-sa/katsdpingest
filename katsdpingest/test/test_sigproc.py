@@ -13,21 +13,24 @@ from katsdpsigproc.test.test_accel import device_test, force_autotune
 from nose.tools import *
 
 
-def reduce_flags(flags, axis):
-    """Reduction by logical AND along an axis. This is necessary because
-    `np.bitwise_and.identity` is `incorrect`__.
+def random_flags(rs, shape, bits, p):
+    """Generate random array of flag bits.
 
-    .. __: https://github.com/numpy/numpy/issues/5250
+    Parameters
+    ----------
+    rs : :class:`numpy.random.RandomState`
+        Random generator
+    shape : tuple
+        Shape of the output array
+    bits : int
+        Number of bits in each flag word that are candidates
+    p : float
+        Probability of each individual bit being set
     """
-    return np.bitwise_not(
-            np.bitwise_or.reduce(np.bitwise_not(flags), axis))
-
-
-def reduceat_flags(flags, indices, axis):
-    """Segmented reduction by logical AND along an axis. See
-    :func:`reduce_flags` for an explanation of why this is needed."""
-    return np.bitwise_not(
-            np.bitwise_or.reduceat(np.bitwise_not(flags), indices, axis))
+    flags = np.zeros(shape, np.uint8)
+    for i in range(bits):
+        flags |= rs.choice([1 << i, 0], shape, p=[p, 1 - p]).astype(np.uint8)
+    return flags
 
 
 class TestPrepare(object):
@@ -155,17 +158,19 @@ class TestAccum(object):
         """Hand-coded test data, to test various cases"""
 
         flag_scale = 2 ** -64
+        unflagged_bit = 128
         # Host copies of arrays
         host = {
-            'vis_in':       np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
-            'weights_in':   np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
-            'flags_in':     np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
-            'vis_out0':     np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
-            'weights_out0': np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
-            'flags_out0':   np.array([[1, 9, 0]], dtype=np.uint8).T
+            'vis_in':        np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
+            'weights_in':    np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
+            'flags_in':      np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
+            'channel_flags': np.array([2, 0, 0], dtype=np.uint8),
+            'vis_out0':      np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
+            'weights_out0':  np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
+            'flags_out0':    np.array([[1 | unflagged_bit, 9, unflagged_bit]], dtype=np.uint8).T
         }
 
-        template = sigproc.AccumTemplate(context, 1)
+        template = sigproc.AccumTemplate(context, 1, unflagged_bit)
         fn = template.instantiate(queue, 5, Range(1, 4), 1)
         fn.ensure_all_bound()
         for name, value in host.iteritems():
@@ -173,9 +178,9 @@ class TestAccum(object):
         fn()
 
         expected = {
-            'vis_out0':     np.array([[11+7j, (12-12j) * flag_scale, 6+8j]], dtype=np.complex64).T,
-            'weights_out0': np.array([[3.5, 4.0 * flag_scale, 7.5]], dtype=np.float32).T,
-            'flags_out0':   np.array([[0, 8, 0]], dtype=np.uint8).T
+            'vis_out0':     np.array([[7-3j, (12-12j) * flag_scale, 6+8j]], dtype=np.complex64).T,
+            'weights_out0': np.array([[1.5, 4.0 * flag_scale, 7.5]], dtype=np.float32).T,
+            'flags_out0':   np.array([[3 | unflagged_bit, 11, unflagged_bit]], dtype=np.uint8).T
         }
         for name, value in expected.iteritems():
             actual = fn.buffer(name).get(queue)
@@ -190,12 +195,14 @@ class TestAccum(object):
         channel_range = Range(7, 198)
         kept_channels = len(channel_range)
         outputs = 2
+        unflagged_bit = 1 << 7
         rs = np.random.RandomState(1)
 
         vis_in = (rs.standard_normal((baselines, channels)) +
                   rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
-        flags_in = rs.choice(4, (baselines, channels), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
+        flags_in = random_flags(rs, (baselines, channels), 7, p=0.2)
+        channel_flags = random_flags(rs, (kept_channels,), 7, p=0.02)
         vis_out = []
         weights_out = []
         flags_out = []
@@ -204,14 +211,19 @@ class TestAccum(object):
                             rs.standard_normal((kept_channels, baselines)) * 1j)
                            .astype(np.complex64))
             weights_out.append(rs.uniform(size=(kept_channels, baselines)).astype(np.float32))
-            flags_out.append(rs.choice(4, (kept_channels, baselines),
-                             p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8))
+            flags_out.append(random_flags(rs, (kept_channels, baselines), 8, p=0.02))
+            # Where the unflagged bit is not set, we expect the current
+            # accumulation to be downweighted by flag_scale.
+            scale = np.where(flags_out[-1] & unflagged_bit, 1, flag_scale)
+            vis_out[-1] *= scale
+            weights_out[-1] *= scale
 
-        template = sigproc.AccumTemplate(context, outputs)
+
+        template = sigproc.AccumTemplate(context, outputs, unflagged_bit)
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in),
-                              ('flags_in', flags_in)]:
+                              ('flags_in', flags_in), ('channel_flags', channel_flags)]:
             fn.buffer(name).set(queue, value)
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
                               ('flags_out', flags_out)]:
@@ -221,12 +233,14 @@ class TestAccum(object):
 
         # Perform the operation on the host
         kept_vis = vis_in[:, channel_range.start : channel_range.stop]
-        kept_flags = flags_in[:, channel_range.start : channel_range.stop]
+        kept_flags = flags_in[:, channel_range.start : channel_range.stop] | channel_flags[np.newaxis, :]
         flagged_weights = weights_in * ((kept_flags == 0) + flag_scale)
+        # unflagged inputs need the unflagged_bit set
+        kept_flags |= np.where(kept_flags, 0, unflagged_bit).astype(np.uint8)
         for i in range(outputs):
             vis_out[i] += (kept_vis * flagged_weights).T
             weights_out[i] += flagged_weights.T
-            flags_out[i] = np.bitwise_and(flags_out[i], kept_flags.T)
+            flags_out[i] |= kept_flags.T
 
         # Verify results
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
@@ -238,7 +252,7 @@ class TestAccum(object):
     @device_test
     @force_autotune
     def test_autotune(self, context, queue):
-        sigproc.AccumTemplate(context, 2)
+        sigproc.AccumTemplate(context, 2, 1)
 
 
 class TestPostproc(object):
@@ -256,17 +270,24 @@ class TestPostproc(object):
         channels = 1024
         baselines = 512
         cont_factor = 16
+        unflagged_bit = 128
+        flag_scale = 2**-64
+        flag_scale_inv = np.float32(2)**64
         rs = np.random.RandomState(1)
         vis_in = (rs.standard_normal((channels, baselines)) +
                   rs.standard_normal((channels, baselines)) * 1j).astype(np.complex64)
         weights_in = rs.uniform(0.5, 2.0, (channels, baselines)).astype(np.float32)
-        flags_in = rs.choice(4, (channels, baselines), p=[0.7, 0.1, 0.1, 0.1]).astype(np.uint8)
+        flags_in = random_flags(rs, (channels, baselines), 8, 0.2)
         # Ensure that we test the case of none flagged and all flagged when
         # doing continuum reduction
         flags_in[:, 123] = 1
-        flags_in[:, 234] = 0
+        flags_in[:, 234] = unflagged_bit
+        # Where unflagged_bit is not set, weights should be much smaller
+        scale = np.where(flags_in & unflagged_bit, 1, flag_scale)
+        vis_in *= scale
+        weights_in *= scale
 
-        template = sigproc.PostprocTemplate(context)
+        template = sigproc.PostprocTemplate(context, unflagged_bit)
         fn = sigproc.Postproc(template, queue, channels, baselines, cont_factor)
         fn.ensure_all_bound()
         fn.buffer('vis').set(queue, vis_in)
@@ -281,15 +302,20 @@ class TestPostproc(object):
         indices = range(0, channels, cont_factor)
         cont_weights = np.add.reduceat(weights_in, indices, axis=0)
         cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
-        cont_flags = reduceat_flags(flags_in, indices, axis=0)
+        cont_flags = np.bitwise_or.reduceat(flags_in, indices, axis=0)
 
         # Flagged visibilities have their weights re-scaled
-        expected_weights = weights_in * ((flags_in != 0) * np.float32(2**64) + 1)
-        cont_weights *= (cont_flags != 0) * np.float32(2**64) + 1
+        expected_weights = weights_in * np.where(flags_in & unflagged_bit, 1, flag_scale_inv)
+        cont_weights *= np.where(cont_flags & unflagged_bit, 1, flag_scale_inv)
+
+        # unflagged_bit gets cleared
+        cont_flags = np.where(cont_flags & unflagged_bit, 0, cont_flags)
+        expected_flags = np.where(flags_in & unflagged_bit, 0, flags_in)
 
         # Verify results
         np.testing.assert_allclose(expected_vis, fn.buffer('vis').get(queue), rtol=1e-5)
         np.testing.assert_allclose(expected_weights, fn.buffer('weights').get(queue), rtol=1e-5)
+        np.testing.assert_equal(expected_flags, fn.buffer('flags').get(queue))
         np.testing.assert_allclose(cont_vis, fn.buffer('cont_vis').get(queue), rtol=1e-5)
         np.testing.assert_allclose(cont_weights, fn.buffer('cont_weights').get(queue), rtol=1e-5)
         np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
@@ -297,7 +323,7 @@ class TestPostproc(object):
     @device_test
     @force_autotune
     def test_autotune(self, context, queue):
-        sigproc.PostprocTemplate(context)
+        sigproc.PostprocTemplate(context, 128)
 
 
 class TestCompressWeights(object):
@@ -332,6 +358,7 @@ class TestCompressWeights(object):
 
 class TestIngestOperation(object):
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
+    unflagged_bit = 1 << sigproc.IngestTemplate.flag_names.index('cal_rfi')
 
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)
@@ -364,14 +391,8 @@ class TestIngestOperation(object):
             ('ingest:prepare', {'channels': 128, 'class': 'katsdpingest.sigproc.Prepare', 'in_baselines': 220, 'out_baselines': 192, 'n_accs': 1}),
             ('ingest:auto_weights', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.AutoWeights', 'inputs': 32, 'n_accs': 1}),
             ('ingest:init_weights', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.InitWeights', 'inputs': 32}),
-            ('ingest:zero_spec', {'class': 'katsdpingest.sigproc.Zero'}),
-            ('ingest:zero_spec:zero_vis', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'float2', 'dtype': 'complex64', 'shape': (80, 192), 'value': 0j}),
-            ('ingest:zero_spec:zero_weights', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'float', 'dtype': 'float32', 'shape': (80, 192), 'value': 0.0}),
-            ('ingest:zero_spec:zero_flags', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (80, 192), 'value': 255}),
-            ('ingest:zero_sd_spec', {'class': 'katsdpingest.sigproc.Zero'}),
-            ('ingest:zero_sd_spec:zero_vis', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'float2', 'dtype': 'complex64', 'shape': (80, 192), 'value': 0j}),
-            ('ingest:zero_sd_spec:zero_weights', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'float', 'dtype': 'float32', 'shape': (80, 192), 'value': 0.0}),
-            ('ingest:zero_sd_spec:zero_flags', {'class': 'katsdpsigproc.fill.Fill', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (80, 192), 'value': 255}),
+            ('ingest:zero_spec', {'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'}),
+            ('ingest:zero_sd_spec', {'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'}),
             ('ingest:transpose_vis', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'float2', 'dtype': 'complex64', 'shape': (192, 128)}),
             ('ingest:flagger', {'class': 'katsdpsigproc.rfi.device.FlaggerDevice'}),
             ('ingest:flagger:background', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice', 'width': 13}),
@@ -379,13 +400,13 @@ class TestIngestOperation(object):
             ('ingest:flagger:noise_est', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.NoiseEstMADTDevice', 'max_channels': 10240}),
             ('ingest:flagger:threshold', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.ThresholdSimpleDevice', 'flag_value': 16, 'n_sigma': 11.0, 'transposed': True}),
             ('ingest:flagger:transpose_flags', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)}),
-            ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'outputs': 2}),
+            ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'outputs': 2, 'unflagged_bit': 64}),
             ('ingest:finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8}),
+            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8, 'unflagged_bit': 64}),
             ('ingest:finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:finalise:compress_weights_cont', {'baselines': 192, 'channels': 10, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16}),
+            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16, 'unflagged_bit': 64}),
             ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192)}),
@@ -402,14 +423,15 @@ class TestIngestOperation(object):
         product. The inputs are modified in-place.
         """
         vis /= weights
-        weights *= (flags != 0) * np.float32(2**64) + 1
+        weights *= np.where(flags & self.unflagged_bit, 1, np.float32(2**64))
         weights_channel = np.max(weights, axis=1) * np.float32(1.0 / 255.0)
         inv_weights_channel = np.float32(1.0) / weights_channel
         weights = (weights * inv_weights_channel[..., np.newaxis]).astype(np.uint8)
+        flags = np.where(flags & self.unflagged_bit, 0, flags)
         return vis, flags, weights, weights_channel
 
 
-    def run_host_basic(self, vis, n_accs, permutation,
+    def run_host_basic(self, vis, channel_flags, n_accs, permutation,
                        input_auto_baseline, baseline_inputs,
                        cont_factor, channel_range, n_sigma):
         """Simple CPU implementation. All inputs and outputs are channel-major.
@@ -421,6 +443,8 @@ class TestIngestOperation(object):
         ----------
         vis : array-like
             Input dump visibilities (first axis being time)
+        channel_flags : array-like
+            Input per-channel flags (indexed by time and channel)
         n_accs : int
             Number of correlations accumulated in `vis`
         permutation : sequence
@@ -431,7 +455,7 @@ class TestIngestOperation(object):
             Maps baseline to pair of input signals
         cont_factor : int
             Number of spectral channels per continuum channel
-        channel_range: 2-tuple of int
+        channel_range: :class:`katsdpingest.utils.Range`
             Range of channels to retain in the output
         n_sigma : float
             Significance level for flagger
@@ -471,16 +495,19 @@ class TestIngestOperation(object):
         flags = np.empty(vis.shape, dtype=np.uint8)
         for i in range(len(vis)):
             flags[i, ...] = flagger(vis[i, ...])
+            flags[i, channel_range.asslice()] |= channel_flags[i, :, np.newaxis]
         # Apply flags to weights
         weights *= (flags == 0).astype(np.float32) + 2**-64
+        # Mark unflagged visibilities
+        flags |= np.where(flags == 0, self.unflagged_bit, 0).astype(np.uint8)
 
         # Time accumulation
         vis = np.sum(vis * weights, axis=0)
         weights = np.sum(weights, axis=0)
-        flags = reduce_flags(flags, axis=0)
+        flags = np.bitwise_or.reduce(flags, axis=0)
 
         # Clip to the channel range
-        rng = slice(channel_range.start, channel_range.stop)
+        rng = channel_range.asslice()
         vis = vis[rng, ...]
         weights = weights[rng, ...]
         flags = flags[rng, ...]
@@ -489,7 +516,7 @@ class TestIngestOperation(object):
         indices = range(0, vis.shape[0], cont_factor)
         cont_vis = np.add.reduceat(vis, indices, axis=0)
         cont_weights = np.add.reduceat(weights, indices, axis=0)
-        cont_flags = reduceat_flags(flags, indices, axis=0)
+        cont_flags = np.bitwise_or.reduceat(flags, indices, axis=0)
 
         # Finalisation
         spec_vis, spec_flags, spec_weights, spec_weights_channel = \
@@ -508,7 +535,7 @@ class TestIngestOperation(object):
         }
 
     def run_host(
-            self, vis, n_vis, n_sd_vis, scale, permutation,
+            self, vis, channel_flags, n_vis, n_sd_vis, n_accs, permutation,
             input_auto_baseline, baseline_inputs,
             cont_factor, sd_cont_factor, channel_range,
             n_sigma, timeseries_weights, percentile_ranges):
@@ -520,12 +547,14 @@ class TestIngestOperation(object):
         ----------
         vis : array-like
             Input dump visibilities (first axis being time)
+        channel_flags : array-like
+            Input per-channel flags (indexed by time and channel)
         n_vis : int
             number of dumps to use for main calculations
         n_sd_vis : int
             number of dumps to use for signal display calculations
-        scale : float
-            Scale factor for integral visibilities
+        n_accs : int
+            Number of visibilities accumulated in correlator
         permutation : sequence
             Maps input baseline numbers to output numbers (with -1 indicating discard)
         input_auto_baseline : sequence
@@ -536,7 +565,7 @@ class TestIngestOperation(object):
             Number of spectral channels per continuum channel
         sd_cont_factor : int
             Number of spectral channels per continuum channel, for signal displays
-        channel_range: 2-tuple of int
+        channel_range : :class:`katsdpingest.utils.Range`
             Range of channels to retain in the output
         n_sigma : float
             Significance level for flagger
@@ -557,10 +586,12 @@ class TestIngestOperation(object):
             - percentileN (where N is a non-negative integer)
         """
         expected = self.run_host_basic(
-            vis[:n_vis], scale, permutation, input_auto_baseline, baseline_inputs,
+            vis[:n_vis], channel_flags[:n_vis],
+            n_accs, permutation, input_auto_baseline, baseline_inputs,
             cont_factor, channel_range, n_sigma)
         sd_expected = self.run_host_basic(
-            vis[:n_sd_vis], scale, permutation, input_auto_baseline, baseline_inputs,
+            vis[:n_sd_vis], channel_flags[:n_sd_vis],
+            n_accs, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, n_sigma)
         for (name, value) in sd_expected.iteritems():
             expected['sd_' + name] = value
@@ -623,6 +654,7 @@ class TestIngestOperation(object):
             vis_in[..., orig_baseline, 1].fill(0)
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
+        channel_flags = random_flags(rs, (dumps, kept_channels), 2, p=0.1)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
                 context, width=13)
@@ -661,6 +693,7 @@ class TestIngestOperation(object):
         fn.start_sd_sum()
         for i in range(max(dumps, sd_dumps)):
             fn.buffer('vis_in').set(queue, vis_in[i])
+            fn.buffer('channel_flags').set(queue, channel_flags[i])
             fn()
             if i + 1 == dumps:
                 fn.end_sum()
@@ -672,7 +705,7 @@ class TestIngestOperation(object):
                     actual[name] = fn.buffer(name).get(queue)
 
         expected = self.run_host(
-                vis_in, dumps, sd_dumps, n_accs, permutation,
+                vis_in, channel_flags, dumps, sd_dumps, n_accs, permutation,
                 input_auto_baseline, baseline_inputs,
                 cont_factor, sd_cont_factor, channel_range, n_sigma,
                 timeseries_weights, percentile_ranges)

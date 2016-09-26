@@ -7,47 +7,24 @@ from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, r
 from .utils import Range
 
 
-class ZeroTemplate(object):
-    """Zeros a set of visibilities, weights and flags
+class Zero(accel.Operation):
+    """Zeros out a set of visibilities, flags and weights with the same shape"""
+    def __init__(self, command_queue, channels, baselines):
+        super(Zero, self).__init__(command_queue)
+        self.slots['vis'] = accel.IOSlot((channels, baselines), np.complex64)
+        self.slots['weights'] = accel.IOSlot((channels, baselines), np.float32)
+        self.slots['flags'] = accel.IOSlot((channels, baselines), np.uint8)
 
-    Parameters
-    ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
-        Context for which kernels will be compiled
-    """
-    def __init__(self, context):
-        self.context = context
-        self.zero_vis = fill.FillTemplate(
-                context, np.complex64, 'float2')
-        self.zero_weights = fill.FillTemplate(
-                context, np.float32, 'float')
-        self.zero_flags = fill.FillTemplate(
-                context, np.uint8, 'unsigned char')
+    def _run(self):
+        self.buffer('vis').zero(self.command_queue)
+        self.buffer('weights').zero(self.command_queue)
+        self.buffer('flags').zero(self.command_queue)
 
-    def instantiate(self, command_queue, channels, baselines):
-        return Zero(self, command_queue, channels, baselines)
-
-
-class Zero(accel.OperationSequence):
-    def __init__(self, template, command_queue, channels, baselines):
-        self.zero_vis = template.zero_vis.instantiate(
-                command_queue, (channels, baselines))
-        self.zero_weights = template.zero_weights.instantiate(
-                command_queue, (channels, baselines))
-        self.zero_flags = template.zero_flags.instantiate(
-                command_queue, (channels, baselines))
-        self.zero_flags.set_value(0xff)
-        operations = [
-                ('zero_vis', self.zero_vis),
-                ('zero_weights', self.zero_weights),
-                ('zero_flags', self.zero_flags)
-        ]
-        compounds = {
-                'vis': ['zero_vis:data'],
-                'weights': ['zero_weights:data'],
-                'flags': ['zero_flags:data']
+    def parameters(self):
+        return {
+            'channels': self.slots['vis'].shape[0],
+            'baselines': self.slots['vis'].shape[1]
         }
-        super(Zero, self).__init__(command_queue, operations, compounds)
 
 
 class PrepareTemplate(object):
@@ -482,6 +459,8 @@ class AccumTemplate(object):
         Context for which kernels will be compiled
     outputs : int
         Number of outputs in which to accumulate
+    unflagged_bit : int
+        Flag value used to indicate that at least one sample was not flagged
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
@@ -491,7 +470,7 @@ class AccumTemplate(object):
     """
     autotune_version = 1
 
-    def __init__(self, context, outputs, tuning=None):
+    def __init__(self, context, outputs, unflagged_bit, tuning=None):
         if tuning is None:
             tuning = self.autotune(context, outputs)
         self.context = context
@@ -499,12 +478,14 @@ class AccumTemplate(object):
         self.vtx = tuning['vtx']
         self.vty = tuning['vty']
         self.outputs = outputs
+        self.unflagged_bit = unflagged_bit
         program = accel.build(
             context, 'ingest_kernels/accum.mako',
             {
                 'block': self.block,
                 'vtx': self.vtx,
                 'vty': self.vty,
+                'unflagged_bit': self.unflagged_bit,
                 'outputs': self.outputs},
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('accum')
@@ -542,7 +523,7 @@ class AccumTemplate(object):
             if local_mem > 32768:
                 # Skip configurations using lots of lmem
                 raise RuntimeError('too much local memory')
-            fn = cls(context, outputs, {
+            fn = cls(context, outputs, 1, {
                 'block': block,
                 'vtx': vtx,
                 'vty': vty}).instantiate(queue, channels, channel_range, baselines)
@@ -571,6 +552,8 @@ class Accum(accel.Operation):
         Input weights
     **flags_in** : baselines × channels, uint8
         Input flags: non-zero values cause downweighting by 2^-64
+    **channel_flags** : kept-channels, uint8
+        Predetermined flags per channel
     **vis_outN** : kept-channels × baselines, complex64
         Incremented by weight × visibility
     **weights_outN** : kept-channels × baselines, float32
@@ -603,6 +586,8 @@ class Accum(accel.Operation):
         self.channel_range = channel_range
         self.baselines = baselines
         kept_channels = len(channel_range)
+        # TODO: these dimension objects are re-used too much, causing
+        # unnecessary coupling of padding between arrays.
         padded_kept_channels = accel.Dimension(kept_channels, tilex)
         padded_baselines = accel.Dimension(baselines, tiley)
         padded_channels = accel.Dimension(
@@ -614,6 +599,8 @@ class Accum(accel.Operation):
                 (padded_baselines, padded_kept_channels), np.float32)
         self.slots['flags_in'] = accel.IOSlot(
                 (padded_baselines, padded_channels), np.uint8)
+        self.slots['channel_flags'] = accel.IOSlot(
+                (accel.Dimension(kept_channels, tilex),), np.uint8)
         for i in range(self.template.outputs):
             label = str(i)
             self.slots['vis_out' + label] = accel.IOSlot(
@@ -628,12 +615,12 @@ class Accum(accel.Operation):
         for i in range(self.template.outputs):
             label = str(i)
             buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
-        buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
+        buffer_names.extend(['vis_in', 'weights_in', 'flags_in', 'channel_flags'])
         buffers = [self.buffer(x) for x in buffer_names]
         args = [x.buffer for x in buffers] + [
             np.int32(buffers[0].padded_shape[1]),
+            np.int32(buffers[-4].padded_shape[1]),
             np.int32(buffers[-3].padded_shape[1]),
-            np.int32(buffers[-2].padded_shape[1]),
             np.int32(self.channel_range.start)]
 
         kept_channels = len(self.channel_range)
@@ -652,6 +639,7 @@ class Accum(accel.Operation):
     def parameters(self):
         return {
             'outputs': self.template.outputs,
+            'unflagged_bit': self.template.unflagged_bit,
             'channels': self.channels,
             'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines
@@ -669,6 +657,8 @@ class PostprocTemplate(object):
     ----------
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context for which kernels will be compiled
+    unflagged_bit : int
+        Flag value used to indicate that at least one sample was not flagged
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
@@ -677,17 +667,19 @@ class PostprocTemplate(object):
     """
     autotune_version = 2
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context, unflagged_bit, tuning=None):
         if tuning is None:
             tuning = self.autotune(context)
         self.context = context
         self.wgsx = tuning['wgsx']
         self.wgsy = tuning['wgsy']
+        self.unflagged_bit = unflagged_bit
         program = accel.build(
             context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,
                 'wgsy': self.wgsy,
+                'unflagged_bit': self.unflagged_bit,
             },
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('postproc')
@@ -714,7 +706,7 @@ class PostprocTemplate(object):
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
 
         def generate(**tuning):
-            fn = cls(context, tuning=tuning).instantiate(
+            fn = cls(context, 128, tuning=tuning).instantiate(
                     queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
@@ -803,6 +795,7 @@ class Postproc(accel.Operation):
 
     def parameters(self):
         return {
+            'unflagged_bit': self.template.unflagged_bit,
             'cont_factor': self.cont_factor,
             'channels': self.channels,
             'baselines': self.baselines
@@ -928,9 +921,11 @@ class FinaliseTemplate(object):
     ----------
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context for which kernels will be compiled
+    unflagged_bit : int
+        Flag value used to indicate that at least one sample was not flagged
     """
-    def __init__(self, context):
-        self.postproc = PostprocTemplate(context)
+    def __init__(self, context, unflagged_bit):
+        self.postproc = PostprocTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
 
     def instantiate(self, *args, **kwargs):
@@ -1027,7 +1022,7 @@ class IngestTemplate(object):
         and there must be at least one that is big enough.
     """
 
-    flag_names = ['reserved0', 'static', 'cam', 'reserved3', 'ingest_rfi',
+    flag_names = ['reserved0', 'static', 'cam', 'data_lost', 'ingest_rfi',
                   'predicted_rfi', 'cal_rfi', 'reserved7']
 
     def __init__(self, context, flagger, percentile_sizes):
@@ -1035,12 +1030,16 @@ class IngestTemplate(object):
         self.prepare = PrepareTemplate(context)
         self.auto_weights = AutoWeightsTemplate(context)
         self.init_weights = InitWeightsTemplate(context)
-        self.zero = ZeroTemplate(context)
         self.transpose_vis = transpose.TransposeTemplate(
                 context, np.complex64, 'float2')
         self.flagger = flagger
-        self.accum = AccumTemplate(context, 2)
-        self.finalise = FinaliseTemplate(context)
+        # We need a spare bit that won't be present in any actual flags. Since
+        # cal RFI detection happens later in the pipeline, it is definitely
+        # safe to use (unlike reserved flags, which might have new meanings
+        # defined in future).
+        unflagged_bit = 1 << self.flag_names.index('cal_rfi')
+        self.accum = AccumTemplate(context, 2, unflagged_bit)
+        self.finalise = FinaliseTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
         self.percentiles = [percentile.Percentile5Template(
@@ -1062,6 +1061,8 @@ class IngestOperation(accel.OperationSequence):
 
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
+    **channel_flags** : kept-channels, uint8
+        Predefined flags
     **permutation** : baselines, int16
         Permutation mapping original to new baseline index
     **input_auto_baseline** : inputs, uint16
@@ -1155,8 +1156,8 @@ class IngestOperation(accel.OperationSequence):
                 command_queue, channels, channel_range, inputs, baselines)
         self.init_weights = template.init_weights.instantiate(
                 command_queue, kept_channels, inputs, baselines)
-        self.zero_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
-        self.zero_sd_spec = template.zero.instantiate(command_queue, kept_channels, baselines)
+        self.zero_spec = Zero(command_queue, kept_channels, baselines)
+        self.zero_sd_spec = Zero(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
         self.transpose_vis = template.transpose_vis.instantiate(
                 command_queue, (baselines, channels))
@@ -1229,6 +1230,7 @@ class IngestOperation(accel.OperationSequence):
         assert 'flags_t' in self.flagger.slots
         compounds = {
                 'vis_in':       ['prepare:vis_in'],
+                'channel_flags': ['accum:channel_flags'],
                 'permutation':  ['prepare:permutation'],
                 'vis_t':        ['prepare:vis_out', 'auto_weights:vis',
                                  'transpose_vis:src', 'accum:vis_in'],
