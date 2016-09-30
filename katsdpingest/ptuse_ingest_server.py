@@ -426,10 +426,10 @@ class _CaptureSession(object):
             print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
             content = re.sub("FREQ                1283.8955078125", "FREQ                %f"%centre_freq, content)
-            content = re.sub("DATA_HOST_0         10.100.205.11", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
-            content = re.sub("DATA_HOST_1         10.100.205.11", "DATA_HOST_1         %s"%_get_interface_address("p4p1"), content)
-            content = re.sub("DATA_MCAST_0        10.100.205.10", "DATA_MCAST_0        %s"%beam_x_multicast, content)
-            content = re.sub("DATA_MCAST_1        10.100.205.10", "DATA_MCAST_1        %s"%beam_y_multicast, content)
+            content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
+            content = re.sub("DATA_HOST_1         10.100.205.10", "DATA_HOST_1         %s"%_get_interface_address("p4p1"), content)
+            content = re.sub("DATA_MCAST_0        239.9.3.30", "DATA_MCAST_0        %s"%beam_x_multicast, content)
+            content = re.sub("DATA_MCAST_1        239.9.3.31", "DATA_MCAST_1        %s"%beam_y_multicast, content)
             content = re.sub("SOURCE              J0835-4510", "SOURCE              %s"%targets[0], content)
             _logger.info (content)
         _logger.info('yo')
@@ -465,6 +465,11 @@ class _CaptureSession(object):
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         cmd = ["numactl","-C","0,2,6","meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("/tmp/capture.log","a")
+        
+        #Sleep to ensure data is flopwing
+        time.sleep(30)
+
+
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
         )
