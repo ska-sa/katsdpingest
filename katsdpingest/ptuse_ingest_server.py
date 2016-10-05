@@ -466,7 +466,7 @@ class _CaptureSession(object):
         cmd = ["numactl","-C","0,2,6","meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("/tmp/capture.log","a")
         
-        #Sleep to ensure data is flopwing
+        #Sleep to ensure data is flowing
         time.sleep(30)
 
 
