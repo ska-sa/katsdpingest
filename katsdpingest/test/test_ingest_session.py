@@ -17,7 +17,8 @@ class TestTimeAverage(object):
             'bandwidth': 856000000,
             'n_accs': 123456,
             'n_chans': 4096,
-            'int_time': 0.75
+            'int_time': 0.75,
+            'ticks_between_spectra': 8192
         }
         self.input_interval = 123456 * 4096 * 2
 

@@ -90,10 +90,8 @@ class _TimeAverage(object):
     def __init__(self, cbf_attr, int_time):
         self.ratio = max(1, int(round(int_time / cbf_attr['int_time'])))
         self.int_time = self.ratio * cbf_attr['int_time']
-        # Interval in ADC clock cycles
-        clocks = 2 * cbf_attr['n_chans'] * cbf_attr['n_accs'] * self.ratio
-        self.interval = int(round(clocks * cbf_attr['scale_factor_timestamp'] /
-                                  (2 * cbf_attr['bandwidth'])))
+        # Integration time in timestamp ticks
+        self.interval = self.ratio * cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self._start_ts = None
         self._ts = []
 
