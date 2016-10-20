@@ -117,6 +117,7 @@ class IngestDeviceServer(DeviceServer):
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
     def __init__(self, sdisp_endpoints, antennas, channel_ranges, *args, **kwargs):
+        self._stopping = False
         # reference to the CBF ingest session
         self.cbf_session = None
         self.sdisp_ips = {}
@@ -220,6 +221,8 @@ class IngestDeviceServer(DeviceServer):
         the L0 output stream."""
         if self.cbf_session is not None:
             return ("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop.")
+        if self._stopping:
+            return ("fail", "Cannot start a capture session while ingest is shutting down")
 
         self.cbf_session = CBFIngest(
                 opts, self.channel_ranges, self.proc_template,
@@ -292,23 +295,30 @@ class IngestDeviceServer(DeviceServer):
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
         interrupts. Basically calls capture done."""
-        logger.warning("External interrupt called - attempting graceful shutdown.")
-        yield self.request_capture_done("", "")
+        self._stopping = True   # Prevent a capture-init during shutdown
+        if self.cbf_session is not None:
+            yield self.request_capture_done("", "")
 
     @return_reply(Str())
     @tornado.gen.coroutine
     def request_capture_done(self, req, msg):
-        """Closes the current capture file and renames it for use by augment."""
-        if self.cbf_session is None:
+        """Stops the current capture."""
+        session = self.cbf_session
+        if session is None:
             raise tornado.gen.Return(("fail", "No existing capture session."))
 
-        yield to_tornado_future(trollius.async(self.cbf_session.stop()))
-        self.cbf_session = None
+        yield to_tornado_future(trollius.async(session.stop()))
 
-        self._my_sensors["capture-active"].set_value(0)
-        # Error states were associated with the session, which is now dead.
-        self._my_sensors["device-status"].set_value("ok")
-        logger.info("capture complete")
+        # We need to check that cbf_session hasn't changed, because while
+        # yielding, another connection may have manipulated it. This check
+        # ensures that any particular session is only reported shut down
+        # once.
+        if self.cbf_session is session:
+            self.cbf_session = None
+            self._my_sensors["capture-active"].set_value(0)
+            # Error states were associated with the session, which is now dead.
+            self._my_sensors["device-status"].set_value("ok")
+            logger.info("capture complete")
         raise tornado.gen.Return(("ok", "capture complete"))
 
 
