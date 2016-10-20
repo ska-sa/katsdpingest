@@ -28,7 +28,7 @@ extensions = [
                  ['spead2/src/py_common.cpp', 'katsdpingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/src/*.h'),
         language='c++',
-        include_dirs=['spead2/src'],
+        include_dirs=['spead2/include'],
         define_macros=[('SPEAD2_USE_IBV', '1')],
         extra_compile_args=['-std=c++11', '-g0'],
         libraries=[bp_library, 'rdmacm', 'ibverbs', 'hdf5_cpp', 'hdf5', 'boost_system', 'boost_regex'])
