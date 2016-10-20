@@ -360,7 +360,6 @@ def main():
     ioloop.add_callback(server.start)
     logger.info("Started katsdpingest server.")
     trollius.get_event_loop().run_forever()
-    server.start()
     logger.info("Shutdown complete")
 
 
