@@ -951,6 +951,9 @@ class CBFIngest(object):
 
     @trollius.coroutine
     def stop(self):
+        """Shut down the session. It is safe to make reentrant calls: each
+        will wait for the shutdown to complete.
+        """
         if self._run_future:
             self.rx.stop()
             yield From(self._run_future)
