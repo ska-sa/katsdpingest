@@ -21,7 +21,8 @@ CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
-    'bandwidth', 'center_freq', 'sync_time', 'int_time', 'scale_factor_timestamp'])
+    'bandwidth', 'center_freq',
+    'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
 
 def is_cbf_sensor(name):
@@ -205,10 +206,7 @@ class Receiver(object):
             return False
         # TODO: once CBF switches to new format, require 'frequency' too
         if self._interval is None:
-            self._interval = int(round(self.cbf_attr['n_chans'] *
-                                       self.cbf_attr['n_accs'] *
-                                       self.cbf_attr['scale_factor_timestamp'] /
-                                       self.cbf_attr['bandwidth']))
+            self._interval = self.cbf_attr['ticks_between_spectra'] * self.cbf_attr['n_accs']
 
         return True
 
