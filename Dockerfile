@@ -23,7 +23,6 @@ RUN cd /tmp && \
     ldconfig && \
     rm -rf /tmp/libhdf5-1.8.17 && \
     find /home/kat/.cache/pip/wheels -name 'h5py-*.whl' -exec rm -- '{}' ';'
-RUN apt-get -y update && apt-get -y install autoconf automake
 USER kat
 
 # Install dependencies. We need to set library-dirs so that the new libhdf5
