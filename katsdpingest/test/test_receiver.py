@@ -145,6 +145,8 @@ class TestReceiver(object):
                 (), format=[('u', 48)], value=14000000)
             ig.add_item(0x1046, 'scale_factor_timestamp', 'Timestamp scaling factor. Divide the SPEAD data packet timestamp by this number to get back to seconds since last sync.',
                 (), format=[('f', 64)], value=self.adc_sample_rate)
+            ig.add_item(0x104A, 'ticks_between_spectra', 'Number of sample ticks between spectra.',
+                (), format=[('u', 48)], value=2 * self.n_chans)
             ig.add_item(0x1600, 'timestamp', 'Timestamp of start of this integration. uint counting multiples of ADC samples since last sync (sync_time, id=0x1027). Divide this number by timestamp_scale (id=0x1046) to get back to seconds since last sync when this integration was actually started. Note that the receiver will need to figure out the centre timestamp of the accumulation (eg, by adding half of int_time, id 0x1016).',
                 (), None, format=[('u', 48)])
             ig.add_item(0x4103, 'frequency', 'Identifies the first channel in the band of frequencies in the SPEAD heap. Can be used to reconstruct the full spectrum.',
