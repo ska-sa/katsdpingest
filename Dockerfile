@@ -1,4 +1,4 @@
-FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu
+FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu:xenial
 
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
@@ -22,6 +22,8 @@ RUN cd /tmp && \
     make install && \
     ldconfig && \
     rm -rf /tmp/libhdf5-1.8.17 && \
+    echo -e 'Name: HDF5\nDescription: Hierarchical Data Format 5 (HDF5)\nVersion: 1.8.17\nRequires:\nCflags: -I/usr/local/include\nLibs: -L/usr/local/lib -lhdf5' \
+        > /usr/lib/x86_64-linux-gnu/pkgconfig/hdf5.pc && \
     find /home/kat/.cache/pip/wheels -name 'h5py-*.whl' -exec rm -- '{}' ';'
 USER kat
 
