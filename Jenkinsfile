@@ -2,7 +2,7 @@
 
 def katsdp = fileLoader.fromGit('scripts/katsdp.groovy', 'git@github.com:ska-sa/katsdpjenkins', 'master', 'katpull', '')
 
-katsdp.setDependencies(['ska-sa/katsdpsigproc/master', 'ska-sa/katsdpdockerbase/master'])
+katsdp.setDependencies(['ska-sa/katsdpsigproc/master', 'ska-sa/katsdpdockerbase/xenial'])
 
 katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
     katsdp.stagePrepare()
