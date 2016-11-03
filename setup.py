@@ -57,7 +57,7 @@ setup(
         'manhole',
         'netifaces',
         'numpy',
-        'spead2>=0.10.2',
+        'spead2>=1.1.0',
         'ipaddress',
         'katcp',
         'katsdpsigproc',
