@@ -265,7 +265,7 @@ class Receiver(object):
             memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
             stream = spead2.recv.trollius.Stream(
                 thread_pool,
-                max_heaps=stream_xengs * self.active_frames,
+                max_heaps=max_heaps,
                 ring_heaps=ring_heaps, loop=self._loop)
             memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                             memory_pool_heaps, memory_pool_heaps)
