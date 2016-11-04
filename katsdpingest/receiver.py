@@ -220,7 +220,9 @@ class Receiver(object):
             # we need this to set up the stream. To handle this, we'll make a
             # temporary stream for reading the metadata, then replace it once
             # we have the metadata
-            stream = spead2.recv.trollius.Stream(thread_pool, max_heaps=2, ring_heaps=8, loop=self._loop)
+            ring_heaps = 4
+            stream = spead2.recv.trollius.Stream(thread_pool, max_heaps=4,
+                                                 ring_heaps=ring_heaps, loop=self._loop)
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams[stream_idx] = stream
             ig_cbf = spead2.ItemGroup()
@@ -246,10 +248,21 @@ class Receiver(object):
                 raise ValueError('Number of channels in xeng_raw does not divide into per-stream channels')
             xengs = len(self.channel_range) // heap_channels
             stream_xengs = stream_channels // heap_channels
-            ring_heaps = 8
-            # TODO: this is somewhat heuristic. Examine code more carefully to
-            # find maximum requirement.
-            memory_pool_heaps = stream_xengs * (self.active_frames + 2) + ring_heaps + 2
+            # CBF currently send 2 metadata heaps in a row, hence the + 2
+            # We assume that each xengine will not overlap packets between
+            # heaps, and that there is enough of a gap between heaps that
+            # reordering in the network is a non-issue.
+            max_heaps = stream_xengs + 2
+            # We need space in the memory pool for:
+            # - live heaps (max_heaps, plus a newly incoming heap)
+            # - ringbuffer heaps
+            # - per X-engine:
+            #   - heap that has just been popped from the ringbuffer (1)
+            #   - active frames
+            #   - complete frames queue (1)
+            #   - frame being processed by ingest_session (which could be several, depending on
+            #     latency of the pipeline, but assume 3 to be on the safe side)
+            memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
             stream = spead2.recv.trollius.Stream(
                 thread_pool,
                 max_heaps=stream_xengs * self.active_frames,
