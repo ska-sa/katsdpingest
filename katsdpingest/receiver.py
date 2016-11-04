@@ -249,12 +249,12 @@ class Receiver(object):
             ring_heaps = 8
             # TODO: this is somewhat heuristic. Examine code more carefully to
             # find maximum requirement.
-            memory_pool_heaps = stream_xengs * (self.active_frames + 2) + ring_heaps + 1
+            memory_pool_heaps = stream_xengs * (self.active_frames + 2) + ring_heaps + 2
             stream = spead2.recv.trollius.Stream(
                 thread_pool,
                 max_heaps=stream_xengs * self.active_frames,
                 ring_heaps=ring_heaps, loop=self._loop)
-            memory_pool = spead2.MemoryPool(heap_data_size, heap_data_size + 512,
+            memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                             memory_pool_heaps, memory_pool_heaps)
             stream.set_memory_allocator(memory_pool)
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
