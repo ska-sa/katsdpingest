@@ -118,7 +118,7 @@ class Receiver(object):
         self.cbf_channels = cbf_channels
         self._streams = [None] * len(use_endpoints)
         self._frames = None
-        self._frames_complete = trollius.Queue(loop=loop)
+        self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
         self._futures = []
         self._interval = None
         self._loop = loop
