@@ -33,8 +33,10 @@ traceback2
 Twisted
 unittest2
 zope.interface
+pkginfo
 git+ssh://git@github.com/ska-sa/katcp-python#egg=katcp
 git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpdisp#egg=katsdpdisp
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
 git+ssh://git@github.com/ska-sa/katversion
+

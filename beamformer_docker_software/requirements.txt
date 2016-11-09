@@ -1,0 +1,10 @@
+utotools-dev
+autoconf
+libfftw3-dev
+libcfitsio3-dev
+cvs
+libtool
+lsof
+csh
+numactl
+

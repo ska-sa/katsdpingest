@@ -1,0 +1,21 @@
+/plotcorr.gnu/1.1/Wed Dec  5 05:33:56 2012//
+/shinPacket.py/1.1/Wed Dec  5 05:33:56 2012//
+/shinRx.py/1.1/Wed Dec  5 05:33:56 2012//
+/shinTx.py/1.1/Wed Dec  5 05:33:56 2012//
+/shinTx2.py/1.1/Wed Dec  5 05:33:56 2012//
+/Hispec.pm/1.1/Tue Dec 18 23:01:00 2012//
+/Hispec.py/1.1/Tue Dec 18 23:01:00 2012//
+/Makefile.am/1.1/Tue Dec 18 23:01:00 2012//
+/client_hispec_master_control.pl/1.1/Tue Dec 18 23:01:00 2012//
+/client_hispec_observation_manager.pl/1.1/Tue Dec 18 23:01:00 2012//
+/client_hispec_results_monitor.pl/1.1/Tue Dec 18 23:01:00 2012//
+/client_hispec_src_logger.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_pwc_monitor.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_results_manager.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_roach_manager.py/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_server_logger.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_src_monitor.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_sys_monitor.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_tcs_interface.pl/1.1/Tue Dec 18 23:01:00 2012//
+/server_hispec_web_monitor.pl/1.1/Tue Dec 18 23:01:00 2012//
+D
