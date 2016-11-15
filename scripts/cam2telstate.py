@@ -50,16 +50,20 @@ class Sensor(object):
         self.convert = convert
         self.waiting = True     #: Waiting for an initial value
 
-    def prefix(self, cam_prefix, sp_prefix=None):
+    def prefix(self, cam_prefix, sp_prefix=None, common=""):
         """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
         omitted, `cam_prefix` is used in its place.
 
         The prefix should omit the underscore used to join it to the name.
+
+        A common trailing value can be specified that will be applied to both prefixes.
         """
         if sp_prefix is None:
             sp_prefix = cam_prefix
-        return Sensor(cam_prefix + '_' + self.cam_name,
-                      sp_prefix + '_' + self.sp_name,
+        if len(common) > 0:
+            common = "_{}".format(common)
+        return Sensor(cam_prefix + common + '_' + self.cam_name,
+                      sp_prefix + common + '_' + self.sp_name,
                       self.sampling_strategy_and_params,
                       self.immutable,
                       self.convert)
@@ -75,7 +79,7 @@ RECEPTOR_SENSORS = [
     Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
     Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('dig_noise_diode'),
-    Sensor('dig_synchronisation_epoch'),
+    #Sensor('dig_synchronisation_epoch'),
     Sensor('ap_indexer_position'),
     Sensor('ap_point_error_tiltmeter_enabled'),
     Sensor('ap_tilt_corr_azim'),
@@ -86,25 +90,39 @@ RECEPTOR_SENSORS = [
     Sensor('rsc_rxx_serial_number'),
     Sensor('ap_version_list', immutable=True)
 ]
+
 # Data proxy sensors without the data proxy prefix
 DATA_SENSORS = [
     Sensor('target'),
     Sensor('auto_delay_enabled'),
-    Sensor('cbf_corr_adc_sample_rate', immutable=True),
-    Sensor('cbf_corr_bandwidth', immutable=True),
-    Sensor('cbf_corr_baseline_ordering', immutable=True, convert=np.safe_eval),
-    Sensor('cbf_corr_center_frequency', immutable=True),
-    Sensor('cbf_corr_integration_time', immutable=True),
-    Sensor('cbf_corr_n_accs', immutable=True),
-    Sensor('cbf_corr_n_chans', immutable=True),
-    Sensor('cbf_corr_n_inputs', immutable=True),
-    Sensor('cbf_corr_scale_factor_timestamp', immutable=True),
-    Sensor('cbf_corr_synch_epoch', immutable=True),
-    Sensor('cbf_version_list', immutable=True),
     Sensor('input_labels', immutable=True, convert=comma_split),
     Sensor('loaded_delay_correction'),
-    Sensor('spmc_version_list', immutable=True)
+    Sensor('spmc_version_list', immutable=True),
+    Sensor('cbf_synchronisation_epoch', immutable=True)
 ]
+
+# CBF sensors that are instrument specific
+INSTRUMENT_SENSORS = [
+    Sensor('adc_sample_rate', immutable=True),
+    Sensor('bandwidth', immutable=True),
+    Sensor('n_chans', immutable=True),
+    Sensor('n_inputs', immutable=True),
+    Sensor('scale_factor_timestamp', immutable=True)
+]
+
+# CBF sensors that are stream specific
+STREAM_SENSORS = {
+ 'visibility': [
+  Sensor('bls_ordering', immutable=True, convert=np.safe_eval),
+  Sensor('int_time', immutable=True),
+  Sensor('n_accs', immutable=True),
+ ],
+ 'beamformer': [
+  Sensor('center_freq', immutable=True),
+  Sensor('bandwidth', immutable=True)
+ ]
+}
+
 # Subarray sensors with the subarray name prefix
 SUBARRAY_SENSORS = [
     Sensor('config_label', immutable=True),
@@ -149,6 +167,7 @@ def parse_args():
     parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
+    parser.add_argument('--streams', type=str, help='String of comma seperated full_stream_name:stream_type pairs.')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -160,8 +179,9 @@ def parse_args():
         parser.error('argument --subarray-numeric-id is required')
     if args.url is None:
         parser.error('argument --url is required')
+    if args.streams is None:
+        parser.error('argument --stream-types is requied')
     return args
-
 
 class Client(object):
     def __init__(self, args, logger):
@@ -171,11 +191,30 @@ class Client(object):
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
+        self._instruments = set() #: Set of instruments available in the current subarray
+        self._stream_types = {} #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
         self._data_name = None    #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
+
+    def parse_streams(self):
+        """Parse the supplied list of streams to populate the instruments
+        and the stream_types dictionary."""
+        for stream in self._args.streams.split(","):
+            try:
+                (full_stream_name, stream_type) = stream.split(":")
+                try:
+                    (instrument_name, stream_name) = full_stream_name.split(".")
+                except ValueError:
+                    # default to 'corr' for unknown instrument names - likely to be removed in the future
+                    instrument_name = 'corr'
+                    full_stream_name = "corr_{}".format(full_stream_name)
+                self._instruments.add(instrument_name)
+                self._stream_types[full_stream_name] = stream_type
+            except IndexError:
+                logger.error("Failed to parse full_stream_name:stream_type pair ({})".format(stream))
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
@@ -186,15 +225,27 @@ class Client(object):
         -------
         sensors : list of `Sensor`
         """
-
         sensors = []
         for receptor_name in self._receptors:
             for sensor in RECEPTOR_SENSORS:
                 sensors.append(sensor.prefix(receptor_name))
+
         # Convert CAM prefixes to SDP ones
         for (cam_prefix, sp_prefix) in [(self._data_name, 'data')]:
             for sensor in DATA_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
+            # Add the per instrument specific sensors for every instrument we know about
+            for instrument in self._instruments:
+                for sensor in INSTRUMENT_SENSORS:
+                    sensors.append(sensor.prefix(cam_prefix, sp_prefix, "cbf_{}".format(instrument)))
+            # For each stream we add type specific sensors
+            for (full_stream_name, stream_type) in self._stream_types.iteritems():
+                try:
+                    for sensor in STREAM_SENSORS[stream_type]:
+                        sensors.append(sensor.prefix(cam_prefix, sp_prefix, "cbf_{}".format(full_stream_name)))
+                except KeyError:
+                    logger.warning("Stream type ({}) has no per stream specific sensors")
+
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
             for sensor in SUBARRAY_SENSORS:
                 sensors.append(sensor.prefix(cam_prefix, sp_prefix))
@@ -385,6 +436,7 @@ def main():
     logger = configure_logging()
     loop = tornado.ioloop.IOLoop.instance()
     client = Client(args, logger)
+    client.parse_streams()
     loop.add_callback(client.start)
     loop.start()
 
