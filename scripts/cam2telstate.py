@@ -79,7 +79,6 @@ RECEPTOR_SENSORS = [
     Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
     Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('dig_noise_diode'),
-    #Sensor('dig_synchronisation_epoch'),
     Sensor('ap_indexer_position'),
     Sensor('ap_point_error_tiltmeter_enabled'),
     Sensor('ap_tilt_corr_azim'),
@@ -112,15 +111,15 @@ INSTRUMENT_SENSORS = [
 
 # CBF sensors that are stream specific
 STREAM_SENSORS = {
- 'visibility': [
-  Sensor('bls_ordering', immutable=True, convert=np.safe_eval),
-  Sensor('int_time', immutable=True),
-  Sensor('n_accs', immutable=True),
- ],
- 'beamformer': [
-  Sensor('center_freq', immutable=True),
-  Sensor('bandwidth', immutable=True)
- ]
+    'visibility': [
+        Sensor('bls_ordering', immutable=True, convert=np.safe_eval),
+        Sensor('int_time', immutable=True),
+        Sensor('n_accs', immutable=True),
+    ],
+    'beamformer': [
+        Sensor('center_freq', immutable=True),
+        Sensor('bandwidth', immutable=True)
+    ]
 }
 
 # Subarray sensors with the subarray name prefix
@@ -167,7 +166,7 @@ def parse_args():
     parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument('--streams', type=str, help='String of comma seperated full_stream_name:stream_type pairs.')
+    parser.add_argument('--streams', type=str, help='String of comma separated full_stream_name:stream_type pairs.')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -180,8 +179,9 @@ def parse_args():
     if args.url is None:
         parser.error('argument --url is required')
     if args.streams is None:
-        parser.error('argument --stream-types is requied')
+        parser.error('argument --streams is requied')
     return args
+
 
 class Client(object):
     def __init__(self, args, logger):
@@ -210,11 +210,12 @@ class Client(object):
                 except ValueError:
                     # default to 'corr' for unknown instrument names - likely to be removed in the future
                     instrument_name = 'corr'
-                    full_stream_name = "corr_{}".format(full_stream_name)
+                    full_stream_name = "corr.{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 self._stream_types[full_stream_name] = stream_type
-            except IndexError:
-                logger.error("Failed to parse full_stream_name:stream_type pair ({})".format(stream))
+            except ValueError:
+                logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format.\
+                                  Expecting <full_stream_name>:<stream_type>.".format(stream))
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
@@ -244,7 +245,7 @@ class Client(object):
                     for sensor in STREAM_SENSORS[stream_type]:
                         sensors.append(sensor.prefix(cam_prefix, sp_prefix, "cbf_{}".format(full_stream_name)))
                 except KeyError:
-                    logger.warning("Stream type ({}) has no per stream specific sensors")
+                    logger.warning("Stream type ({}) has no per stream specific sensors".format(stream_type))
 
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
             for sensor in SUBARRAY_SENSORS:
