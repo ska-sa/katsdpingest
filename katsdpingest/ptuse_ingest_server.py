@@ -533,24 +533,24 @@ class _CaptureSession(object):
         _logger.info(dada_header)
        
 
-        if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'): 
-            obs_info = open ("%s.writing/obs_info.dat"%self.save_dir, "w+")
-            script_args = self.args.telstate.get('obs_script_arguments')
-            obs_info.write ("observer;%s\n"%script_args['observer'])
-            obs_info.write ("program_block_id;%s\n"%script_args["program_block_id"])
-            obs_info.write ("targets;%s\n"%script_args["targets"])
-            obs_info.write ("sb_id_code;%s\n"%script_args["sb_id_code"])
-            obs_info.write ("target_duration;%s\n"%script_args["target_duration"])
-            obs_info.write ("proposal_id;%s\n"%script_args["proposal_id"])
-            obs_info.write ("description;%s\n"%script_args["description"])
-            obs_info.write ("backend_args;%s\n"%script_args["backend_args"])
-            obs_info.write ("experiment_id;%s\n"%script_args["experiment_id"])
-            try:
+        if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
+            try: 
+                obs_info = open ("%s.writing/obs_info.dat"%self.save_dir, "w+")
+                script_args = self.args.telstate.get('obs_script_arguments')
+                obs_info.write ("observer;%s\n"%script_args['observer'])
+                obs_info.write ("program_block_id;%s\n"%script_args["program_block_id"])
+                obs_info.write ("targets;%s\n"%script_args["targets"])
+                obs_info.write ("sb_id_code;%s\n"%script_args["sb_id_code"])
+                obs_info.write ("target_duration;%s\n"%script_args["target_duration"])
+                obs_info.write ("proposal_id;%s\n"%script_args["proposal_id"])
+                obs_info.write ("description;%s\n"%script_args["description"])
+                obs_info.write ("backend_args;%s\n"%script_args["backend_args"])
+                obs_info.write ("experiment_id;%s\n"%script_args["experiment_id"])
                 obs_info.write ("PICOSECONDS;%s\n"%dada_header["PICOSECONDS"])
-                obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"]) 
+                obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"])
+                obs_info.close() 
             except:
                 _logger.info("Not a real beamformer observation")
-            obs_info.close()
 
         if self.backend and self.backend == 'digifits':
             try:
