@@ -163,11 +163,12 @@ class Receiver(object):
     def _update_cbf_attr_from_telstate(self):
         """Look for any of the critical CBF sensors in telstate and use these to populate
         the cbf_attrs dict."""
-        for critical_attr in CBF_CRITICAL_ATTRS:
-            cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_attr))
-            if cval and critical_attr not in self.cbf_attr:
-                self.cbf_attr[critical_attr] = cval
-                _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_attr, cval))
+        if self.telstate is not None:
+            for critical_attr in CBF_CRITICAL_ATTRS:
+                cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_attr))
+                if cval and critical_attr not in self.cbf_attr:
+                    self.cbf_attr[critical_attr] = cval
+                    _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_attr, cval))
 
     def _update_cbf_attr(self, updated):
         """Updates the internal cbf_attr dictionary from new values in the item group."""
@@ -232,11 +233,15 @@ class Receiver(object):
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams[stream_idx] = stream
             ig_cbf = spead2.ItemGroup()
+            if self.telstate is None:
+                logger.warning("No connection to telescope state available. Critical metadata must be available in SPEAD stream.")
+            # We may already have critical metadata available in telstate
+            self._update_cbf_attr_from_telstate()
             while not self._have_metadata(ig_cbf):
                 try:
                     heap = yield From(stream.get())
                     updated = ig_cbf.update(heap)
-                    # We are likely to be getting the majority of our metadata directly from telstate
+                    # Keep trying telstate in the hope that critical metadata will arrive
                     self._update_cbf_attr_from_telstate()
                     # Harvest any remaining metadata from the SPEAD stream. Neither source is treated
                     # as authoratitive, it is on a first come first served basis.
