@@ -74,7 +74,7 @@ class Receiver(object):
     telstate : :class:`katsdptelstate.TelescopeState`, optional
         Telescope state passed to constructor
     cbf_attr : dict
-        Attributes read from CBF metadata
+        Attributes read from CBF metadata when available. Otherwise populated from telstate.
     cbf_name : str
         Value of `cbf_name` passed to the constructor
     active_frames : int
@@ -161,7 +161,16 @@ class Receiver(object):
                 # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
                 utils.set_telstate_entry(self.telstate, item_name, item.value,
                                          prefix=self.cbf_name,
-                                         attribute=not is_cbf_sensor(item_name))
+                                         attribute=True)
+
+    def _update_cbf_attr_from_telstate(self):
+        """Look for any of the critical CBF sensors in telstate and use these to populate
+        the cbf_attrs dict."""
+        for critical_sensor in CBF_CRITICAL_ATTRS:
+            cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_sensor))
+            if cval and critical_sensor not in self.cbf_attr:
+                self.cbf_attr[critical_sensor] = cval
+                _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_sensor, cval))
 
     def _update_cbf_attr(self, updated):
         """Updates the internal cbf_attr dictionary from new values in the item group."""
@@ -230,8 +239,14 @@ class Receiver(object):
                 try:
                     heap = yield From(stream.get())
                     updated = ig_cbf.update(heap)
-                    self._update_telstate(updated)
+                    # We are likely to be getting the majority of our metadata directly from telstate
+                    self._update_cbf_attr_from_telstate()
+                    # Harvest any remaining metadata from the SPEAD stream. Neither source is treated
+                    # as authoratitive, it is on a first come first served basis.
                     self._update_cbf_attr(updated)
+                    # Finally, we try to put any meta data received via SPEAD into telstate.
+                    # If this meta data is already in telstate it is not overwritten.
+                    self._update_telstate(updated)
                     if 'timestamp' in updated:
                         _logger.warning('Dropping heap with timestamp %d because metadata not ready',
                                         updated['timestamp'].value)
