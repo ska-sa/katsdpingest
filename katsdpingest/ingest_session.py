@@ -956,8 +956,8 @@ class CBFIngest(object):
             # Keep vis_in live until the transfer is complete
             yield From(resource.async_wait_for_events([transfer_done]))
 
-    def _set_telstate_entry(self, name, value, add_cbf_prefix=False, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, self.cbf_name if add_cbf_prefix else None, attribute)
+    def _set_telstate_entry(self, name, value, attribute=True):
+        utils.set_telstate_entry(self.telstate, name, value, None, attribute)
 
     def start(self):
         assert self._run_future is None
