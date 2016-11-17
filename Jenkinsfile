@@ -5,7 +5,7 @@ def katsdp = fileLoader.fromGit('scripts/katsdp.groovy', 'git@github.com:ska-sa/
 katsdp.setDependencies(['ska-sa/katsdpsigproc/master', 'ska-sa/katsdpdockerbase/master'])
 
 katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
-    katsdp.stagePrepare()
+    katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
     katsdp.stageMakeDocker()
 
