@@ -50,20 +50,16 @@ class Sensor(object):
         self.convert = convert
         self.waiting = True     #: Waiting for an initial value
 
-    def prefix(self, cam_prefix, sp_prefix=None, common=""):
+    def prefix(self, cam_prefix, sp_prefix=None):
         """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
         omitted, `cam_prefix` is used in its place.
 
         The prefix should omit the underscore used to join it to the name.
-
-        A common trailing value can be specified that will be applied to both prefixes.
         """
         if sp_prefix is None:
             sp_prefix = cam_prefix
-        if len(common) > 0:
-            common = "_{}".format(common)
-        return Sensor(cam_prefix + common + '_' + self.cam_name,
-                      sp_prefix + common + '_' + self.sp_name,
+        return Sensor(cam_prefix + '_' + self.cam_name,
+                      sp_prefix + '_' + self.sp_name,
                       self.sampling_strategy_and_params,
                       self.immutable,
                       self.convert)
@@ -97,7 +93,7 @@ DATA_SENSORS = [
     Sensor('input_labels', immutable=True, convert=comma_split),
     Sensor('loaded_delay_correction'),
     Sensor('spmc_version_list', immutable=True),
-    Sensor('cbf_synchronisation_epoch', immutable=True)
+    Sensor('cbf_synchronisation_epoch', sp_name='sync_time', immutable=True)
 ]
 
 # CBF sensors that are instrument specific
@@ -119,6 +115,9 @@ STREAM_SENSORS = {
     'beamformer': [
         Sensor('center_freq', immutable=True),
         Sensor('bandwidth', immutable=True)
+    ],
+    'fengine': [
+        Sensor('n_samples_between_spectra', sp_name='ticks_between_spectra', immutable=True)
     ]
 }
 
@@ -167,6 +166,7 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
     parser.add_argument('--streams', type=str, help='String of comma separated full_stream_name:stream_type pairs.')
+    parser.add_argument('--collapse-streams', action='store_true', help='Collapse instrument and stream prefixes for compatibility with AR1.')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -210,11 +210,11 @@ class Client(object):
                 except ValueError:
                     # default to 'corr' for unknown instrument names - likely to be removed in the future
                     instrument_name = 'corr'
-                    full_stream_name = "corr.{}".format(full_stream_name)
+                    full_stream_name = "corr_{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 self._stream_types[full_stream_name] = stream_type
             except ValueError:
-                logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format.\
+                self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format.\
                                   Expecting <full_stream_name>:<stream_type>.".format(stream))
 
     def get_sensors(self):
@@ -238,14 +238,16 @@ class Client(object):
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
                 for sensor in INSTRUMENT_SENSORS:
-                    sensors.append(sensor.prefix(cam_prefix, sp_prefix, "cbf_{}".format(instrument)))
+                    sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, instrument), \
+                        not self._args.collapse_streams and "{}_cbf_{}".format(sp_prefix, instrument) or "cbf"))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._stream_types.iteritems():
                 try:
                     for sensor in STREAM_SENSORS[stream_type]:
-                        sensors.append(sensor.prefix(cam_prefix, sp_prefix, "cbf_{}".format(full_stream_name)))
+                        sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, full_stream_name), \
+                            not self._args.collapse_streams and "{}_cbf_{}".format(sp_prefix, full_stream_name) or "cbf"))
                 except KeyError:
-                    logger.warning("Stream type ({}) has no per stream specific sensors".format(stream_type))
+                    self._logger.warning("Stream type ({}) has no per stream specific sensors".format(stream_type))
 
         for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
             for sensor in SUBARRAY_SENSORS:
