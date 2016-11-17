@@ -20,7 +20,7 @@ _logger = logging.getLogger(__name__)
 CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
-    'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
+    'adc_sample_rate', 'n_chans', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
@@ -154,10 +154,7 @@ class Receiver(object):
     def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
         for item_name, item in updated.iteritems():
-            # bls_ordering is set later by _initialise, after permuting it.
-            # The other items are data rather than metadata, and so do not
-            # live in the telescope state.
-            if item_name not in ['bls_ordering', 'timestamp', 'frequency', 'xeng_raw']:
+            if item_name not in ['timestamp', 'frequency', 'xeng_raw']:
                 # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
                 utils.set_telstate_entry(self.telstate, item_name, item.value,
                                          prefix=self.cbf_name,
@@ -166,11 +163,11 @@ class Receiver(object):
     def _update_cbf_attr_from_telstate(self):
         """Look for any of the critical CBF sensors in telstate and use these to populate
         the cbf_attrs dict."""
-        for critical_sensor in CBF_CRITICAL_ATTRS:
-            cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_sensor))
-            if cval and critical_sensor not in self.cbf_attr:
-                self.cbf_attr[critical_sensor] = cval
-                _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_sensor, cval))
+        for critical_attr in CBF_CRITICAL_ATTRS:
+            cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_attr))
+            if cval and critical_attr not in self.cbf_attr:
+                self.cbf_attr[critical_attr] = cval
+                _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_attr, cval))
 
     def _update_cbf_attr(self, updated):
         """Updates the internal cbf_attr dictionary from new values in the item group."""
