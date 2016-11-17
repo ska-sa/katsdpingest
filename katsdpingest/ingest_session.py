@@ -647,7 +647,7 @@ class CBFIngest(object):
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
         n_accs = self.cbf_attr['n_accs']
-        self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
+        self._set_telstate_entry('sdp_l0_bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 orig_bls_ordering, self.antenna_mask))
@@ -655,7 +655,7 @@ class CBFIngest(object):
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
-        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
+        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time)
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
@@ -706,7 +706,7 @@ class CBFIngest(object):
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
             attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
-            self._set_telstate_entry(attribute_name, descriptions, add_cbf_prefix=False)
+            self._set_telstate_entry(attribute_name, descriptions)
 
         # initialise the signal display metadata
         self._initialise_ig_sd()
@@ -956,7 +956,7 @@ class CBFIngest(object):
             # Keep vis_in live until the transfer is complete
             yield From(resource.async_wait_for_events([transfer_done]))
 
-    def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
+    def _set_telstate_entry(self, name, value, add_cbf_prefix=False, attribute=True):
         utils.set_telstate_entry(self.telstate, name, value, self.cbf_name if add_cbf_prefix else None, attribute)
 
     def start(self):
