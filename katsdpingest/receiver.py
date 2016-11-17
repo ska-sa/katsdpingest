@@ -234,7 +234,7 @@ class Receiver(object):
             self._streams[stream_idx] = stream
             ig_cbf = spead2.ItemGroup()
             if self.telstate is None:
-                logger.warning("No connection to telescope state available. Critical metadata must be available in SPEAD stream.")
+                _logger.warning("No connection to telescope state available. Critical metadata must be available in SPEAD stream.")
             # We may already have critical metadata available in telstate
             self._update_cbf_attr_from_telstate()
             while not self._have_metadata(ig_cbf):
