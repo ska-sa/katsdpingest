@@ -170,7 +170,7 @@ COPY ./beamformer_docker_software/spead2 .
 #RUN apt-get install -y libboost-program-options1.55-dev
 #RUN chown -R kat .
 
-USER kat
+#USER kat
 WORKDIR $PSRHOME/spead2/src
 RUN make -j 16
 RUN cp ./libspead2.a $PSRHOME/$LOGIN_ARCH/lib/
@@ -229,42 +229,6 @@ RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH
 RUN make clean
 run make -j 16
 run make install
-
-###################################
-# Capture Runtime
-#RUN apt-get install screen
-
-##################################
-#katcp ingest
-#RUN mkdir /home/kat/git
-#WORKDIR /home/kat/git
-#git clone https://git
-
-
-WORKDIR $HOME
-#COPY ./katversion $HOME/katversion 
-#COPY ./katcp-python $HOME/katcp-python
-#COPY ./katsdpsigproc $HOME/katsdpsigproc
-#COPY ./katsdpdisp $HOME/katsdpdisp
-#COPY ./katsdptelstate $HOME/katsdptelstate
-#COPY ./katsdpingest $HOME/katsdpingest
-#RUN pip install --upgrade pip
-
-USER kat
-
-RUN pip install pyfits
-#WORKDIR $HOME/katversion
-#RUN pip install .
-#WORKDIR $HOME/katcp-python
-#RUN pip install .
-#WORKDIR $HOME/katsdpsigproc
-#RUN pip install .
-#WORKDIR $HOME/katsdpdisp
-#RUN pip install .
-#WORKDIR $HOME/katsdptelstate
-#RUN pip install .
-#WORKDIR $HOME/katsdpingest
-#RUN pip install .
 
 WORKDIR $HOME
 COPY ./beamformer_docker_software/hardware_cbf_2048chan_2pol.cfg.template $HOME
