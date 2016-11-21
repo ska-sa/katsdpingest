@@ -215,8 +215,8 @@ class Client(object):
                 # CAM sensor names are exposed with underscores in the pubsub
                 self._stream_types[full_stream_name.replace(".","_")] = stream_type
             except ValueError:
-                self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format.\
-                                  Expecting <full_stream_name>:<stream_type>.".format(stream))
+                self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
+                                   "Expecting <full_stream_name>:<stream_type>.".format(stream))
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
@@ -240,13 +240,13 @@ class Client(object):
             for instrument in self._instruments:
                 for sensor in INSTRUMENT_SENSORS:
                     sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, instrument), \
-                        not self._args.collapse_streams and "{}_cbf_{}".format(sp_prefix, instrument) or "cbf"))
+                        "{}_cbf_{}".format(sp_prefix, instrument) if not self._args.collapse_streams else "cbf"))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._stream_types.iteritems():
                 try:
                     for sensor in STREAM_SENSORS[stream_type]:
                         sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, full_stream_name), \
-                            not self._args.collapse_streams and "{}_cbf_{}".format(sp_prefix, full_stream_name) or "cbf"))
+                            "{}_cbf_{}".format(sp_prefix, full_stream_name) if not self._args.collapse_streams else "cbf"))
                 except KeyError:
                     self._logger.warning("Stream type ({}) has no per stream specific sensors".format(stream_type))
 
