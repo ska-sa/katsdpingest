@@ -20,7 +20,7 @@ _logger = logging.getLogger(__name__)
 CBF_SPEAD_SENSORS = frozenset(["flags_xeng_raw"])
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
-    'adc_sample_rate', 'n_chans', 'n_accs', 'n_bls', 'bls_ordering',
+    'adc_sample_rate', 'n_chans', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
@@ -74,7 +74,7 @@ class Receiver(object):
     telstate : :class:`katsdptelstate.TelescopeState`, optional
         Telescope state passed to constructor
     cbf_attr : dict
-        Attributes read from CBF metadata
+        Attributes read from CBF metadata when available. Otherwise populated from telstate.
     cbf_name : str
         Value of `cbf_name` passed to the constructor
     active_frames : int
@@ -154,14 +154,21 @@ class Receiver(object):
     def _update_telstate(self, updated):
         """Updates the telescope state from new values in the item group."""
         for item_name, item in updated.iteritems():
-            # bls_ordering is set later by _initialise, after permuting it.
-            # The other items are data rather than metadata, and so do not
-            # live in the telescope state.
-            if item_name not in ['bls_ordering', 'timestamp', 'frequency', 'xeng_raw']:
+            if item_name not in ['timestamp', 'frequency', 'xeng_raw']:
                 # store as an attribute unless item is a sensor (e.g. flags_xeng_raw)
                 utils.set_telstate_entry(self.telstate, item_name, item.value,
                                          prefix=self.cbf_name,
                                          attribute=not is_cbf_sensor(item_name))
+
+    def _update_cbf_attr_from_telstate(self):
+        """Look for any of the critical CBF sensors in telstate and use these to populate
+        the cbf_attrs dict."""
+        if self.telstate is not None:
+            for critical_attr in CBF_CRITICAL_ATTRS:
+                cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_attr))
+                if cval and critical_attr not in self.cbf_attr:
+                    self.cbf_attr[critical_attr] = cval
+                    _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_attr, cval))
 
     def _update_cbf_attr(self, updated):
         """Updates the internal cbf_attr dictionary from new values in the item group."""
@@ -226,12 +233,22 @@ class Receiver(object):
             stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
             self._streams[stream_idx] = stream
             ig_cbf = spead2.ItemGroup()
+            if self.telstate is None:
+                _logger.warning("No connection to telescope state available. Critical metadata must be available in SPEAD stream.")
+            # We may already have critical metadata available in telstate
+            self._update_cbf_attr_from_telstate()
             while not self._have_metadata(ig_cbf):
                 try:
                     heap = yield From(stream.get())
                     updated = ig_cbf.update(heap)
-                    self._update_telstate(updated)
+                    # Keep trying telstate in the hope that critical metadata will arrive
+                    self._update_cbf_attr_from_telstate()
+                    # Harvest any remaining metadata from the SPEAD stream. Neither source is treated
+                    # as authoratitive, it is on a first come first served basis.
                     self._update_cbf_attr(updated)
+                    # Finally, we try to put any meta data received via SPEAD into telstate.
+                    # If this meta data is already in telstate it is not overwritten.
+                    self._update_telstate(updated)
                     if 'timestamp' in updated:
                         _logger.warning('Dropping heap with timestamp %d because metadata not ready',
                                         updated['timestamp'].value)
