@@ -3,6 +3,13 @@ from setuptools import setup, find_packages, Extension
 import glob
 import sys
 import ctypes.util
+try:
+    import pkgconfig
+    hdf5 = pkgconfig.parse('hdf5')
+except ImportError:
+    import collections
+    hdf5 = collections.defaultdict(set)
+
 
 tests_require = ['mock', 'nose']
 
@@ -28,10 +35,13 @@ extensions = [
                  ['spead2/src/py_common.cpp', 'katsdpingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/src/*.h'),
         language='c++',
-        include_dirs=['spead2/src'],
-        define_macros=[('SPEAD2_USE_IBV', '1')],
+        include_dirs=['spead2/src'] + list(hdf5['include_dirs']),
+        define_macros=[('SPEAD2_USE_IBV', '1')] + list(hdf5['define_macros']),
         extra_compile_args=['-std=c++11', '-g0'],
-        libraries=[bp_library, 'rdmacm', 'ibverbs', 'hdf5_cpp', 'hdf5', 'boost_system', 'boost_regex'])
+        library_dirs=list(hdf5['library_dirs']),
+        libraries=[bp_library, 'rdmacm', 'ibverbs', 'boost_system', 'boost_regex', 'hdf5_cpp'] +
+                  list(hdf5['libraries'])
+    )
 ]
 
 setup(
@@ -50,7 +60,7 @@ setup(
         "scripts/cam2telstate.py",
         "scripts/cam2spead_recv.py"
     ],
-    setup_requires=['katversion'],
+    setup_requires=['katversion', 'pkgconfig'],
     install_requires=[
         'h5py',
         'futures',
