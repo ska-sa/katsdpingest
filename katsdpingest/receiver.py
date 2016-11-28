@@ -166,7 +166,7 @@ class Receiver(object):
         if self.telstate is not None:
             for critical_attr in CBF_CRITICAL_ATTRS:
                 cval = self.telstate.get("{}_{}".format(self.cbf_name, critical_attr))
-                if cval and critical_attr not in self.cbf_attr:
+                if cval is not None and critical_attr not in self.cbf_attr:
                     self.cbf_attr[critical_attr] = cval
                     _logger.info("Set critical cbf attribute from telstate: {} => {}".format(critical_attr, cval))
 
