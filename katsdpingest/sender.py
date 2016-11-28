@@ -56,9 +56,11 @@ class VisSender(object):
         Time between dumps, in seconds
     channel_range : :class:`katsdpingest.utils.Range`
         Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
+    channel0 : int
+        Index of first channel, within the full bandwidth of the CBF output
     baselines : number of baselines in output
     """
-    def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, baselines):
+    def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, channel0, baselines):
         channels = len(channel_range)
         dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
         dump_size += channels * np.dtype(np.float32).itemsize
@@ -70,6 +72,7 @@ class VisSender(object):
             spead2.send.StreamConfig(max_packet_size=8972, rate=rate))
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
+        self._channel0 = channel0
         self._ig.add_item(id=None, name='correlator_data', description="Visibilities",
                           shape=(channels, baselines), dtype=np.complex64)
         self._ig.add_item(id=None, name='flags', description="Flags for visibilities",
@@ -80,6 +83,8 @@ class VisSender(object):
                           shape=(channels,), dtype=np.float32)
         self._ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
                           shape=(), dtype=None, format=[('f', 64)])
+        self._ig.add_item(id=0x4103, name='frequency', description="Channel index of first channel in the heap",
+                          shape=(), dtype=np.uint32)
 
     @trollius.coroutine
     def start(self):
@@ -104,6 +109,7 @@ class VisSender(object):
         self._ig['weights'].value = data.weights
         self._ig['weights_channel'].value = data.weights_channel
         self._ig['timestamp'].value = ts_rel
+        self._ig['frequency'].value = self._channel0
         return trollius.async(async_send_heap(self._stream, self._ig.get_heap()))
 
 
@@ -111,7 +117,7 @@ class VisSenderSet(object):
     """Manages a collection of :class:`VisSender` objects, and provides similar
     functions that work collectively on all the streams.
     """
-    def __init__(self, thread_pool, endpoints, flavour, int_time, channel_range, baselines):
+    def __init__(self, thread_pool, endpoints, flavour, int_time, channel_range, channel0, baselines):
         channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
@@ -122,7 +128,8 @@ class VisSenderSet(object):
             a = channel_range.start + i * sub_channels
             b = a + sub_channels
             self._senders.append(
-                VisSender(thread_pool, endpoints[i], flavour, int_time, Range(a, b), baselines))
+                VisSender(thread_pool, endpoints[i], flavour, int_time,
+                          Range(a, b), channel0 + i * sub_channels, baselines))
 
     @trollius.coroutine
     def start(self):
