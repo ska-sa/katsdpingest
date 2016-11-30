@@ -143,7 +143,6 @@ RUN mkdir $PSRHOME/spead2
 WORKDIR $PSRHOME/spead2
 COPY ./beamformer_docker_software/spead2 .
 
-#USER kat
 WORKDIR $PSRHOME/spead2/src
 RUN make -j 16
 RUN cp ./libspead2.a $PSRHOME/$LOGIN_ARCH/lib/
