@@ -553,7 +553,13 @@ class CBFIngest(object):
             raise ValueError('{0} is already in the active list of recipients'.format(ip))
         config = spead2.send.StreamConfig(max_packet_size=8972, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
-        self._sdisp_ips[ip] = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
+        stream = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
+        # Ensure that signal display streams that form the full band between
+        # them always have unique heap cnts. The first output channel is used
+        # as a unique key.
+        stream.set_cnt_sequence(self.channel_ranges.sd_output.start,
+                                len(self.channel_ranges.cbf))
+        self._sdisp_ips[ip] = stream
 
     def set_center_freq(self, center_freq):
         """Change the center frequency reported to signal displays."""
@@ -563,26 +569,30 @@ class CBFIngest(object):
         """Create a item group for signal displays."""
         sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         inline_format = [('u', sd_flavour.heap_address_bits)]
+        n_spec_channels = len(self.channel_ranges.sd_output)
+        n_cont_channels = n_spec_channels // self.channel_ranges.sd_cont_factor
+        n_baselines = len(self.cbf_attr['bls_ordering'])
         self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
         self.ig_sd.add_item(
             name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
-            format=[('f', 32)], shape=(self.proc.buffer('sd_spec_vis').shape[0], None, 2))
+            format=[('f', 32)], shape=(n_spec_channels, None, 2))
         self.ig_sd.add_item(
             name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
             format=[('u', 32)], shape=(None,))
         self.ig_sd.add_item(
             name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
-            **_slot_shape(self.proc.buffer('sd_cont_vis'), np.float32))
+            shape=(n_cont_channels, n_baselines, 2),
+            dtype=np.float32)
         self.ig_sd.add_item(
             name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
-            format=[('u', 8)], shape=(self.proc.buffer('sd_spec_flags').shape[0], None))
+            format=[('u', 8)], shape=(n_spec_channels, None))
         self.ig_sd.add_item(
             name=('sd_blmxflags'), id=(0x3508),
             description="Reduced data flags for baseline matrix.",
-            **_slot_shape(self.proc.buffer('sd_cont_flags')))
+            shape=(n_cont_channels, n_baselines), dtype=np.uint8)
         self.ig_sd.add_item(
             name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
-            **_slot_shape(self.proc.buffer('timeseries'), np.float32))
+            shape=(n_baselines, 2), dtype=np.float32)
         n_perc_signals = 0
         perc_idx = 0
         while True:
@@ -594,11 +604,11 @@ class CBFIngest(object):
         self.ig_sd.add_item(
             name=('sd_percspectrum'), id=(0x3505),
             description="Percentiles of spectrum data.",
-            dtype=np.float32, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
+            dtype=np.float32, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
             name=('sd_percspectrumflags'), id=(0x3506),
             description="Flags for percentiles of spectrum.",
-            dtype=np.uint8, shape=(self.proc.buffer('percentile0').shape[1], n_perc_signals))
+            dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
             name="center_freq", id=0x1011,
             description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
@@ -621,7 +631,11 @@ class CBFIngest(object):
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=len(self.channel_ranges.sd_output))
+            shape=(), dtype=None, format=inline_format, value=n_spec_channels)
+        self.ig_sd.add_item(
+            name="frequency", id=0x4103,
+            description="The frequency channel of the data in this heap.",
+            shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
 
     @trollius.coroutine
     def _initialise(self):
@@ -633,7 +647,7 @@ class CBFIngest(object):
             self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
         baselines = len(self.cbf_attr['bls_ordering'])
         n_accs = self.cbf_attr['n_accs']
-        self._set_telstate_entry('bls_ordering', self.cbf_attr['bls_ordering'])
+        self._set_telstate_entry('sdp_l0_bls_ordering', self.cbf_attr['bls_ordering'])
         if baselines <= 0:
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 orig_bls_ordering, self.antenna_mask))
@@ -641,7 +655,7 @@ class CBFIngest(object):
         # Configure time averaging
         self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
         self._output_avg.flush = self._flush_output
-        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time, add_cbf_prefix=False)
+        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time)
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
@@ -692,7 +706,7 @@ class CBFIngest(object):
         if self.telstate_name is not None and self.telstate is not None:
             descriptions = list(self.proc.descriptions())
             attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
-            self._set_telstate_entry(attribute_name, descriptions, add_cbf_prefix=False)
+            self._set_telstate_entry(attribute_name, descriptions)
 
         # initialise the signal display metadata
         self._initialise_ig_sd()
@@ -806,6 +820,9 @@ class CBFIngest(object):
     def _flush_sd_job(self, proc_a, sd_output_a, timeseries_weights_a,
                       timestamps, custom_signals_indices, mask):
         with proc_a as proc, sd_output_a, timeseries_weights_a as timeseries_weights:
+            spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
+            cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
+                                        spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             # Load timeseries weights
             events = yield From(timeseries_weights_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
@@ -836,7 +853,9 @@ class CBFIngest(object):
             for i in range(len(proc.percentiles)):
                 name = 'percentile{0}'.format(i)
                 p = proc.buffer(name).get_async(self.command_queue)
-                pflags = proc.buffer(name + '_flags').get(self.command_queue)
+                pflags = proc.buffer(name + '_flags').get_async(self.command_queue)
+                p = p[..., spec_channels]
+                pflags = pflags[..., spec_channels]
                 percentiles.append(p)
                 # Signal display server wants flags duplicated to broadcast with
                 # the percentiles
@@ -850,9 +869,6 @@ class CBFIngest(object):
 
             # populate new datastructure to supersede sd_data etc
             yield From(resource.async_wait_for_events([transfer_done]))
-            spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
-            cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
-                                        spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             self.ig_sd['sd_timestamp'].value = int(ts * 100)
             if np.all(custom_signals_indices < spec_vis.shape[1]):
                 self.ig_sd['sd_data'].value = \
@@ -940,8 +956,8 @@ class CBFIngest(object):
             # Keep vis_in live until the transfer is complete
             yield From(resource.async_wait_for_events([transfer_done]))
 
-    def _set_telstate_entry(self, name, value, add_cbf_prefix=True, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, self.cbf_name if add_cbf_prefix else None, attribute)
+    def _set_telstate_entry(self, name, value, attribute=True):
+        utils.set_telstate_entry(self.telstate, name, value, None, attribute)
 
     def start(self):
         assert self._run_future is None
