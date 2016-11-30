@@ -89,6 +89,9 @@ class Sensor(object):
         return ans
 
 
+#: Stream types affected by --collapse-streams
+COLLAPSE_TYPES = frozenset(['visibility', 'fengine'])
+#: Templates for sensors
 SENSORS = [
     # Receptor sensors
     Sensor('{receptor}_observer'),
@@ -124,10 +127,11 @@ SENSORS = [
     Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
     Sensor('{stream_visibility}_int_time', immutable=True),
     Sensor('{stream_visibility}_n_accs', immutable=True),
-    # Disable the beamformer metadata until --collapse-stream is no longer in
-    # use, since it conflicts with the instrument-wide metadata.
-    #Sensor('{stream_beamformer}_center_freq', immutable=True),
-    #Sensor('{stream_beamformer}_bandwidth', immutable=True),
+    # Beamformer metadata are not immutable, because controlled by passband
+    Sensor('{stream_beamformer}_n_chans'),
+    Sensor('{stream_beamformer}_center_freq'),
+    Sensor('{stream_beamformer}_bandwidth'),
+    Sensor('{stream_beamformer}_{inputn}_weight'),
     Sensor('{stream_fengine}_n_samples_between_spectra', sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
     Sensor('{stream_fengine}_center_freq', immutable=True),
@@ -255,12 +259,15 @@ class Client(object):
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
                 cam_instrument = "{}_cbf_{}".format(cam_prefix, instrument)
-                sp_instrument = "{}_cbf_{}".format(sp_prefix, instrument) if not self._args.collapse_streams else "cbf"
+                sp_instrument = "cbf_" + instrument if not self._args.collapse_streams else "cbf"
                 substitutions['instrument'].append((cam_instrument, sp_instrument))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._stream_types.iteritems():
                 cam_stream = "{}_cbf_{}".format(cam_prefix, full_stream_name)
-                sp_stream = "{}_cbf_{}".format(sp_prefix, full_stream_name) if not self._args.collapse_streams else "cbf"
+                if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
+                    sp_stream = "cbf"
+                else:
+                    sp_stream = "cbf_" + full_stream_name
                 substitutions['stream'].append((cam_stream, sp_stream))
                 substitutions['stream_' + stream_type].append((cam_stream, sp_stream))
 
