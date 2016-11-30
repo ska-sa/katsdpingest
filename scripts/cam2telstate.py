@@ -6,6 +6,8 @@ import tornado.ioloop
 import tornado.gen
 import katportalclient
 import logging
+import collections
+import itertools
 import sys
 import pprint
 import katsdptelstate
@@ -50,88 +52,98 @@ class Sensor(object):
         self.convert = convert
         self.waiting = True     #: Waiting for an initial value
 
-    def prefix(self, cam_prefix, sp_prefix=None):
-        """Return a copy of the sensor with a prefixed name. If `sp_prefix` is
-        omitted, `cam_prefix` is used in its place.
+    def expand(self, substitutions):
+        """Expand a template into a list of sensors. The sensor name may
+        contain keys in braces. These are looked up in `substitutions` and
+        replaced with each possible value to form the new sensors, taking the
+        Cartesian product if there are multiple keys.
 
-        The prefix should omit the underscore used to join it to the name.
+        The `sp_name` must not contain any keys that are not part of the CAM
+        name.
+
+        Parameters
+        ----------
+        substitutions : dict-like
+            Maps a key to a list of (cam, sp) values to substitute.
+
+        Raises
+        ------
+        KeyError
+            if a key is used in `sp_name` but not in `cam_name`
         """
-        if sp_prefix is None:
-            sp_prefix = cam_prefix
-        return Sensor(cam_prefix + '_' + self.cam_name,
-                      sp_prefix + '_' + self.sp_name,
-                      self.sampling_strategy_and_params,
-                      self.immutable,
-                      self.convert)
+        def normalise(name):
+            """Eliminate doubled, leading and trailing underscores"""
+            parts = [part for part in name.split('_') if part]
+            return '_'.join(parts)
+        keys = list(set(re.findall(r'\{(\w+)\}', self.cam_name)))
+        iters = [substitutions[key] for key in keys]
+        ans = []
+        for values in itertools.product(*iters):
+            cam_dict = {key: value[0] for key, value in zip(keys, values)}
+            sp_dict = {key: value[1] for key, value in zip(keys, values)}
+            ans.append(Sensor(normalise(self.cam_name.format(**cam_dict)),
+                              normalise(self.sp_name.format(**sp_dict)),
+                              self.sampling_strategy_and_params,
+                              self.immutable,
+                              self.convert))
+        return ans
 
 
-# Per-receptor sensors, without the prefix for the receptor name
-RECEPTOR_SENSORS = [
-    Sensor('observer'),
-    Sensor('activity'),
-    Sensor('target'),
-    Sensor('pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
-    Sensor('pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
-    Sensor('pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
-    Sensor('pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
-    Sensor('dig_noise_diode'),
-    Sensor('ap_indexer_position'),
-    Sensor('ap_point_error_tiltmeter_enabled'),
-    Sensor('ap_tilt_corr_azim'),
-    Sensor('ap_tilt_corr_elev'),
-    Sensor('rsc_rxl_serial_number'),
-    Sensor('rsc_rxs_serial_number'),
-    Sensor('rsc_rxu_serial_number'),
-    Sensor('rsc_rxx_serial_number'),
-    Sensor('ap_version_list', immutable=True)
-]
-
-# Data proxy sensors without the data proxy prefix
-DATA_SENSORS = [
-    Sensor('target'),
-    Sensor('auto_delay_enabled'),
-    Sensor('input_labels', immutable=True, convert=comma_split),
-    Sensor('loaded_delay_correction'),
-    Sensor('spmc_version_list', immutable=True),
-    Sensor('cbf_synchronisation_epoch', sp_name='sync_time', immutable=True)
-]
-
-# CBF sensors that are instrument specific
-INSTRUMENT_SENSORS = [
-    Sensor('adc_sample_rate', immutable=True),
-    Sensor('bandwidth', immutable=True),
-    Sensor('n_chans', immutable=True),
-    Sensor('n_inputs', immutable=True),
-    Sensor('scale_factor_timestamp', immutable=True)
-]
-
-# CBF sensors that are stream specific
-STREAM_SENSORS = {
-    'visibility': [
-        Sensor('bls_ordering', immutable=True, convert=np.safe_eval),
-        Sensor('int_time', immutable=True),
-        Sensor('n_accs', immutable=True),
-    ],
-    'beamformer': [
-        Sensor('center_freq', immutable=True),
-        Sensor('bandwidth', immutable=True)
-    ],
-    'fengine': [
-        Sensor('n_samples_between_spectra', sp_name='ticks_between_spectra', immutable=True)
-    ]
-}
-
-# Subarray sensors with the subarray name prefix
-SUBARRAY_SENSORS = [
-    Sensor('config_label', immutable=True),
-    Sensor('band', immutable=True),
-    Sensor('product', immutable=True),
-    Sensor('sub_nr', immutable=True),
-    Sensor('dump_rate', immutable=True),
-    Sensor('pool_resources', immutable=True)
-]
-# All other sensors
-OTHER_SENSORS = [
+SENSORS = [
+    # Receptor sensors
+    Sensor('{receptor}_observer'),
+    Sensor('{receptor}_activity'),
+    Sensor('{receptor}_target'),
+    Sensor('{receptor}_pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('{receptor}_pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('{receptor}_pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('{receptor}_dig_noise_diode'),
+    Sensor('{receptor}_ap_indexer_position'),
+    Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
+    Sensor('{receptor}_ap_tilt_corr_azim'),
+    Sensor('{receptor}_ap_tilt_corr_elev'),
+    Sensor('{receptor}_rsc_rxl_serial_number'),
+    Sensor('{receptor}_rsc_rxs_serial_number'),
+    Sensor('{receptor}_rsc_rxu_serial_number'),
+    Sensor('{receptor}_rsc_rxx_serial_number'),
+    Sensor('{receptor}_ap_version_list', immutable=True),
+    # Data proxy sensors
+    Sensor('{data}_target'),
+    Sensor('{data}_auto_delay_enabled'),
+    Sensor('{data}_input_labels', immutable=True, convert=comma_split),
+    Sensor('{data}_loaded_delay_correction'),
+    Sensor('{data}_spmc_version_list', immutable=True),
+    Sensor('{data}_cbf_synchronisation_epoch', sp_name='{data}_sync_time', immutable=True),
+    # CBF sensors that are instrument specific
+    Sensor('{instrument}_adc_sample_rate', immutable=True),
+    Sensor('{instrument}_bandwidth', immutable=True),
+    Sensor('{instrument}_n_inputs', immutable=True),
+    Sensor('{instrument}_scale_factor_timestamp', immutable=True),
+    # CBF sensors that are stream-specific
+    Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
+    Sensor('{stream_visibility}_int_time', immutable=True),
+    Sensor('{stream_visibility}_n_accs', immutable=True),
+    # Disable the beamformer metadata until --collapse-stream is no longer in
+    # use, since it conflicts with the instrument-wide metadata.
+    #Sensor('{stream_beamformer}_center_freq', immutable=True),
+    #Sensor('{stream_beamformer}_bandwidth', immutable=True),
+    Sensor('{stream_fengine}_n_samples_between_spectra', sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
+    Sensor('{stream_fengine}_n_chans', immutable=True),
+    Sensor('{stream_fengine}_center_freq', immutable=True),
+    # TODO: need to figure out how to deal with multi-stage FFT instruments
+    Sensor('{stream_fengine}_{inputn}_fft0_shift', sp_name='{stream_fengine}_fft_shift'),
+    Sensor('{stream_fengine}_{inputn}_delay', convert=np.safe_eval),
+    Sensor('{stream_fengine}_{inputn}_delay_ok'),
+    Sensor('{stream_fengine}_{inputn}_eq', convert=np.safe_eval),
+    # Subarray sensors
+    Sensor('{subarray}_config_label', immutable=True),
+    Sensor('{subarray}_band', immutable=True),
+    Sensor('{subarray}_product', immutable=True),
+    Sensor('{subarray}_sub_nr', immutable=True),
+    Sensor('{subarray}_dump_rate', immutable=True),
+    Sensor('{subarray}_pool_resources', immutable=True),
+    # Misc other sensors
     Sensor('anc_air_pressure'),
     Sensor('anc_air_relative_humidity'),
     Sensor('anc_air_temperature'),
@@ -194,6 +206,7 @@ class Client(object):
         self._instruments = set() #: Set of instruments available in the current subarray
         self._stream_types = {} #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
+        self._input_labels = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
         self._data_name = None    #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
@@ -221,39 +234,42 @@ class Client(object):
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
         replaced to use kattelmod. It must only be called after
-        :attr:`_pool_resources` is resolved.
+        :attr:`_pool_resources` and :attr:`_input_labels` are resolved.
 
         Returns
         -------
         sensors : list of `Sensor`
         """
-        sensors = []
-        for receptor_name in self._receptors:
-            for sensor in RECEPTOR_SENSORS:
-                sensors.append(sensor.prefix(receptor_name))
-
-        # Convert CAM prefixes to SDP ones
-        for (cam_prefix, sp_prefix) in [(self._data_name, 'data')]:
-            for sensor in DATA_SENSORS:
-                sensors.append(sensor.prefix(cam_prefix, sp_prefix))
+        # Build table of names for expanding sensor templates
+        # Using a defaultdict removes the need to hardcode the list of stream
+        # types.
+        substitutions = collections.defaultdict(
+            list,
+            receptor=[(name, name) for name in self._receptors],
+            subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
+            data=[(self._data_name, 'data')]
+        )
+        for (number, name) in enumerate(self._input_labels.result()):
+            substitutions['inputn'].append(('input{}'.format(number), name))
+        for (cam_prefix, sp_prefix) in substitutions['data']:
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
-                for sensor in INSTRUMENT_SENSORS:
-                    sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, instrument), \
-                        "{}_cbf_{}".format(sp_prefix, instrument) if not self._args.collapse_streams else "cbf"))
+                cam_instrument = "{}_cbf_{}".format(cam_prefix, instrument)
+                sp_instrument = "{}_cbf_{}".format(sp_prefix, instrument) if not self._args.collapse_streams else "cbf"
+                substitutions['instrument'].append((cam_instrument, sp_instrument))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._stream_types.iteritems():
-                try:
-                    for sensor in STREAM_SENSORS[stream_type]:
-                        sensors.append(sensor.prefix("{}_cbf_{}".format(cam_prefix, full_stream_name), \
-                            "{}_cbf_{}".format(sp_prefix, full_stream_name) if not self._args.collapse_streams else "cbf"))
-                except KeyError:
-                    self._logger.warning("Stream type ({}) has no per stream specific sensors".format(stream_type))
+                cam_stream = "{}_cbf_{}".format(cam_prefix, full_stream_name)
+                sp_stream = "{}_cbf_{}".format(sp_prefix, full_stream_name) if not self._args.collapse_streams else "cbf"
+                substitutions['stream'].append((cam_stream, sp_stream))
+                substitutions['stream_' + stream_type].append((cam_stream, sp_stream))
 
-        for (cam_prefix, sp_prefix) in [('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')]:
-            for sensor in SUBARRAY_SENSORS:
-                sensors.append(sensor.prefix(cam_prefix, sp_prefix))
-        sensors.extend(OTHER_SENSORS)
+        sensors = []
+        for template in SENSORS:
+            expanded = template.expand(substitutions)
+            if not expanded:
+                self._logger.warning('No sensors expanded from template %s', template.cam_name)
+            sensors.extend(expanded)
         return sensors
 
     @tornado.gen.coroutine
@@ -280,14 +296,20 @@ class Client(object):
                 sensor, result[u'info']))
 
     @tornado.gen.coroutine
-    def get_pool_resources(self):
+    def get_resources(self):
         """Query subarray_N_pool_resources to find out which data_M resource and
-        which receptors are assigned to the subarray.
+        which receptors are assigned to the subarray, followed by
+        data_N_input_labels to find the input labels.
         """
         sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
         yield self.subscribe_one(sensor)
         # Wait until we get a callback with the value
         yield self._pool_resources
+        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        # Now input labels
+        sensor = '{}_input_labels'.format(self._data_name)
+        yield self.subscribe_one(sensor)
+        yield self._input_labels
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
     @tornado.gen.coroutine
@@ -315,7 +337,7 @@ class Client(object):
             yield self.wait_active()
             self.set_status('initialising')
             # First find out which resources are allocated to the subarray
-            yield self.get_pool_resources()
+            yield self.get_resources()
             # Now we can tell which sensors to subscribe to
             self._sensors = {x.cam_name: x for x in self.get_sensors()}
 
@@ -399,6 +421,11 @@ class Client(object):
                         'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
                 else:
                     self._pool_resources.set_result(resources)
+        elif self._data_name is not None and name == '{}_input_labels'.format(self._data_name):
+            if not self._input_labels.done() and status == 'nominal':
+                labels = value.split(',')
+                self._input_labels.set_result(labels)
+
         if self._sensors is None:
             return
         if name not in self._sensors:
