@@ -117,7 +117,7 @@ SENSORS = [
     Sensor('{data}_input_labels', immutable=True, convert=comma_split),
     Sensor('{data}_loaded_delay_correction'),
     Sensor('{data}_spmc_version_list', immutable=True),
-    Sensor('{data}_cbf_synchronisation_epoch', sp_name='{data}_sync_time', immutable=True),
+    Sensor('{data}_cbf_synchronisation_epoch', sp_name='cbf_sync_time', immutable=True),
     # CBF sensors that are instrument specific
     Sensor('{instrument}_adc_sample_rate', immutable=True),
     Sensor('{instrument}_bandwidth', immutable=True),

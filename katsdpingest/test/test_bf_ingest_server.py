@@ -19,6 +19,13 @@ import spead2.send
 import socket
 
 
+class DummyTelescopeState(dict):
+    def wait_key(self, key, condition=None, timeout=None):
+        assert key in self
+        if condition:
+            assert condition(self[key])
+
+
 class TestSession(object):
     def setup(self):
         # To avoid collisions when running tests in parallel on a single host,
@@ -55,6 +62,7 @@ class TestCaptureServer(object):
             file_base=self.tmpdir,
             direct_io=False,
             ibv=False,
+            stream_name=None, spead_metadata=True,
             affinity=None, interface=None, telstate=None)
         self.loop = trollius.get_event_loop()
 
@@ -66,7 +74,7 @@ class TestCaptureServer(object):
     def _test_manual_stop_no_data(self):
         server = bf_ingest_server.CaptureServer(self.args, self.loop)
         assert_false(server.capturing)
-        server.start_capture()
+        yield From(server.start_capture())
         assert_true(server.capturing)
         yield From(trollius.sleep(0.01, loop=self.loop))
         yield From(server.stop_capture())
@@ -77,7 +85,7 @@ class TestCaptureServer(object):
         trollius.get_event_loop().run_until_complete(self._test_manual_stop_no_data())
 
     @trollius.coroutine
-    def _test_stream(self, end):
+    def _test_stream(self, end, telstate_metadata):
         n_channels = 768
         spectra_per_heap = 256
         n_heaps = 25              # number of heaps in time
@@ -91,9 +99,19 @@ class TestCaptureServer(object):
         drop[2, 9] = True
         drop[7, 24] = True
 
+        if telstate_metadata:
+            self.args.stream_name = 'corr.beam_0x'
+            self.args.telstate = DummyTelescopeState({
+                'cbf_corr_beam_0x_n_chans': n_channels,
+                'cbf_corr_beam_0x_n_chans_per_substream': channels_per_heap,
+                'cbf_ticks_between_spectra': ticks_between_spectra,
+                'sdp_cam2telstate_status': 'ready'
+            })
+            self.args.spead_metadata = False
+
         # Start up the server
         server = bf_ingest_server.CaptureServer(self.args, self.loop)
-        filename = server.start_capture()
+        filename = yield From(server.start_capture())
         time.sleep(0.1)
         # Send it a SPEAD stream
         config = spead2.send.StreamConfig(max_packet_size=4196, rate=1e9 / 8)
@@ -106,12 +124,13 @@ class TestCaptureServer(object):
                     description='The frequency channel of the data in this HEAP.', shape=(), format=[('u', 48)])
         ig.add_item(name='bf_raw',  id=0x5000,
                     description='Beamformer data', shape=(channels_per_heap, spectra_per_heap, 2), dtype=np.int8)
-        ig.add_item(name='ticks_between_spectra', id=0x104A,
-                    description='Number of sample ticks between spectra.',
-                    shape=(), format=[('u', 48)], value=ticks_between_spectra)
-        ig.add_item(name='n_chans', id=0x1009,
-                    description='The total number of frequency channels present in any integration.',
-                    shape=(), format=[('u', 48)], value=n_channels)
+        if not telstate_metadata:
+            ig.add_item(name='ticks_between_spectra', id=0x104A,
+                        description='Number of sample ticks between spectra.',
+                        shape=(), format=[('u', 48)], value=ticks_between_spectra)
+            ig.add_item(name='n_chans', id=0x1009,
+                        description='The total number of frequency channels present in any integration.',
+                        shape=(), format=[('u', 48)], value=n_channels)
         stream.send_heap(ig.get_heap())
         stream.send_heap(ig.get_start())
         ts = 1234567890
@@ -173,8 +192,12 @@ class TestCaptureServer(object):
 
     def test_stream_end(self):
         """Stream ends with an end-of-stream"""
-        trollius.get_event_loop().run_until_complete(self._test_stream(True))
+        trollius.get_event_loop().run_until_complete(self._test_stream(True, False))
 
     def test_stream_no_end(self):
         """Stream ends with a stop request"""
-        trollius.get_event_loop().run_until_complete(self._test_stream(False))
+        trollius.get_event_loop().run_until_complete(self._test_stream(False, False))
+
+    def test_stream_telstate_metadata(self):
+        """Stream with metadata passed through telstate"""
+        trollius.get_event_loop().run_until_complete(self._test_stream(True, True))
