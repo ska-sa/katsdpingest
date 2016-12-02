@@ -38,6 +38,8 @@ def main():
     parser = katsdptelstate.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--cbf-channels', type=int, help='unused, kept for backwards compatibility')
     parser.add_argument('--cbf-spead', type=katsdptelstate.endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port].', metavar='ENDPOINTS')
+    parser.add_argument('--no-spead-metadata', dest='spead_metadata', default=True, action='store_false', help='Ignore metadata sent in SPEAD stream')
+    parser.add_argument('--stream-name', type=str, metavar='NAME', help='Stream name for metadata in telstate')
     parser.add_argument('--log-level', '-l', type=str, metavar='LEVEL', default='INFO', help='log level')
     parser.add_argument('--file-base', default='.', type=str, help='base directory into which to write HDF5 files', metavar='DIR')
     parser.add_argument('--affinity', type=spead2.parse_range_list, help='List of CPUs to which to bind threads', metavar='CPU,CPU')
@@ -49,9 +51,6 @@ def main():
     args = parser.parse_args()
     if args.affinity and len(args.affinity) < 2:
         parser.error('At least 2 CPUs must be specified for --affinity')
-    if len(args.cbf_spead) != 1:
-        parser.error('Exactly one endpoint must be specified')
-    args.cbf_spead = args.cbf_spead[0]
     configure_logging(args.log_level)
     if not os.access(args.file_base, os.W_OK):
         logging.error('Target directory (%s) is not writable', args.file_base)
