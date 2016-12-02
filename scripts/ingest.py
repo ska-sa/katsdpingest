@@ -5,6 +5,8 @@
 import logging
 import threading
 import time
+import concurrent.futures
+
 
 # This must be as early as possible to intercept all logger registrations
 class Logger(logging.getLoggerClass()):
@@ -224,9 +226,9 @@ class IngestDeviceServer(DeviceServer):
         if opts.telstate is not None and opts.cam2telstate:
             logger.info('Waiting for cam2telstate')
             with concurrent.futures.ThreadPoolExecutor(1) as executor:
-                yield executor.submit(opts.telstate.wait_key(
+                yield executor.submit(opts.telstate.wait_key,
                     'sdp_cam2telstate_status',
-                    lambda value: value == 'ready'))
+                    lambda value: value == 'ready')
             logger.info('cam2telstate ready')
 
         if self.cbf_session is not None:
