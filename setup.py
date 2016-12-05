@@ -64,7 +64,7 @@ extensions = [
         define_macros=hdf5['define_macros'],
         extra_compile_args=['-std=c++11', '-g0'],
         library_dirs=hdf5['library_dirs'],
-        libraries=[bp_library, 'boost_system', 'boost_regex', 'hdf5_cpp'] + hdf5['libraries')
+        libraries=[bp_library, 'boost_system', 'boost_regex', 'hdf5_cpp'] + hdf5['libraries']
     )
 ]
 
