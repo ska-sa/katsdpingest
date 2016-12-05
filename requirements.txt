@@ -20,6 +20,7 @@ nose
 numpy
 omnijson==0.1.2
 pbr
+pkgconfig==1.2.2
 pkginfo
 ply
 ProxyTypes

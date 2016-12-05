@@ -11,7 +11,7 @@ try:
     hdf5 = pkgconfig.parse('hdf5')
 except ImportError:
     import collections
-    hdf5 = collections.defaultdict(set)
+    hdf5 = collections.defaultdict(list)
 
 
 tests_require = ['mock', 'nose']
@@ -60,12 +60,11 @@ extensions = [
                  ['spead2/src/py_common.cpp', 'katsdpingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/src/*.h'),
         language='c++',
-        include_dirs=['spead2/include'] + list(hdf5['include_dirs']),
-        define_macros=list(hdf5['define_macros']),
+        include_dirs=['spead2/include'] + hdf5['include_dirs'],
+        define_macros=hdf5['define_macros'],
         extra_compile_args=['-std=c++11', '-g0'],
-        library_dirs=list(hdf5['library_dirs']),
-        libraries=[bp_library, 'boost_system', 'boost_regex', 'hdf5_cpp'] +
-                  list(hdf5['libraries'])
+        library_dirs=hdf5['library_dirs'],
+        libraries=[bp_library, 'boost_system', 'boost_regex', 'hdf5_cpp'] + hdf5['libraries']
     )
 ]
 
