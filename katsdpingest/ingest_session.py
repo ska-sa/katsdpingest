@@ -724,6 +724,7 @@ class CBFIngest(object):
             l0_flavour,
             self._output_avg.int_time,
             spectral_channels,
+            self.channel_ranges.output.start,
             baselines)
         self.tx_continuum = sender.VisSenderSet(
             thread_pool,
@@ -731,6 +732,7 @@ class CBFIngest(object):
             l0_flavour,
             self._output_avg.int_time,
             continuum_channels,
+            self.channel_ranges.output.start // self.channel_ranges.cont_factor,
             baselines)
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
