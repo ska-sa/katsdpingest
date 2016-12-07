@@ -5,7 +5,7 @@ if [ "$#" -ne 1 ]; then
     exit 1
 fi
 GPU="$1"
-LABEL="${GIT_BRANCH#origin/}"
+LABEL="${BRANCH_NAME#origin/}"
 if [ "$LABEL" = "master" ]; then
     LABEL=latest
 fi

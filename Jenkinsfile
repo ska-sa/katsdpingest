@@ -1,35 +1,37 @@
 #!groovy
 
-def katsdp = fileLoader.fromGit('scripts/katsdp.groovy', 'git@github.com:ska-sa/katsdpjenkins', 'master', 'katpull', '')
+@Library('katsdpjenkins') _
 
 katsdp.setDependencies(['ska-sa/katsdpsigproc/master', 'ska-sa/katsdpdockerbase/master'])
 
-katsdp.commonBuild(maintainer: 'bmerry@ska.ac.za') {
+catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
     katsdp.stageMakeDocker()
 
-    if (currentBuild.result == null) {
-        stage name: 'autotuning', concurrency: 1
-        katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
-            deleteDir()
-            katsdp.unpackGit()
-            katsdp.unpackVenv()
-            katsdp.virtualenv('venv') {
-                // TODO: update the script instead
-                withEnv(["GIT_BRANCH=${env.BRANCH_NAME}"]) {
+    stage('autotuning') {
+        if (currentBuild.result == null) {
+            katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
+                deleteDir()
+                katsdp.unpackGit()
+                katsdp.unpackVenv()
+                katsdp.virtualenv('venv') {
                     dir('git') {
-                        sh './jenkins-autotune.sh titanx'
+                        lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
+                            sh './jenkins-autotune.sh titanx'
+                        }
                     }
                 }
             }
         }
     }
 
-    stage 'digitiser capture'
-    katsdp.simpleNode {
-        deleteDir()
-        katsdp.unpackGit()
-        katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
+    stage('digitiser capture') {
+        katsdp.simpleNode {
+            deleteDir()
+            katsdp.unpackGit()
+            katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
+        }
     }
 }
+katsdp.mail('bmerry@ska.ac.za')
