@@ -20,6 +20,7 @@ import time
 
 import argparse
 import pyfits
+from astropy.time import Time
 
 _logger = logging.getLogger(__name__)
 
@@ -89,9 +90,8 @@ class _CaptureSession(object):
         self._dada_header_process = None
 
         _logger.info(args.telstate.get("cbf_sync_time"))
-
-        self._create_dada_buffer()
         self._create_dada_header()
+        self._create_dada_buffer()
         _logger.info("Created dada_buffer\n")
         if script_args:
             backend = script_args['backend']
@@ -110,8 +110,8 @@ class _CaptureSession(object):
             elif (backend in "dada_dbdisk"):
                 self._create_dada_dbdisk()
             time.sleep(1)
-            beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0]
-            beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0]
+            beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0].split('+')[0]
+            beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0].split('+')[0]
             _logger.info(beam_x_multicast)
             _logger.info(beam_y_multicast)
             data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
@@ -131,7 +131,7 @@ class _CaptureSession(object):
             NUMA node to attach dada buffer to
         """
         #did have -p and -l
-        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore, '-n', '%d'%nBuffers]
+        cmd = ['dada_db', '-k', dadaId, '-b', '268435456','-c', '%d'%numaCore,'-p','-l','-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -204,7 +204,7 @@ class _CaptureSession(object):
         os.mkdir("%s.writing"%self.save_dir)
         #_logger.info(passed_args)
         #_logger.info(cmd)
-        with open("/tmp/digifits.log","a") as logfile:
+        with open("%s.writing/digifits.log"%self.save_dir,"a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="%s.writing"%self.save_dir
@@ -285,8 +285,9 @@ class _CaptureSession(object):
 
         self.save_dir = "/data/%.0far"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
+        _logger.info(self.save_dir)
  
-        with open("/tmp/dspsr.log","a") as logfile:
+        with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
             cmd = ["numactl","-C","4","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
             _logger.info(cmd)
@@ -464,17 +465,18 @@ class _CaptureSession(object):
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         cmd = ["numactl","-C","0,2,6","meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
-        self.capture_log = open("/tmp/capture.log","a")
+        self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
         
         #Sleep to ensure data is flowing
         time.sleep(30)
-
+        _logger.info("YYYYYYYYYYYYOOOOOOOOOLOLOLOOOOOOOO")
 
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
         )
 
         _logger.info("capture started_________________------12-----!!")
+        _logger.info("Process logs in %s"%self.save_dir)
         ##import signal
         #_logger.info ("obs_length")
         #_logger.info(obs_length - 5)
@@ -559,6 +561,15 @@ class _CaptureSession(object):
                 data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
                 target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
                 _logger.info(target)
+
+                start_time = Time([hduPrimary['STT_IJMD'] + hduPrimary['STT_SMJD'] / 3600 / 24],format='mjd')
+                start_time.format = 'isot'
+                #print time.value
+                #print (time + hduPrimary['SST_OFFSET'])
+             
+                self.startTime=time.strftime("%Y-%m%dT%H:%M:%S") 
+
+
                 hduPrimary=data[0].header
                 hduPrimary["TELESCOP"]="MeerKAT"
                 hduPrimary["RA"]=target[-2]
