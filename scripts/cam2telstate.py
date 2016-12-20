@@ -117,12 +117,12 @@ SENSORS = [
     Sensor('{data}_input_labels', immutable=True, convert=comma_split),
     Sensor('{data}_loaded_delay_correction'),
     Sensor('{data}_spmc_version_list', immutable=True),
-    Sensor('{data}_cbf_synchronisation_epoch', sp_name='cbf_sync_time', immutable=True),
     # CBF sensors that are instrument specific
     Sensor('{instrument}_adc_sample_rate', immutable=True),
     Sensor('{instrument}_bandwidth', immutable=True),
     Sensor('{instrument}_n_inputs', immutable=True),
     Sensor('{instrument}_scale_factor_timestamp', immutable=True),
+    Sensor('{instrument}_sync_time', immutable=True),
     # CBF sensors that are stream-specific
     Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
     Sensor('{stream_visibility}_int_time', immutable=True),
@@ -195,7 +195,7 @@ def parse_args():
     if args.url is None:
         parser.error('argument --url is required')
     if args.streams is None:
-        parser.error('argument --streams is requied')
+        parser.error('argument --streams is required')
     return args
 
 
