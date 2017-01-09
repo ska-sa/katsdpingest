@@ -223,14 +223,15 @@ class Client(object):
             try:
                 (full_stream_name, stream_type) = stream.split(":")
                 try:
-                    (instrument_name, stream_name) = full_stream_name.split(".")
+                    (instrument_name, stream_name) = full_stream_name.split(".", 1)
                 except ValueError:
                     # default to 'corr' for unknown instrument names - likely to be removed in the future
                     instrument_name = 'corr'
                     full_stream_name = "corr_{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 # CAM sensor names are exposed with underscores in the pubsub
-                self._stream_types[full_stream_name.replace(".","_")] = stream_type
+                uname = full_stream_name.replace(".", "_").replace("-", "_")
+                self._stream_types[uname] = stream_type
             except ValueError:
                 self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
                                    "Expecting <full_stream_name>:<stream_type>.".format(stream))
