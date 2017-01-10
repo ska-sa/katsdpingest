@@ -1,0 +1,8 @@
+stokes_detect.lo: stokes_detect.c /usr/include/stdc-predef.h \
+ stokes_detect.h stokes_detect.ic
+
+/usr/include/stdc-predef.h:
+
+stokes_detect.h:
+
+stokes_detect.ic:

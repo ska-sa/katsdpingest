@@ -1,0 +1,248 @@
+/* config.h.in.  Generated from configure.in by autoheader.  */
+
+/* Define if building universal (internal helper macro) */
+#undef AC_APPLE_UNIVERSAL_BUILD
+
+/* Define if the CFITSIO library is present */
+#undef HAVE_CFITSIO
+
+/* Define if the CUDA library is present */
+#undef HAVE_CUDA
+
+/* Define if the CUFFT library is present */
+#undef HAVE_CUFFT
+
+/* Define if the CUFFT Callbacks library is present */
+#undef HAVE_CUFFT_CALLBACKS
+
+/* Define to 1 if you have the <dlfcn.h> header file. */
+#undef HAVE_DLFCN_H
+
+/* Define to 1 if you have the <getopt.h> header file. */
+#undef HAVE_GETOPT_H
+
+/* Define to 1 if you have the `getopt_long' function. */
+#undef HAVE_GETOPT_LONG
+
+/* Define to 1 if you have the GUPPI_DAQ library */
+#undef HAVE_GUPPI_DAQ
+
+/* Define to 1 if you have the <inttypes.h> header file. */
+#undef HAVE_INTTYPES_H
+
+/* Define to 1 if you have the `m' library (-lm). */
+#undef HAVE_LIBM
+
+/* Define to 1 if you have the <malloc.h> header file. */
+#undef HAVE_MALLOC_H
+
+/* Define if the mark5access library is present */
+#undef HAVE_MARK5ACCESS
+
+/* Define to 1 if you have the <memory.h> header file. */
+#undef HAVE_MEMORY_H
+
+/* Define if a Message Passing Interface library is present */
+#undef HAVE_MPI
+
+/* Define if OpenMP is enabled */
+#undef HAVE_OPENMP
+
+/* Define to 1 if you have the <openssl/sha.h> header file. */
+#undef HAVE_OPENSSL_SHA_H
+
+/* Define to 1 if you have the PGPLOT library */
+#undef HAVE_PGPLOT
+
+/* Define if the PSRCHIVE library is present */
+#undef HAVE_PSRCHIVE
+
+/* Define if the PSRDADA library is present */
+#undef HAVE_PSRDADA
+
+/* Define to 1 if you have the PSRXML library */
+#undef HAVE_PSRXML
+
+/* Define to 1 if you have the <sched.h> header file. */
+#undef HAVE_SCHED_H
+
+/* Define to 1 if you have the `sched_setaffinity' function. */
+#undef HAVE_SCHED_SETAFFINITY
+
+/* Define to 1 if you have the <stdint.h> header file. */
+#undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdlib.h> header file. */
+#undef HAVE_STDLIB_H
+
+/* Define to 1 if you have the <strings.h> header file. */
+#undef HAVE_STRINGS_H
+
+/* Define to 1 if you have the <string.h> header file. */
+#undef HAVE_STRING_H
+
+/* Define to 1 if you have the <sys/stat.h> header file. */
+#undef HAVE_SYS_STAT_H
+
+/* Define to 1 if you have the <sys/types.h> header file. */
+#undef HAVE_SYS_TYPES_H
+
+/* Define to 1 if you have the <unistd.h> header file. */
+#undef HAVE_UNISTD_H
+
+/* Define to 1 to use the apsr file format */
+#undef HAVE_apsr
+
+/* Define to 1 to use the asp file format */
+#undef HAVE_asp
+
+/* Define to 1 to use the bcpm file format */
+#undef HAVE_bcpm
+
+/* Define to 1 to use the bpsr file format */
+#undef HAVE_bpsr
+
+/* Define to 1 to use the caspsr file format */
+#undef HAVE_caspsr
+
+/* Define to 1 to use the cpsr file format */
+#undef HAVE_cpsr
+
+/* Define to 1 to use the cpsr2 file format */
+#undef HAVE_cpsr2
+
+/* Define to 1 to use the dada file format */
+#undef HAVE_dada
+
+/* Define to 1 to use the dummy file format */
+#undef HAVE_dummy
+
+/* Define to 1 to use the fadc file format */
+#undef HAVE_fadc
+
+/* Define to 1 to use the fits file format */
+#undef HAVE_fits
+
+/* Define to 1 to use the gmrt file format */
+#undef HAVE_gmrt
+
+/* Define to 1 to use the guppi file format */
+#undef HAVE_guppi
+
+/* Define to 1 to use the kat file format */
+#undef HAVE_kat
+
+/* Define to 1 to use the lbadr file format */
+#undef HAVE_lbadr
+
+/* Define to 1 to use the lbadr64 file format */
+#undef HAVE_lbadr64
+
+/* Define to 1 to use the lofar_dal file format */
+#undef HAVE_lofar_dal
+
+/* Define to 1 to use the lump file format */
+#undef HAVE_lump
+
+/* Define to 1 to use the lwa file format */
+#undef HAVE_lwa
+
+/* Define to 1 to use the mark4 file format */
+#undef HAVE_mark4
+
+/* Define to 1 to use the mark5 file format */
+#undef HAVE_mark5
+
+/* Define to 1 to use the mark5b file format */
+#undef HAVE_mark5b
+
+/* Define to 1 to use the maxim file format */
+#undef HAVE_maxim
+
+/* Define to 1 to use the mwa file format */
+#undef HAVE_mwa
+
+/* Define to 1 to use the pdev file format */
+#undef HAVE_pdev
+
+/* Define to 1 to use the pmdaq file format */
+#undef HAVE_pmdaq
+
+/* Define to 1 to use the puma file format */
+#undef HAVE_puma
+
+/* Define to 1 to use the puma2 file format */
+#undef HAVE_puma2
+
+/* Define to 1 to use the s2 file format */
+#undef HAVE_s2
+
+/* Define to 1 to use the sigproc file format */
+#undef HAVE_sigproc
+
+/* Define to 1 to use the ska1 file format */
+#undef HAVE_ska1
+
+/* Define to 1 to use the spda1k file format */
+#undef HAVE_spda1k
+
+/* Define to 1 to use the spigot file format */
+#undef HAVE_spigot
+
+/* Define to 1 to use the vdif file format */
+#undef HAVE_vdif
+
+/* Define to 1 to use the wapp file format */
+#undef HAVE_wapp
+
+/* Define to the sub-directory in which libtool stores uninstalled libraries.
+   */
+#undef LT_OBJDIR
+
+/* Define to 1 if your C compiler doesn't accept -c and -o together. */
+#undef NO_MINUS_C_MINUS_O
+
+/* Name of package */
+#undef PACKAGE
+
+/* Define to the address where bug reports for this package should be sent. */
+#undef PACKAGE_BUGREPORT
+
+/* Define to the full name of this package. */
+#undef PACKAGE_NAME
+
+/* Define to the full name and version of this package. */
+#undef PACKAGE_STRING
+
+/* Define to the one symbol short name of this package. */
+#undef PACKAGE_TARNAME
+
+/* Define to the version of this package. */
+#undef PACKAGE_VERSION
+
+/* Define to 1 if you have the ANSI C header files. */
+#undef STDC_HEADERS
+
+/* Version number of package */
+#undef VERSION
+
+/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
+   significant byte first (like Motorola and SPARC, unlike Intel). */
+#if defined AC_APPLE_UNIVERSAL_BUILD
+# if defined __BIG_ENDIAN__
+#  define WORDS_BIGENDIAN 1
+# endif
+#else
+# ifndef WORDS_BIGENDIAN
+#  undef WORDS_BIGENDIAN
+# endif
+#endif
+
+/* Define to 1 if the X Window System is missing or not being used. */
+#undef X_DISPLAY_MISSING
+
+/* Number of bits in a file offset, on hosts where this is settable. */
+#undef _FILE_OFFSET_BITS
+
+/* Define for large files, on AIX-style hosts. */
+#undef _LARGE_FILES

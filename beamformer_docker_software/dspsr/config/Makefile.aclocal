@@ -1,0 +1,75 @@
+
+aclocal_update: \
+	$(top_srcdir)/config/debug.m4 \
+	$(top_srcdir)/config/local.m4 \
+	$(top_srcdir)/config/compiler.m4 \
+	$(top_srcdir)/config/package.m4 \
+	$(top_srcdir)/config/x11.m4 \
+	$(top_srcdir)/config/pgplot.m4 \
+	$(top_srcdir)/config/cfitsio.m4 \
+	$(top_srcdir)/config/etr_socket_nsl.m4 \
+	$(top_srcdir)/config/getopt_long.m4 \
+	$(top_srcdir)/config/mpi.m4 \
+	$(top_srcdir)/config/ac_pkg_swig.m4 \
+	$(top_srcdir)/config/ac_python_devel.m4 \
+	$(top_srcdir)/config/Makefile.root \
+	$(top_srcdir)/config/Makefile.local \
+	$(top_srcdir)/config/Makefile.include \
+	$(top_srcdir)/config/install-intermediate \
+	$(top_srcdir)/config/Makefile.aclocal \
+	$(top_srcdir)/config/psrchive.m4 \
+
+$(top_srcdir)/config/debug.m4 : $(PSRCHIVE_ACLOCAL)/debug.m4
+	cp $(PSRCHIVE_ACLOCAL)/debug.m4 $(top_srcdir)/config/debug.m4
+
+$(top_srcdir)/config/local.m4 : $(PSRCHIVE_ACLOCAL)/local.m4
+	cp $(PSRCHIVE_ACLOCAL)/local.m4 $(top_srcdir)/config/local.m4
+
+$(top_srcdir)/config/compiler.m4 : $(PSRCHIVE_ACLOCAL)/compiler.m4
+	cp $(PSRCHIVE_ACLOCAL)/compiler.m4 $(top_srcdir)/config/compiler.m4
+
+$(top_srcdir)/config/package.m4 : $(PSRCHIVE_ACLOCAL)/package.m4
+	cp $(PSRCHIVE_ACLOCAL)/package.m4 $(top_srcdir)/config/package.m4
+
+$(top_srcdir)/config/x11.m4 : $(PSRCHIVE_ACLOCAL)/x11.m4
+	cp $(PSRCHIVE_ACLOCAL)/x11.m4 $(top_srcdir)/config/x11.m4
+
+$(top_srcdir)/config/pgplot.m4 : $(PSRCHIVE_ACLOCAL)/pgplot.m4
+	cp $(PSRCHIVE_ACLOCAL)/pgplot.m4 $(top_srcdir)/config/pgplot.m4
+
+$(top_srcdir)/config/cfitsio.m4 : $(PSRCHIVE_ACLOCAL)/cfitsio.m4
+	cp $(PSRCHIVE_ACLOCAL)/cfitsio.m4 $(top_srcdir)/config/cfitsio.m4
+
+$(top_srcdir)/config/etr_socket_nsl.m4 : $(PSRCHIVE_ACLOCAL)/etr_socket_nsl.m4
+	cp $(PSRCHIVE_ACLOCAL)/etr_socket_nsl.m4 $(top_srcdir)/config/etr_socket_nsl.m4
+
+$(top_srcdir)/config/getopt_long.m4 : $(PSRCHIVE_ACLOCAL)/getopt_long.m4
+	cp $(PSRCHIVE_ACLOCAL)/getopt_long.m4 $(top_srcdir)/config/getopt_long.m4
+
+$(top_srcdir)/config/mpi.m4 : $(PSRCHIVE_ACLOCAL)/mpi.m4
+	cp $(PSRCHIVE_ACLOCAL)/mpi.m4 $(top_srcdir)/config/mpi.m4
+
+$(top_srcdir)/config/ac_pkg_swig.m4 : $(PSRCHIVE_ACLOCAL)/ac_pkg_swig.m4
+	cp $(PSRCHIVE_ACLOCAL)/ac_pkg_swig.m4 $(top_srcdir)/config/ac_pkg_swig.m4
+
+$(top_srcdir)/config/ac_python_devel.m4 : $(PSRCHIVE_ACLOCAL)/ac_python_devel.m4
+	cp $(PSRCHIVE_ACLOCAL)/ac_python_devel.m4 $(top_srcdir)/config/ac_python_devel.m4
+
+$(top_srcdir)/config/Makefile.root : $(PSRCHIVE_ACLOCAL)/Makefile.root
+	cp $(PSRCHIVE_ACLOCAL)/Makefile.root $(top_srcdir)/config/Makefile.root
+
+$(top_srcdir)/config/Makefile.local : $(PSRCHIVE_ACLOCAL)/Makefile.local
+	cp $(PSRCHIVE_ACLOCAL)/Makefile.local $(top_srcdir)/config/Makefile.local
+
+$(top_srcdir)/config/Makefile.include : $(PSRCHIVE_ACLOCAL)/Makefile.include
+	cp $(PSRCHIVE_ACLOCAL)/Makefile.include $(top_srcdir)/config/Makefile.include
+
+$(top_srcdir)/config/install-intermediate : $(PSRCHIVE_ACLOCAL)/install-intermediate
+	cp $(PSRCHIVE_ACLOCAL)/install-intermediate $(top_srcdir)/config/install-intermediate
+
+$(top_srcdir)/config/Makefile.aclocal : $(PSRCHIVE_ACLOCAL)/Makefile.aclocal
+	cp $(PSRCHIVE_ACLOCAL)/Makefile.aclocal $(top_srcdir)/config/Makefile.aclocal
+
+$(top_srcdir)/config/psrchive.m4 : $(PSRCHIVE_ACLOCAL)/psrchive.m4
+	cp $(PSRCHIVE_ACLOCAL)/psrchive.m4 $(top_srcdir)/config/psrchive.m4
+
