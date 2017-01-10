@@ -94,7 +94,9 @@ class _CaptureSession(object):
         self._create_dada_buffer()
         _logger.info("Created dada_buffer\n")
         if script_args:
+            _logger.info(script_args)
             backend = script_args['backend']
+            bandwidth = script_args['beam_bandwidth']
             self.backend = script_args['backend']
             _logger.info(backend)
             if (backend in "digifits"):
@@ -115,7 +117,7 @@ class _CaptureSession(object):
             _logger.info(beam_x_multicast)
             _logger.info(beam_y_multicast)
             data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
-            if (args.halfband or backend in "digifits"):
+            if (bandwidth == 428):
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
@@ -468,7 +470,7 @@ class _CaptureSession(object):
         self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
         
         #Sleep to ensure data is flowing
-        time.sleep(30)
+        time.sleep(50)
         _logger.info("YYYYYYYYYYYYOOOOOOOOOLOLOLOOOOOOOO")
 
         self._capture_process = subprocess.Popen(
@@ -478,21 +480,21 @@ class _CaptureSession(object):
         _logger.info("capture started_________________------12-----!!")
         _logger.info("Process logs in %s"%self.save_dir)
         ##import signal
-        #_logger.info ("obs_length")
-        #_logger.info(obs_length - 5)
-        #time.sleep(int(obs_length-2))
+        _logger.info ("obs_length")
+        _logger.info(obs_length - 40)
+        #time.sleep(int(obs_length-35))
         #_logger.info("kill cap--------------11!!--------------------")
         #time.sleep(1)
         #if self._capture_process.poll() is None:
         #    self._capture_process.send_signal(signal.SIGINT)
         #_logger.info("kill cap--------------11--------------------")
         #time.sleep(1)
-        #if self._capture_processi.poll() is None:
+        #if self._capture_process.poll() is None:
         #    self._capture_process.send_signal(signal.SIGINT)
  
         #if self._capture_process.poll() is None:
-        #    self._capture_process.kill()
-        #    self._capture_process.kill()
+            #self._capture_process.kill()
+            #self._capture_process.kill()
 
     #@trollius.coroutine
     def stop(self):
@@ -500,39 +502,56 @@ class _CaptureSession(object):
         is a coroutine.
         """
         #import signal
+        if self._capture_process is not None and self._capture_process.poll() is None:
+            self._capture_process.send_signal(signal.SIGINT)
+        _logger.info("kill cap--------------11--------------------")
+        time.sleep(1)
+        if self._capture_process is not None and self._capture_process.poll() is None:
+            self._capture_process.send_signal(signal.SIGINT)
         _logger.info("--------------------------------------------")
         #_logger.info(dir(self.args.telstate))
         #for k in self.args.telstate.keys():
         #    _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
         #_logger.info(self.args.telstate.get('config'))
         #_logger.info(self.args)
-        print ("STOPPING")
+        _logger.info("STOPPING")
         self._manual_stop = True
         if  self._capture_process is not None and self._capture_process.poll() is None:
+            #time.sleep(5)
+            #self._capture_process.kill()
+            #self._capture_process.kill()
             self._capture_process.send_signal(signal.SIGINT)
-            _logger.info("kill cap----------------------------------")
             self._capture_process.send_signal(signal.SIGINT)
-            _logger.info(self._capture_process.communicate())
+            #_logger.info(self._capture_process.communicate())
             self.capture_log.close()
-        #time.sleep(5)
+        time.sleep(5)
+        #_logger.info("waiting for digifits to complete") 
+        #_logger.info(self._digifits_process.communicate())
+        #_logger.info("digifits still running")
         if self._dada_dbdisk_process is not None and self._dada_dbdisk_process.poll() is None:
             self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process is not None and self._digifits_process.poll() is None:
+            _logger.info("waiting for digifits to complete") 
             #self._digifits_process.send_signal(signal.SIGINT)
             #_logger.info(self._digifits_process.communicate())
-            _logger.info("digifits still running")
+            #_logger.info("digifits still running")
         if self._dspsr_process is not None and self._dspsr_process.poll() is None:
             self._dspsr_process.send_signal(signal.SIGINT)
+            _logger.info("waiting for dspsr to complete")
             _logger.info(self._dspsr_process.communicate())
-        if self._speadmeta_process is not None and self._speadmeta_process.poll() is None:
-            self._speadmeta_process.send_signal(signal.SIGINT)
-        cmd = ['dada_db', '-d']
-        dada_buffer_process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE
-        )
-        _logger.info(dada_buffer_process.communicate())
-        dada_header = dict([d.split() for d in self._dada_header_process.communicate()[0].split('\n')][:-1])
-        _logger.info(dada_header)
+            _logger.info("dspsr complete")
+        #if self._speadmeta_process is not None and self._speadmeta_process.poll() is None:
+        #    self._speadmeta_process.send_signal(signal.SIGINT)
+        #_logger.info(self._digifits_process.communicate())
+        #cmd = ['dada_db', '-d']
+        #dada_buffer_process = subprocess.Popen(
+        #cmd, stdout=subprocess.PIPE
+        #)
+        #_logger.info(dada_buffer_process.communicate())
+        if self._dada_header_process is not None and self._dada_header_process.poll():
+            dada_header = dict([d.split() for d in self._dada_header_process.communicate()[0].split('\n')][:-1])
+            _logger.info(dada_header)
+        _logger.info("HHEERE")
        
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
@@ -558,20 +577,31 @@ class _CaptureSession(object):
             try:
                 data_files = os.listdir("%s.writing"%self.save_dir)
                 _logger.info(data_files)
-                data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[0]), mode="update", memmap=True, save_backup=False)
+                index = 0
+                while index < len(data_files) and data_files[index][-2:] != 'sf':
+                    index+=1
+                data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[index]), mode="update", memmap=True, save_backup=False, ignore_missing_end=True)
                 target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
                 _logger.info(target)
-
-                start_time = Time([hduPrimary['STT_IJMD'] + hduPrimary['STT_SMJD'] / 3600 / 24],format='mjd')
-                start_time.format = 'isot'
-                #print time.value
-                #print (time + hduPrimary['SST_OFFSET'])
-             
-                self.startTime=time.strftime("%Y-%m%dT%H:%M:%S") 
-
-
+                _logger.info(data.info())
                 hduPrimary=data[0].header
-                hduPrimary["TELESCOP"]="MeerKAT"
+                start_time = Time([hduPrimary['STT_IMJD'] + hduPrimary['STT_SMJD'] / 3600.0 / 24.0],format='mjd')
+                start_time.format = 'isot'
+                _logger.info("Time info")
+                _logger.info (start_time.value)
+                self.startTime=start_time.value[0][:-3] + str(hduPrimary['STT_OFFS'])[2:]
+                _logger.info (start_time.value)
+                _logger.info (start_time.value[0][:-3])
+                _logger.info (hduPrimary['STT_OFFS'])
+                _logger.info (str(hduPrimary['STT_OFFS'])[2:])
+                _logger.info (self.startTime)
+             
+            #self.startTime=time.strftime("%Y-%mi-%dT%H:%M:%S") 
+
+
+            #hduPrimary=data[0].header
+                hduPrimary["TELESCOP"]="KAT"
+                hduPrimary["FRONTEND"]="L-BAND"
                 hduPrimary["RA"]=target[-2]
                 hduPrimary["DEC"]=target[-1]
                 hduPrimary["STT_CRD1"]=target[-2]
@@ -604,6 +634,11 @@ class _CaptureSession(object):
             os.rename("%s.writing"%self.save_dir,self.save_dir)
         except:
             _logger.info ("No save_dir, never started capturing data")
+        cmd = ['dada_db', '-d']
+        dada_buffer_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE
+        )
+
         _logger.info("KILLED ALL CAPTURE PROCESSES")
         #yield From(self._run_future)
 

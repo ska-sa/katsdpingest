@@ -90,7 +90,6 @@ COPY ./beamformer_docker_software/psrchive .
 
 RUN chown -R kat:kat .
 
-#USER kat
 ENV PSRCHIVE $PSRHOME/psrchive
 ENV PATH $PATH:$PSRHOME/$LOGIN_ARCH/bin
 ENV PGPLOT_DIR $PSRHOME/pgplot
@@ -192,11 +191,14 @@ run make install
 RUN pip install pyfits
 
 WORKDIR $HOME
+RUN mkdir /usr/local/kat/pulsar/psrchive/share/
+COPY ./beamformer_docker_software/psrchive/Base/Formats/PSRFITS/psrheader.fits /usr/local/kat/pulsar/psrchive/share/
 COPY ./beamformer_docker_software/hardware_cbf_2048chan_2pol.cfg.template $HOME
 COPY ./beamformer_docker_software/hardware_cbf_4096chan_2pol.cfg.template $HOME
 COPY ./beamformer_docker_software/hardware_cbf_4096chan_2pol.cfg $HOME
 COPY ./beamformer_docker_software/hardware_cbf_2048chan_2pol.cfg $HOME
 COPY ./beamformer_docker_software/dada.info $HOME
+
 
 # Install the current package
 COPY . /tmp/install/katsdpingest
