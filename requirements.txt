@@ -10,6 +10,7 @@ h5py
 ipaddress==1.0.16
 katcp
 katversion
+hiredis
 linecache2
 Mako
 manhole
