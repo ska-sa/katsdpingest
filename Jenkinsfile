@@ -2,7 +2,10 @@
 
 @Library('katsdpjenkins') _
 
-katsdp.setDependencies(['ska-sa/katsdpsigproc/master', 'ska-sa/katsdpdockerbase/master'])
+katsdp.setDependencies([
+    'ska-sa/katsdpsigproc/master',
+    'ska-sa/katsdpdata/master',
+    'ska-sa/katsdpdockerbase/master'])
 
 catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
