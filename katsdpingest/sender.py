@@ -64,9 +64,13 @@ class VisSender(object):
         channels = len(channel_range)
         dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
         dump_size += channels * np.dtype(np.float32).itemsize
-        # Scaling by 1.1 is to account for network overheads and to allow
-        # catchup if we temporarily fall behind the rate.
-        rate = dump_size / int_time * 1.1
+        # Add a guess for SPEAD protocol overhead (including descriptors). This just needs
+        # to be conservative, to make sure we don't try to send too slow.
+        dump_size += 2048
+        # Send slightly faster to allow for other network overheads (e.g. overhead per
+        # packet, which is a fraction of total size) and to allow us to catch
+        # up if we temporarily fall behind the rate.
+        rate = dump_size / int_time * 1.05
         self._stream = spead2.send.trollius.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
             spead2.send.StreamConfig(max_packet_size=8972, rate=rate))
