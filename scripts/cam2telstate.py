@@ -117,12 +117,12 @@ SENSORS = [
     Sensor('{data}_input_labels', immutable=True, convert=comma_split),
     Sensor('{data}_loaded_delay_correction'),
     Sensor('{data}_spmc_version_list', immutable=True),
-    Sensor('{data}_cbf_synchronisation_epoch', sp_name='cbf_sync_time', immutable=True),
     # CBF sensors that are instrument specific
     Sensor('{instrument}_adc_sample_rate', immutable=True),
     Sensor('{instrument}_bandwidth', immutable=True),
     Sensor('{instrument}_n_inputs', immutable=True),
     Sensor('{instrument}_scale_factor_timestamp', immutable=True),
+    Sensor('{instrument}_sync_time', immutable=True),
     # CBF sensors that are stream-specific
     Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
     Sensor('{stream_visibility}_int_time', immutable=True),
@@ -195,7 +195,7 @@ def parse_args():
     if args.url is None:
         parser.error('argument --url is required')
     if args.streams is None:
-        parser.error('argument --streams is requied')
+        parser.error('argument --streams is required')
     return args
 
 
@@ -223,14 +223,15 @@ class Client(object):
             try:
                 (full_stream_name, stream_type) = stream.split(":")
                 try:
-                    (instrument_name, stream_name) = full_stream_name.split(".")
+                    (instrument_name, stream_name) = full_stream_name.split(".", 1)
                 except ValueError:
                     # default to 'corr' for unknown instrument names - likely to be removed in the future
                     instrument_name = 'corr'
                     full_stream_name = "corr_{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 # CAM sensor names are exposed with underscores in the pubsub
-                self._stream_types[full_stream_name.replace(".","_")] = stream_type
+                uname = full_stream_name.replace(".", "_").replace("-", "_")
+                self._stream_types[uname] = stream_type
             except ValueError:
                 self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
                                    "Expecting <full_stream_name>:<stream_type>.".format(stream))
