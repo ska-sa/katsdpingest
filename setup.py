@@ -92,7 +92,7 @@ setup(
         'manhole',
         'netifaces',
         'numpy',
-        'spead2>=1.1.0',
+        'spead2>=1.2.2',   # Need fix for https://github.com/ska-sa/spead2/issues/53
         'ipaddress',
         'katcp',
         'katsdpsigproc',
