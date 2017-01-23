@@ -62,6 +62,7 @@ class _CaptureSession(object):
         Time interval (in ADC clocks) between spectra
     """
     def __init__(self, args, loop):
+        _logger.info("Capture-init received")
         script_args = args.telstate.get('obs_script_arguments')
         self.run = False
         self.args=args
@@ -89,16 +90,15 @@ class _CaptureSession(object):
         self._speadmeta_process = None
         self._dada_header_process = None
 
-        _logger.info(args.telstate.get("cbf_sync_time"))
         self._create_dada_header()
         self._create_dada_buffer()
-        _logger.info("Created dada_buffer\n")
+        _logger.info("Created dada_buffer")
         if script_args:
+            _logger.info("SCRIPT ARGS :")
             _logger.info(script_args)
             backend = script_args['backend']
             bandwidth = script_args['beam_bandwidth']
             self.backend = script_args['backend']
-            _logger.info(backend)
             if (backend in "digifits"):
                 if (script_args['backend_args']):
                     self._create_digifits(backend_args=script_args['backend_args'])
@@ -114,8 +114,8 @@ class _CaptureSession(object):
             time.sleep(1)
             beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0].split('+')[0]
             beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0].split('+')[0]
-            _logger.info(beam_x_multicast)
-            _logger.info(beam_y_multicast)
+            _logger.info("Subscribing to beam_x on %s"%beam_x_multicast)
+            _logger.info("Subscribing to beam_y on %s"%beam_y_multicast)
             data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
             if (bandwidth == 428):
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
@@ -137,10 +137,9 @@ class _CaptureSession(object):
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
-        print ('creating buffers')
         dada_buffer_process.wait()
-        print ('complete buffer creation')
-        print (dada_buffer_process.communicate())
+        _logger.info("dada buffer creation output :")
+        _logger.info(dada_buffer_process.communicate())
 
     def _create_dada_header(self):
         cmd = ['dada_header']
@@ -190,22 +189,16 @@ class _CaptureSession(object):
         parser.add_argument('-k', dest='-K', action='store_true', help='remove inter-channel dispersion delays')
         opts = parser.parse_args (backend_args.split(" "))
         opts_list = [list(i) for i in  zip(vars(opts).keys(),vars(opts).values())]
-        _logger.info(opts_list)
-        #for i in opts_list:
-        #  if i[1] and i[0] != '-p':
-        #      _logger.info(i)
-        #      i[1] = '' 
         return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False and item != True)] 
                 
 
     def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1 -c'):
-        _logger.info("digifits")
         passed_args = self.get_digifits_args(backend_args)
         cmd =["numactl", "-C", "5", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
-        #_logger.info(passed_args)
-        #_logger.info(cmd)
+        _logger.info("Starting digifits with args:")
+        _logger.info(cmd)
         with open("%s.writing/digifits.log"%self.save_dir,"a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
@@ -267,31 +260,22 @@ class _CaptureSession(object):
             parser.add_argument('-y', dest='-y', action='store_true', help='output partially completed integrations')
             opts = parser.parse_args (backend_args.split(" "))
             opts_list = [list(i) for i in  zip(vars(opts).keys(),vars(opts).values())]
-            _logger.info(opts_list)
-            #for i in opts_list:
-            #   if i[1] == True and i[1] != 1:
-            #       _logger.info(i)
-            #       i[1] = ''
             return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False and item != True)]
         else:
             return []
 
     def _create_dspsr(self, backend_args="-D 0 -L 10"):
-        _logger.info("dspsr")
         
         passed_args = self.get_dspsr_args(backend_args)
-        _logger.info(passed_args)
         passed_args.append(["-D","0","-Q","-cuda","0","/home/kat/dada.info"])
-        _logger.info (passed_args)
-        _logger.info(passed_args)
 
         self.save_dir = "/data/%.0far"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
-        _logger.info(self.save_dir)
  
         with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
             cmd = ["numactl","-C","4","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+            _logger.info("Starting dspsr with args:")
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile, cwd="%s.writing"%self.save_dir
@@ -366,67 +350,17 @@ class _CaptureSession(object):
         cmd = ["meerkat_speadmeta", _get_interface_address("p4p1"), beam_y_multicast, "-p", data_port]
         _logger.info(cmd)
         self.run = True
-        #keys = [kv[0].split(' ', 1)[0] for kv in args.telstate.get_range('obs_params', st=0)]
-        #values = [eval(kv[0].split(' ', 1)[1]) for kv in t.get_range('obs_params', st=0)]
-        #obs_params = dict(zip(keys, values))
-        #_logger.info(obs_params)
         import re
-        #timestamp_regex = re.compile("\D\d{10}\D")
-        #with open("/tmp/metadata.log","w+") as logfile: 
-        #    self._speadmeta_process = subprocess.Popen(
-        #    cmd, stdin=subprocess.PIPE, stdout=logfile, stderr=logfile
-        #    )
-
-        #error, adc_sync_time = self._speadmeta_process.communicate()
-        #self._speadmeta_process = None
-        #_logger.info((error,adc_sync_time))
-        #content = ""
-        #with open("/tmp/metadata.log","r") as metafile:
-        #    content = metafile.read()
-        #    _logger.info("content is %s"%content)
-        #    count = 0
-        #    while count < 500 and timestamp_regex.search(content) is None:
-        #        count+=1
-        #        time.sleep(0.1)
-        #        content = metafile.read()
-        #        _logger.info("content is %s"%content)
-            #print(self._speadmeta_process.poll())
-
-        #if timestamp_regex.search(content) is None:
-        #    self._speadmeta_process.kill()
-        #    self._speadmeta_process = None
-        #    _logger.info("metadata packet did not arrive by timeout")
-        #    self.run == False
-        #    return
-        #_logger.info("passed exit")
-        #_logger.info(dir(self._metadata_process))
-
-        #error, adc_sync_time = self._speadmeta_process.communicate()
-        #self._speadmeta_process = None
-        #split_content = content.splitlines()
-        #_logger.info(content)
-        #adc_sync_time = split_content[-1]
-        #_logger.info(adc_sync_time)
-        #adc_sync_time = content
-
-        #keys = [kv[0].split(' ', 1)[0] for kv in t.get_range('obs_params', st=0)]
-        #values = [eval(kv[0].split(' ', 1)[1]) for kv in t.get_range('obs_params', st=0)]
-        #obs_params = dict(zip(keys, values))
-
-
-        #import re
         replace = "ADC_SYNC_TIME %s"%self.args.telstate.get("cbf_sync_time")
         content = ""
-        #timestamp_regex = re.compile("\d{10}")
         if halfband:
             c_file = '/home/kat/hardware_cbf_2048chan_2pol.cfg'
         else:
             c_file = '/home/kat/hardware_cbf_4096chan_2pol.cfg'
         
-        _logger.info ("c_file = %s"%c_file)
+        _logger.info ("Config file is %s"%c_file)
         with open('%s.template'%(c_file), 'r+') as content_file:
             content = content_file.read()
-            print (content)
             content = re.sub("ADC_SYNC_TIME",replace,content)
             content = re.sub("FREQ                1283.8955078125", "FREQ                %f"%centre_freq, content)
             content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
@@ -434,30 +368,12 @@ class _CaptureSession(object):
             content = re.sub("DATA_MCAST_0        239.9.3.30", "DATA_MCAST_0        %s"%beam_x_multicast, content)
             content = re.sub("DATA_MCAST_1        239.9.3.31", "DATA_MCAST_1        %s"%beam_y_multicast, content)
             content = re.sub("SOURCE              J0835-4510", "SOURCE              %s"%targets[0], content)
-            _logger.info (content)
-        _logger.info('yo')
+            _logger.info ("Running with : \n%s"%content)
         with open (c_file, 'r+') as content_file:
-            print(0)
             content_file.seek(0)
-            print (2)
             content_file.write(content)
-            print (3)
             content_file.truncate() 
-            _logger.info("written meta")
        
-
-        #count = 0
-        #while count < 1000 and not self._speadmeta_process.poll():
-        #    count+=1
-        #    time.sleep(0.1)
-            
-        #if not self._metadata_process.poll():
-        #    self._metadata_process.kill()
-        #    self._metadata_process = None
-        #    print ("metadata packet did not arrive by timeout")
-        #    return
- 
-        _logger.info("meta complete with ts = %s"%self.args.telstate.get("cbf_sync_time"))
         self._speadmeta_process = None
         self.startTime=time.strftime("%Y-%m%dT%H:%M:%S")
         cap_env = os.environ.copy()
@@ -470,89 +386,46 @@ class _CaptureSession(object):
         self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
         
         #Sleep to ensure data is flowing
-        time.sleep(50)
-        _logger.info("YYYYYYYYYYYYOOOOOOOOOLOLOLOOOOOOOO")
+        _logger.info("Sleeping for 2 minutes to ensure data is flowing")
+        time.sleep(120)
 
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
         )
 
-        _logger.info("capture started_________________------12-----!!")
+        _logger.info("Capture started with args:")
+        _logger.info(cmd)
         _logger.info("Process logs in %s"%self.save_dir)
-        ##import signal
-        _logger.info ("obs_length")
-        _logger.info(obs_length - 40)
-        #time.sleep(int(obs_length-35))
-        #_logger.info("kill cap--------------11!!--------------------")
-        #time.sleep(1)
-        #if self._capture_process.poll() is None:
-        #    self._capture_process.send_signal(signal.SIGINT)
-        #_logger.info("kill cap--------------11--------------------")
-        #time.sleep(1)
-        #if self._capture_process.poll() is None:
-        #    self._capture_process.send_signal(signal.SIGINT)
- 
-        #if self._capture_process.poll() is None:
-            #self._capture_process.kill()
-            #self._capture_process.kill()
 
     #@trollius.coroutine
     def stop(self):
         """Shut down the stream and wait for the coroutine to complete. This
         is a coroutine.
         """
-        #import signal
+        _logger.info("Capture-stop")
         if self._capture_process is not None and self._capture_process.poll() is None:
             self._capture_process.send_signal(signal.SIGINT)
-        _logger.info("kill cap--------------11--------------------")
+            _logger.info("Capture process still running, sending SIGINT")
         time.sleep(1)
         if self._capture_process is not None and self._capture_process.poll() is None:
             self._capture_process.send_signal(signal.SIGINT)
-        _logger.info("--------------------------------------------")
-        #_logger.info(dir(self.args.telstate))
-        #for k in self.args.telstate.keys():
-        #    _logger.info('%s, %s'%(str(k),str(self.args.telstate.get(k))))
-        #_logger.info(self.args.telstate.get('config'))
-        #_logger.info(self.args)
-        _logger.info("STOPPING")
+            _logger.info("Capture process still running, sending SIGINT")
         self._manual_stop = True
         if  self._capture_process is not None and self._capture_process.poll() is None:
-            #time.sleep(5)
-            #self._capture_process.kill()
-            #self._capture_process.kill()
             self._capture_process.send_signal(signal.SIGINT)
             self._capture_process.send_signal(signal.SIGINT)
-            #_logger.info(self._capture_process.communicate())
             self.capture_log.close()
         time.sleep(5)
-        #_logger.info("waiting for digifits to complete") 
-        #_logger.info(self._digifits_process.communicate())
-        #_logger.info("digifits still running")
         if self._dada_dbdisk_process is not None and self._dada_dbdisk_process.poll() is None:
             self._dada_dbdisk_process.send_signal(signal.SIGINT)
         if self._digifits_process is not None and self._digifits_process.poll() is None:
-            _logger.info("waiting for digifits to complete") 
-            #self._digifits_process.send_signal(signal.SIGINT)
-            #_logger.info(self._digifits_process.communicate())
-            #_logger.info("digifits still running")
+            _logger.info("Digifits did not stop") 
         if self._dspsr_process is not None and self._dspsr_process.poll() is None:
             self._dspsr_process.send_signal(signal.SIGINT)
-            _logger.info("waiting for dspsr to complete")
-            _logger.info(self._dspsr_process.communicate())
-            _logger.info("dspsr complete")
-        #if self._speadmeta_process is not None and self._speadmeta_process.poll() is None:
-        #    self._speadmeta_process.send_signal(signal.SIGINT)
-        #_logger.info(self._digifits_process.communicate())
-        #cmd = ['dada_db', '-d']
-        #dada_buffer_process = subprocess.Popen(
-        #cmd, stdout=subprocess.PIPE
-        #)
-        #_logger.info(dada_buffer_process.communicate())
+            _logger.info("dspsr did not stop, sending SIGINT")
         if self._dada_header_process is not None and self._dada_header_process.poll():
             dada_header = dict([d.split() for d in self._dada_header_process.communicate()[0].split('\n')][:-1])
             _logger.info(dada_header)
-        _logger.info("HHEERE")
-       
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
             try: 
@@ -596,10 +469,6 @@ class _CaptureSession(object):
                 _logger.info (str(hduPrimary['STT_OFFS'])[2:])
                 _logger.info (self.startTime)
              
-            #self.startTime=time.strftime("%Y-%mi-%dT%H:%M:%S") 
-
-
-            #hduPrimary=data[0].header
                 hduPrimary["TELESCOP"]="KAT"
                 hduPrimary["FRONTEND"]="L-BAND"
                 hduPrimary["RA"]=target[-2]
@@ -640,7 +509,6 @@ class _CaptureSession(object):
         )
 
         _logger.info("KILLED ALL CAPTURE PROCESSES")
-        #yield From(self._run_future)
 
 
 class CaptureServer(object):
