@@ -1,21 +1,22 @@
 #!/usr/bin/env python
 
 from __future__ import print_function, division
-import tornado
-import tornado.ioloop
-import tornado.gen
-import katportalclient
+
 import logging
 import collections
 import itertools
-import sys
 import pprint
-import katsdptelstate
 import six
 import signal
 import re
 import time
+
+import tornado
+import tornado.ioloop
+import tornado.gen
 import numpy as np
+import katsdptelstate
+import katportalclient
 
 
 STATUS_KEY = 'sdp_cam2telstate_status'
@@ -130,11 +131,13 @@ SENSORS = [
     # Beamformer metadata are not immutable, because controlled by passband
     Sensor('{stream_beamformer}_n_chans'),
     Sensor('{stream_beamformer}_{inputn}_weight'),
-    Sensor('{stream_fengine}_n_samples_between_spectra', sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
+    Sensor('{stream_fengine}_n_samples_between_spectra',
+           sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
     Sensor('{stream_fengine}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
-    Sensor('{stream_fengine}_{inputn}_fft0_shift', sp_name='{stream_fengine}_fft_shift'),
+    Sensor('{stream_fengine}_{inputn}_fft0_shift',
+           sp_name='{stream_fengine}_fft_shift'),
     Sensor('{stream_fengine}_{inputn}_delay', convert=np.safe_eval),
     Sensor('{stream_fengine}_{inputn}_delay_ok'),
     Sensor('{stream_fengine}_{inputn}_eq', convert=np.safe_eval),
@@ -180,7 +183,8 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
     parser.add_argument('--streams', type=str, help='String of comma separated full_stream_name:stream_type pairs.')
-    parser.add_argument('--collapse-streams', action='store_true', help='Collapse instrument and stream prefixes for compatibility with AR1.')
+    parser.add_argument('--collapse-streams', action='store_true',
+                        help='Collapse instrument and stream prefixes for compatibility with AR1.')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -205,8 +209,8 @@ class Client(object):
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
-        self._instruments = set() #: Set of instruments available in the current subarray
-        self._stream_types = {} #: Dictionary mapping stream names to stream types
+        self._instruments = set()  #: Set of instruments available in the current subarray
+        self._stream_types = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
@@ -392,7 +396,7 @@ class Client(object):
             self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
             self._logger.debug('Updated %s to %s with timestamp %s',
                                sensor.sp_name, value, timestamp)
-        except katsdptelstate.ImmutableKeyError as e:
+        except katsdptelstate.ImmutableKeyError:
             self._logger.error('Failed to set %s to %s with timestamp %s',
                                sensor.sp_name, value, timestamp, exc_info=True)
 
@@ -436,7 +440,7 @@ class Client(object):
             return
         if name not in self._sensors:
             self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
-                               .format(name, value))
+                              .format(name, value))
         else:
             sensor = self._sensors[name]
             last = False
