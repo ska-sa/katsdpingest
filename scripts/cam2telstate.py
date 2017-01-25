@@ -112,12 +112,14 @@ SENSORS = [
     Sensor('{receptor}_rsc_rxu_serial_number'),
     Sensor('{receptor}_rsc_rxx_serial_number'),
     Sensor('{receptor}_ap_version_list', immutable=True),
-    # Data proxy sensors
-    Sensor('{data}_target'),
-    Sensor('{data}_auto_delay_enabled'),
-    Sensor('{data}_input_labels', immutable=True, convert=comma_split),
-    Sensor('{data}_loaded_delay_correction'),
-    Sensor('{data}_spmc_version_list', immutable=True),
+    # CBF proxy sensors
+    Sensor('{cbf}_target'),
+    Sensor('{cbf}_auto_delay_enabled'),
+    Sensor('{cbf}_input_labels', immutable=True, convert=comma_split),
+    Sensor('{cbf}_loaded_delay_correction'),
+    Sensor('{cbf}_cmc_version_list', immutable=True),
+    # SDP proxy sensors
+    Sensor('{sdp}_spmc_version_list', immutable=True),
     # CBF sensors that are instrument specific
     Sensor('{instrument}_adc_sample_rate', immutable=True),
     Sensor('{instrument}_bandwidth', immutable=True),
@@ -154,8 +156,7 @@ SENSORS = [
     Sensor('anc_air_temperature'),
     Sensor('anc_wind_direction'),
     Sensor('anc_mean_wind_speed'),
-    Sensor('mcp_dmc_version_list', immutable=True),
-    Sensor('mcp_cmc_version_list', immutable=True)
+    Sensor('mcp_dmc_version_list', immutable=True)
 ]
 
 
@@ -214,7 +215,8 @@ class Client(object):
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
-        self._data_name = None    #: Set once _pool_resources result is set
+        self._cbf_name = None     #: Set once _pool_resources result is set
+        self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
 
@@ -254,11 +256,12 @@ class Client(object):
             list,
             receptor=[(name, name) for name in self._receptors],
             subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
-            data=[(self._data_name, 'data')]
+            cbf=[(self._cbf_name, 'data')],
+            sdp=[(self._sdp_name, 'data')]
         )
         for (number, name) in enumerate(self._input_labels.result()):
             substitutions['inputn'].append(('input{}'.format(number), name))
-        for (cam_prefix, sp_prefix) in substitutions['data']:
+        for (cam_prefix, sp_prefix) in substitutions['cbf']:
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
                 cam_instrument = "{}_cbf_{}".format(cam_prefix, instrument)
@@ -317,7 +320,7 @@ class Client(object):
         yield self._pool_resources
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
         # Now input labels
-        sensor = '{}_input_labels'.format(self._data_name)
+        sensor = '{}_input_labels'.format(self._cbf_name)
         yield self.subscribe_one(sensor)
         yield self._input_labels
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
@@ -418,20 +421,23 @@ class Client(object):
         elif name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
-                data_found = False
                 self._receptors = []
                 for resource in resources:
                     if resource.startswith('data_'):
-                        self._data_name = resource
-                        data_found = True
+                        self._cbf_name = self._sdp_name = resource
+                    elif resource.startswith('cbf_'):
+                        self._cbf_name = resource
+                    elif resource.startswith('sdp_'):
+                        self._sdp_name = resource
                     elif re.match(r'^m\d+$', resource):
                         self._receptors.append(resource)
-                if not data_found:
+                if not self._cbf_name or not self._sdp_name:
                     self._pool_resources.set_exception(RuntimeError(
-                        'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
+                        'No data_* or cbf_* / sdp_* resource found for '
+                        'subarray {}'.format(self._args.subarray_numeric_id)))
                 else:
                     self._pool_resources.set_result(resources)
-        elif self._data_name is not None and name == '{}_input_labels'.format(self._data_name):
+        elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
                 self._input_labels.set_result(labels)
