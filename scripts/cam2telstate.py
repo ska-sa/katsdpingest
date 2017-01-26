@@ -211,7 +211,7 @@ class Client(object):
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
         self._instruments = set()  #: Set of instruments available in the current subarray
-        self._stream_types = {}  #: Dictionary mapping stream names to stream types
+        self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
@@ -229,13 +229,13 @@ class Client(object):
                 try:
                     (instrument_name, stream_name) = full_stream_name.split(".", 1)
                 except ValueError:
-                    # default to 'corr' for unknown instrument names - likely to be removed in the future
-                    instrument_name = 'corr'
-                    full_stream_name = "corr_{}".format(full_stream_name)
+                    # default to 'cbf' for unknown instrument names - likely to be removed in the future
+                    instrument_name = "cbf"
+                    full_stream_name = "cbf_{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 # CAM sensor names are exposed with underscores in the pubsub
                 uname = full_stream_name.replace(".", "_").replace("-", "_")
-                self._stream_types[uname] = stream_type
+                self._streams_with_type[uname] = stream_type
             except ValueError:
                 self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
                                    "Expecting <full_stream_name>:<stream_type>.".format(stream))
@@ -264,12 +264,12 @@ class Client(object):
         for (cam_prefix, sp_prefix) in substitutions['cbf']:
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
-                cam_instrument = "{}_cbf_{}".format(cam_prefix, instrument)
+                cam_instrument = "{}_{}".format(cam_prefix, instrument)
                 sp_instrument = "cbf_" + instrument if not self._args.collapse_streams else "cbf"
                 substitutions['instrument'].append((cam_instrument, sp_instrument))
             # For each stream we add type specific sensors
-            for (full_stream_name, stream_type) in self._stream_types.iteritems():
-                cam_stream = "{}_cbf_{}".format(cam_prefix, full_stream_name)
+            for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
+                cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
                 if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
                     sp_stream = "cbf"
                 else:
