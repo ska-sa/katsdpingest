@@ -974,15 +974,21 @@ void receiver::emplace_readers()
 bool receiver::metadata_ready() const
 {
     // frequency_id is excluded, since v3 of the ICD does not include it.
-    return channels > 0 && channels_per_heap > 0
+    logger(spead2::log_level::info, "checking whether metadata is ready");
+    log_format(spead2::log_level::info,
+               "channels=%1% channels_per_heap=%2% spectra_per_heap=%3% "
+               "ticks_between_spectra=%4% bf_raw_id=%5% timestamp_id=%6%",
+               channels, channels_per_heap, spectra_per_heap,
+               ticks_between_spectra, bf_raw_id, timestamp_id);
+    bool ready = channels > 0 && channels_per_heap > 0
         && spectra_per_heap > 0 && ticks_between_spectra > 0
         && bf_raw_id != -1 && timestamp_id != -1;
+    logger(spead2::log_level::info, ready ? "metadata is ready" : "metadata is not ready");
+    return ready;
 }
 
 void receiver::prepare_for_data()
 {
-    logger(spead2::log_level::info, "metadata received");
-
     payload_size = 2 * spectra_per_heap * channels_per_heap;
 
     for (std::size_t i = 0; i < window_size + config.ring_slots + 1; i++)
@@ -1253,6 +1259,7 @@ receiver::receiver(const session_config &config)
     ticks_between_spectra(config.ticks_between_spectra),
     channels(config.channels),
     spectra_per_heap(config.spectra_per_heap),
+    channels_per_heap(config.channels_per_heap),
     worker(1, affinity_vector(config.network_affinity)),
     stream(*this, config.live_heaps),
     ring(config.ring_slots),
