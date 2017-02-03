@@ -133,6 +133,8 @@ SENSORS = [
     # Beamformer metadata are not immutable, because controlled by passband
     Sensor('{stream_beamformer}_n_chans'),
     Sensor('{stream_beamformer}_{inputn}_weight'),
+    Sensor('{stream_beamformer}_n_chans_per_substream', immutable=True),
+    Sensor('{stream_beamformer}_spectra_per_heap', immutable=True),
     Sensor('{stream_fengine}_n_samples_between_spectra',
            sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
