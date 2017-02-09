@@ -1,6 +1,0 @@
-#! /bin/csh -f
-
-# Management/dspsr_cflags.  Generated from dspsr_cflags.in by configure.
-
-echo -IPREFIX/include
-

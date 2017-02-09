@@ -1,6 +1,0 @@
-#! /bin/csh -f
-
-# Management/psrdada_ldflags.  Generated from psrdada_ldflags.in by configure.
-
-echo -n " -LPREFIX/lib -lpsrdada"
-

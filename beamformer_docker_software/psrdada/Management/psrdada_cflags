@@ -1,6 +1,0 @@
-#! /bin/csh -f
-
-# Management/psrdada_cflags.  Generated from psrdada_cflags.in by configure.
-
-echo -IPREFIX/include
-

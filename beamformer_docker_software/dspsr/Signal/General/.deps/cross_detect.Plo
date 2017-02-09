@@ -1,8 +1,0 @@
-cross_detect.lo: cross_detect.c /usr/include/stdc-predef.h cross_detect.h \
- cross_detect.ic
-
-/usr/include/stdc-predef.h:
-
-cross_detect.h:
-
-cross_detect.ic:

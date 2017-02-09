@@ -1,6 +1,0 @@
-#! /bin/csh -f
-
-# Management/dspsr_ldflags.  Generated from dspsr_ldflags.in by configure.
-
-echo -n " -LPREFIX/lib -ldspsr -ldspdsp -ldspbase  -L/usr/local/kat/pulsar/linux_64/lib -lpsrdada -L/usr/local/kat/pulsar/linux_64/lib -lpsrmore -lpsrbase -lpsrutil -L/usr/local/kat/pulsar/linux_64/lib -L/usr/local/lib -lfftw3f -lcfitsio -lpthread -lm -L/usr/local/kat/pulsar/linux_64/tempo2/lib -ltempo2pred -lm -L/usr/lib/gcc/x86_64-linux-gnu/4.8 -L/usr/lib/gcc/x86_64-linux-gnu/4.8/../../../x86_64-linux-gnu -L/usr/lib/gcc/x86_64-linux-gnu/4.8/../../../../lib -L/lib/x86_64-linux-gnu -L/lib/../lib -L/usr/lib/x86_64-linux-gnu -L/usr/lib/../lib -L/usr/lib/gcc/x86_64-linux-gnu/4.8/../../.. -lgfortran -lm -lquadmath"
-

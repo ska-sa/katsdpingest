@@ -1,8 +1,0 @@
-#!/bin/csh
-
-echo "Running update ..."
-
-git pull origin master |& tee update.log
-
-date >> update.log
-

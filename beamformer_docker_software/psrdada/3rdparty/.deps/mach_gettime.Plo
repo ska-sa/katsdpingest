@@ -1,3 +1,0 @@
-mach_gettime.lo: mach_gettime.c /usr/include/stdc-predef.h
-
-/usr/include/stdc-predef.h:
