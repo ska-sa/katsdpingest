@@ -1,21 +1,22 @@
 #!/usr/bin/env python
 
 from __future__ import print_function, division
-import tornado
-import tornado.ioloop
-import tornado.gen
-import katportalclient
+
 import logging
 import collections
 import itertools
-import sys
 import pprint
-import katsdptelstate
 import six
 import signal
 import re
 import time
+
+import tornado
+import tornado.ioloop
+import tornado.gen
 import numpy as np
+import katsdptelstate
+import katportalclient
 
 
 STATUS_KEY = 'sdp_cam2telstate_status'
@@ -111,12 +112,14 @@ SENSORS = [
     Sensor('{receptor}_rsc_rxu_serial_number'),
     Sensor('{receptor}_rsc_rxx_serial_number'),
     Sensor('{receptor}_ap_version_list', immutable=True),
-    # Data proxy sensors
-    Sensor('{data}_target'),
-    Sensor('{data}_auto_delay_enabled'),
-    Sensor('{data}_input_labels', immutable=True, convert=comma_split),
-    Sensor('{data}_loaded_delay_correction'),
-    Sensor('{data}_spmc_version_list', immutable=True),
+    # CBF proxy sensors
+    Sensor('{cbf}_target'),
+    Sensor('{cbf}_auto_delay_enabled'),
+    Sensor('{cbf}_input_labels', immutable=True, convert=comma_split),
+    Sensor('{cbf}_loaded_delay_correction'),
+    Sensor('{cbf}_cmc_version_list', immutable=True),
+    # SDP proxy sensors
+    Sensor('{sdp}_spmc_version_list', immutable=True),
     # CBF sensors that are instrument specific
     Sensor('{instrument}_adc_sample_rate', immutable=True),
     Sensor('{instrument}_bandwidth', immutable=True),
@@ -132,11 +135,13 @@ SENSORS = [
     Sensor('{stream_beamformer}_{inputn}_weight'),
     Sensor('{stream_beamformer}_n_chans_per_substream', immutable=True),
     Sensor('{stream_beamformer}_spectra_per_heap', immutable=True),
-    Sensor('{stream_fengine}_n_samples_between_spectra', sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
+    Sensor('{stream_fengine}_n_samples_between_spectra',
+           sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
     Sensor('{stream_fengine}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
-    Sensor('{stream_fengine}_{inputn}_fft0_shift', sp_name='{stream_fengine}_fft_shift'),
+    Sensor('{stream_fengine}_{inputn}_fft0_shift',
+           sp_name='{stream_fengine}_fft_shift'),
     Sensor('{stream_fengine}_{inputn}_delay', convert=np.safe_eval),
     Sensor('{stream_fengine}_{inputn}_delay_ok'),
     Sensor('{stream_fengine}_{inputn}_eq', convert=np.safe_eval),
@@ -153,8 +158,7 @@ SENSORS = [
     Sensor('anc_air_temperature'),
     Sensor('anc_wind_direction'),
     Sensor('anc_mean_wind_speed'),
-    Sensor('mcp_dmc_version_list', immutable=True),
-    Sensor('mcp_cmc_version_list', immutable=True)
+    Sensor('mcp_dmc_version_list', immutable=True)
 ]
 
 
@@ -182,7 +186,8 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
     parser.add_argument('--streams', type=str, help='String of comma separated full_stream_name:stream_type pairs.')
-    parser.add_argument('--collapse-streams', action='store_true', help='Collapse instrument and stream prefixes for compatibility with AR1.')
+    parser.add_argument('--collapse-streams', action='store_true',
+                        help='Collapse instrument and stream prefixes for compatibility with AR1.')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -207,12 +212,13 @@ class Client(object):
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
         self._sensors = None  #: Dictionary from CAM name to sensor object
-        self._instruments = set() #: Set of instruments available in the current subarray
-        self._stream_types = {} #: Dictionary mapping stream names to stream types
+        self._instruments = set()  #: Set of instruments available in the current subarray
+        self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
-        self._data_name = None    #: Set once _pool_resources result is set
+        self._cbf_name = None     #: Set once _pool_resources result is set
+        self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
 
@@ -225,13 +231,13 @@ class Client(object):
                 try:
                     (instrument_name, stream_name) = full_stream_name.split(".", 1)
                 except ValueError:
-                    # default to 'corr' for unknown instrument names - likely to be removed in the future
-                    instrument_name = 'corr'
-                    full_stream_name = "corr_{}".format(full_stream_name)
+                    # default to 'cbf' for unknown instrument names - likely to be removed in the future
+                    instrument_name = "cbf"
+                    full_stream_name = "cbf_{}".format(full_stream_name)
                 self._instruments.add(instrument_name)
                 # CAM sensor names are exposed with underscores in the pubsub
                 uname = full_stream_name.replace(".", "_").replace("-", "_")
-                self._stream_types[uname] = stream_type
+                self._streams_with_type[uname] = stream_type
             except ValueError:
                 self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
                                    "Expecting <full_stream_name>:<stream_type>.".format(stream))
@@ -252,19 +258,20 @@ class Client(object):
             list,
             receptor=[(name, name) for name in self._receptors],
             subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
-            data=[(self._data_name, 'data')]
+            cbf=[(self._cbf_name, 'data')],
+            sdp=[(self._sdp_name, 'data')]
         )
         for (number, name) in enumerate(self._input_labels.result()):
             substitutions['inputn'].append(('input{}'.format(number), name))
-        for (cam_prefix, sp_prefix) in substitutions['data']:
+        for (cam_prefix, sp_prefix) in substitutions['cbf']:
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
-                cam_instrument = "{}_cbf_{}".format(cam_prefix, instrument)
+                cam_instrument = "{}_{}".format(cam_prefix, instrument)
                 sp_instrument = "cbf_" + instrument if not self._args.collapse_streams else "cbf"
                 substitutions['instrument'].append((cam_instrument, sp_instrument))
             # For each stream we add type specific sensors
-            for (full_stream_name, stream_type) in self._stream_types.iteritems():
-                cam_stream = "{}_cbf_{}".format(cam_prefix, full_stream_name)
+            for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
+                cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
                 if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
                     sp_stream = "cbf"
                 else:
@@ -315,7 +322,7 @@ class Client(object):
         yield self._pool_resources
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
         # Now input labels
-        sensor = '{}_input_labels'.format(self._data_name)
+        sensor = '{}_input_labels'.format(self._cbf_name)
         yield self.subscribe_one(sensor)
         yield self._input_labels
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
@@ -394,7 +401,7 @@ class Client(object):
             self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
             self._logger.debug('Updated %s to %s with timestamp %s',
                                sensor.sp_name, value, timestamp)
-        except katsdptelstate.ImmutableKeyError as e:
+        except katsdptelstate.ImmutableKeyError:
             self._logger.error('Failed to set %s to %s with timestamp %s',
                                sensor.sp_name, value, timestamp, exc_info=True)
 
@@ -416,20 +423,23 @@ class Client(object):
         elif name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
-                data_found = False
                 self._receptors = []
                 for resource in resources:
                     if resource.startswith('data_'):
-                        self._data_name = resource
-                        data_found = True
+                        self._cbf_name = self._sdp_name = resource
+                    elif resource.startswith('cbf_'):
+                        self._cbf_name = resource
+                    elif resource.startswith('sdp_'):
+                        self._sdp_name = resource
                     elif re.match(r'^m\d+$', resource):
                         self._receptors.append(resource)
-                if not data_found:
+                if not self._cbf_name or not self._sdp_name:
                     self._pool_resources.set_exception(RuntimeError(
-                        'No data_* resource found for subarray {}'.format(self._args.subarray_numeric_id)))
+                        'No data_* or cbf_* / sdp_* resource found for '
+                        'subarray {}'.format(self._args.subarray_numeric_id)))
                 else:
                     self._pool_resources.set_result(resources)
-        elif self._data_name is not None and name == '{}_input_labels'.format(self._data_name):
+        elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
                 self._input_labels.set_result(labels)
@@ -438,7 +448,7 @@ class Client(object):
             return
         if name not in self._sensors:
             self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
-                               .format(name, value))
+                              .format(name, value))
         else:
             sensor = self._sensors[name]
             last = False
