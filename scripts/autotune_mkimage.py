@@ -14,6 +14,12 @@ import os
 import os.path
 
 
+if docker.version_info >= (2,):
+    from docker import APIClient as Client
+else:
+    from docker import Client
+
+
 def get_existing(cli, image):
     container = cli.create_container(image=image)
     container_id = container['Id']
@@ -60,9 +66,9 @@ def main():
             client_cert=(os.path.expanduser('~/.docker/cert.pem'),
                          os.path.expanduser('~/.docker/key.pem')),
             verify=os.path.expanduser('~/.docker/ca.pem'))
-        cli = docker.Client(args.host, tls=tls_config)
+        cli = Client(args.host, tls=tls_config)
     else:
-        cli = docker.Client(args.host)
+        cli = Client(args.host)
 
     old = None
     if args.copy or args.copy_from is not None:
