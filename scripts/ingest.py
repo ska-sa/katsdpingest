@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 import concurrent.futures
+import katsdpservices
 
 
 # This must be as early as possible to intercept all logger registrations
@@ -72,7 +73,7 @@ def range_str(value):
 
 
 def parse_opts():
-    parser = katsdptelstate.ArgumentParser()
+    parser = katsdpservices.ArgumentParser()
     parser.add_argument('--no-cam2telstate', dest='cam2telstate', default=True, action='store_false', help='Do not wait for cam2telstate to signal readiness')
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
@@ -90,8 +91,8 @@ def parse_opts():
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
-    parser.add_argument('-l', '--log-level', type=str, default='INFO', metavar='LEVEL',
-                        help='log level to use [default=%(default)s]')
+    parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
+                        help='log level to use')
     opts = parser.parse_args()
     if opts.output_channels is None:
         opts.output_channels = Range(0, opts.cbf_channels)
@@ -347,18 +348,12 @@ def on_shutdown(server):
 
 def main():
     logging.setLoggerClass(Logger)
+    katsdpservices.setup_logging()
+    katsdpservices.setup_restart()
     global opts
     opts = parse_opts()
-
-    if len(logging.root.handlers) > 0:
-        logging.root.removeHandler(logging.root.handlers[0])
-    formatter = logging.Formatter("%(asctime)s.%(msecs)03dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
-                                  datefmt="%Y-%m-%d %H:%M:%S")
-    formatter.converter = time.gmtime
-    sh = logging.StreamHandler()
-    sh.setFormatter(formatter)
-    logging.root.addHandler(sh)
-    logging.root.setLevel(opts.log_level.upper())
+    if opts.log_level is not None:
+        logging.root.setLevel(opts.log_level.upper())
 
     ioloop = AsyncIOMainLoop()
     ioloop.install()

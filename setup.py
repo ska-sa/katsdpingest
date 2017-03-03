@@ -82,8 +82,7 @@ setup(
         "scripts/ingest.py",
         "scripts/bf_ingest.py",
         "scripts/ingest_autotune.py",
-        "scripts/cam2telstate.py",
-        "scripts/cam2spead_recv.py"
+        "scripts/cam2telstate.py"
     ],
     setup_requires=['katversion', 'pkgconfig'],
     install_requires=[
@@ -97,6 +96,7 @@ setup(
         'katcp',
         'katsdpsigproc',
         'katsdpfilewriter',
+        'katsdpservices',
         'katsdptelstate',
         'psutil',
         'trollius'
