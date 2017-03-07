@@ -971,8 +971,11 @@ class CBFIngest(object):
         will wait for the shutdown to complete.
         """
         if self._run_future:
+            logger.info('Stopping receiver...')
             self.rx.stop()
+            logger.info('Receiver stopped. Waiting for run to stop...')
             yield From(self._run_future)
+            logger.info('Run stopped')
             self._run_future = None
 
     @trollius.coroutine
@@ -1010,6 +1013,7 @@ class CBFIngest(object):
             try:
                 frame = yield From(self.rx.get())
             except spead2.Stopped:
+                logger.info('Detected receiver stopped')
                 break
 
             st = time.time()
@@ -1055,6 +1059,7 @@ class CBFIngest(object):
 
         # Stop received.
         yield From(self.rx.join())
+        logger.info('Joined with receiver. Flushing final groups...')
         if self.proc_resource is not None:    # Could be None if no heaps arrived
             acq = self.proc_resource.acquire()
             with acq:
@@ -1063,19 +1068,24 @@ class CBFIngest(object):
                     self._output_avg.finish()
                 self._sd_avg.finish()
                 acq.ready()
+        logger.info('Waiting for jobs to complete...')
         yield From(self.jobs.finish())
-        logger.info("CBF ingest complete")
+        logger.info('Jobs complete')
         if self.tx_spectral is not None:
+            logger.info('Stopping tx_spectral stream...')
             yield From(self.tx_spectral.stop())
             self.tx_spectral = None
         if self.tx_continuum is not None:
+            logger.info('Stopping tx_continuum stream...')
             yield From(self.tx_continuum.stop())
             self.tx_continuum = None
         if self.ig_sd is not None:
             for tx in self._sdisp_ips.itervalues():
+                logger.info('Stopping signal display stream...')
                 yield From(self._stop_stream(tx, self.ig_sd))
         if self.proc is not None:   # Could be None if no heaps arrived
             logger.debug("\nProcessing Blocks\n=================\n")
             for description in self.proc.descriptions():
                 logger.debug("\t".join([str(x) for x in description]))
+        logger.info("CBF ingest complete")
         self.status_sensor.set_value("complete")
