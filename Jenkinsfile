@@ -5,7 +5,8 @@
 katsdp.setDependencies([
     'ska-sa/katsdpsigproc/master',
     'ska-sa/katsdpdata/master',
-    'ska-sa/katsdpdockerbase/master'])
+    'ska-sa/katsdpdockerbase/master',
+    'ska-sa/katsdpservices/master'])
 
 catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
