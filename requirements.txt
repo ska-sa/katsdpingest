@@ -42,5 +42,6 @@ ujson==1.35
 unittest2
 git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpdata#egg=katsdpfilewriter&subdirectory=katsdpfilewriter
+git+ssh://git@github.com/ska-sa/katsdpservices#egg=katsdpservices
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
 git+ssh://git@github.com/ska-sa/katportalclient#egg=katportalclient
