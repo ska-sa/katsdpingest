@@ -105,8 +105,9 @@ class TestReceiver(object):
         self.n_streams = 2
         self.n_xengs = 4
         self.n_chans = 4096
+        sensors = mock.MagicMock()
         self.rx = Receiver(endpoints, Range(0, self.n_chans), self.n_chans,
-                           active_frames=3, loop=self.loop)
+                           sensors, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]

@@ -135,29 +135,29 @@ class IngestDeviceServer(DeviceServer):
 
         self._my_sensors = {}
         self._my_sensors["capture-active"] = Sensor(
-                Sensor.INTEGER, "capture_active",
+                Sensor.INTEGER, "capture-active",
                 "Is there a currently active capture session.",
                 "", default=0, params=[0, 1])
-        self._my_sensors["packets-captured"] = Sensor(
-                Sensor.INTEGER, "packets_captured",
-                "The number of packets captured so far by the current session.",
-                "", default=0, params=[0, 2**63])
         self._my_sensors["status"] = Sensor.string(
                 "status", "The current status of the capture session.", "")
         self._my_sensors["last-dump-timestamp"] = Sensor(
-                Sensor.FLOAT, "last_dump_timestamp",
+                Sensor.FLOAT, "last-dump-timestamp",
                 "Timestamp of most recently received correlator dump in Unix seconds",
                 "", default=0, params=[0, 2**63])
-        self._my_sensors["input-rate"] = Sensor(
-                Sensor.INTEGER, "input-rate",
-                "Input data rate in Bps averaged over the last 10 dumps",
-                "Bps", default=0)
-        self._my_sensors["output-rate"] = Sensor(
-                Sensor.INTEGER, "output-rate",
-                "Output data rate in Bps averaged over the last 10 dumps",
-                "Bps", default=0)
         self._my_sensors["device-status"] = Sensor.discrete(
                 "device-status", "Health status", "", ["ok", "degraded", "fail"])
+        self._my_sensors["input-bytes-total"] = Sensor(
+                Sensor.INTEGER, "input-bytes-total",
+                "Number of payload bytes received from CBF in this session",
+                "", default=0)
+        self._my_sensors["input-heaps-total"] = Sensor(
+                Sensor.INTEGER, "input-heaps-total",
+                "Number of payload heaps received from CBF in this session",
+                "", default=0)
+        self._my_sensors["input-dumps-total"] = Sensor(
+                Sensor.INTEGER, "input-dumps-total",
+                "Number of CBF dumps received in this session",
+                "", default=0)
 
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 

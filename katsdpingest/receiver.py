@@ -60,6 +60,8 @@ class Receiver(object):
         Channels to capture. These must be aligned to the stream boundaries.
     cbf_channels : int
         Total number of channels represented by `endpoints`.
+    sensors : dict
+        Dictionary mapping sensor names to sensor objects
     telstate : :class:`katsdptelstate.TelescopeState`, optional
         Telescope state to be populated with CBF attributes
     cbf_name : str
@@ -96,7 +98,7 @@ class Receiver(object):
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
     """
-    def __init__(self, endpoints, channel_range, cbf_channels,
+    def __init__(self, endpoints, channel_range, cbf_channels, sensors,
                  telstate=None, cbf_name='cbf', active_frames=2, loop=None):
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
@@ -122,6 +124,15 @@ class Receiver(object):
         self._futures = []
         self._interval = None
         self._loop = loop
+        self._input_bytes = 0
+        self._input_heaps = 0
+        self._input_dumps = 0
+        self._input_bytes_sensor = sensors['input-bytes-total']
+        self._input_bytes_sensor.set_value(0)
+        self._input_heaps_sensor = sensors['input-heaps-total']
+        self._input_heaps_sensor.set_value(0)
+        self._input_dumps_sensor = sensors['input-dumps-total']
+        self._input_dumps_sensor.set_value(0)
         # If we have a large number of streams, we avoid creating more
         # threads than CPU cores.
         thread_pool = spead2.ThreadPool(min(multiprocessing.cpu_count(), len(use_endpoints)))
@@ -192,6 +203,13 @@ class Receiver(object):
         self._frames.append(Frame(next_timestamp, xengs))
 
     @trollius.coroutine
+    def _put_frame(self, frame):
+        """Put a frame onto :attr:`_frames_complete` and update the sensor."""
+        self._input_dumps += 1
+        self._input_dumps_sensor.set_value(self._input_dumps)
+        yield From(self._frames_complete.put(frame))
+
+    @trollius.coroutine
     def _flush_frames(self):
         """Remove any completed frames from the head of :attr:`_frames`."""
         while self._frames[0].ready():
@@ -202,7 +220,7 @@ class Receiver(object):
             frame = self._frames[0]
             _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
             self._pop_frame()
-            yield From(self._frames_complete.put(frame))
+            yield From(self._put_frame(frame))
 
     def _have_metadata(self, ig_cbf):
         if not CBF_CRITICAL_ATTRS.issubset(self.cbf_attr.keys()):
@@ -226,7 +244,8 @@ class Receiver(object):
             # we will be receiving in parallel until we have the metadata, but
             # we need this to set up the stream. To handle this, we'll make a
             # temporary stream for reading the metadata, then replace it once
-            # we have the metadata
+            # we have the metadata.
+            # TODO: we can now get it all from telstate.
             ring_heaps = 4
             stream = spead2.recv.trollius.Stream(thread_pool, max_heaps=4,
                                                  ring_heaps=ring_heaps, loop=self._loop)
@@ -344,6 +363,10 @@ class Receiver(object):
                 prev_ts = data_ts
                 # we have new data...
 
+                self._input_bytes += data_item.nbytes
+                self._input_heaps += 1
+                self._input_bytes_sensor.set_value(self._input_bytes)
+                self._input_heaps_sensor.set_value(self._input_heaps)
                 if self._frames is None:
                     self._frames = deque()
                     for i in range(self.active_frames):
@@ -367,7 +390,7 @@ class Receiver(object):
                         actual = sum(item is not None for item in frame.items)
                         _logger.warning('Frame with timestamp %d is %d/%d complete', ts0,
                                         actual, expected)
-                        yield From(self._frames_complete.put(frame))
+                        yield From(self._put_frame(frame))
                     del frame   # Free it up, particularly if discarded
                     yield From(self._flush_frames())
                     ts0 = self._frames[0].timestamp
