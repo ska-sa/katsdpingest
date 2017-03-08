@@ -16,6 +16,7 @@ import tornado.ioloop
 import tornado.gen
 import numpy as np
 import katsdptelstate
+import katsdpservices
 import katportalclient
 
 
@@ -162,26 +163,8 @@ SENSORS = [
 ]
 
 
-def configure_logging():
-    if len(logging.root.handlers) > 0:
-        logging.root.removeHandler(logging.root.handlers[0])
-    formatter = logging.Formatter("%(asctime)s.%(msecs)03dZ - %(filename)s:%(lineno)s - %(levelname)s - %(message)s",
-                                  datefmt="%Y-%m-%d %H:%M:%S")
-    formatter.converter = time.gmtime
-    sh = logging.StreamHandler()
-    sh.setFormatter(formatter)
-    logging.root.addHandler(sh)
-
-    logger = logging.getLogger("katsdpingest.cam2telstate")
-    logger.setLevel(logging.INFO)
-
-    # configure SPEAD to display warnings about dropped packets etc...
-    logging.getLogger('spead2').setLevel(logging.WARNING)
-    return logger
-
-
 def parse_args():
-    parser = katsdptelstate.ArgumentParser()
+    parser = katsdpservices.ArgumentParser()
     parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
@@ -481,8 +464,10 @@ class Client(object):
 
 
 def main():
+    katsdpservices.setup_logging()
+    katsdpservices.setup_restart()
     args = parse_args()
-    logger = configure_logging()
+    logger = logging.getLogger("katsdpingest.cam2telstate")
     loop = tornado.ioloop.IOLoop.instance()
     client = Client(args, logger)
     client.parse_streams()
