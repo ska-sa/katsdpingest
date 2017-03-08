@@ -62,8 +62,8 @@ class _CaptureSession(object):
         Time interval (in ADC clocks) between spectra
     """
     def __init__(self, args, loop):
-        _logger.info("Capture-init received")
-        script_args = args.telstate.get('obs_script_arguments')
+        _logger.info("Capture-init received ___YO___")
+        #script_args = args.telstate.get('obs_script_arguments')
         self.run = False
         self.args=args
         self._loop = loop
@@ -93,6 +93,10 @@ class _CaptureSession(object):
         self._create_dada_header()
         self._create_dada_buffer()
         _logger.info("Created dada_buffer")
+        _logger.info("Grabbing script_args")
+        config = args.telstate.get('config')
+        script_args = args.telstate.get('obs_script_arguments')
+        _logger.info(script_args)
         if script_args:
             _logger.info("SCRIPT ARGS :")
             _logger.info(script_args)
@@ -112,17 +116,17 @@ class _CaptureSession(object):
             elif (backend in "dada_dbdisk"):
                 self._create_dada_dbdisk()
             time.sleep(1)
-            beam_x_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speadx'].split(":")[0].split('+')[0]
-            beam_y_multicast = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[0].split('+')[0]
+            beam_x_multicast = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'].split(":")[1][2:-3]
+            beam_y_multicast = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0y'].split(":")[1][2:-3]
             _logger.info("Subscribing to beam_x on %s"%beam_x_multicast)
             _logger.info("Subscribing to beam_y on %s"%beam_y_multicast)
-            data_port = args.telstate.get('config')['cbf']['bf_output']['1']['cbf_speady'].split(":")[1]
+            data_port = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'].split(":")[1][-2:]
             if (bandwidth == 428):
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
             else:
                 self._run_future = trollius.async(self._run(obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
-    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 0, nBuffers =32):
+    def _create_dada_buffer(self, dadaId = 'dada', numaCore = 1, nBuffers =32):
         """Create the dada buffer. Must be run before capture and dbdisk.'
 
         Parameters
@@ -182,23 +186,30 @@ class _CaptureSession(object):
         parser.add_argument('-do_dedisp', dest='-do_dedisp', action='store_true', help='enable coherent dedispersion (default: false)')
         parser.add_argument('-c', dest='-c', action='store_true', help='keep offset and scale constant')
         parser.add_argument('-I', dest='-I', type=int, help='rescale interval in seconds')
-        parser.add_argument('-p', dest='-p', type=str, choices = ['1','2','4'], help='output 1 (Intensity), 2 (AABB), or 4 (Coherence) products')
+        parser.add_argument('-p', dest='-p', type=str, choices = ['1','4'], help='output 1 (Intensity), or 4 (Coherence) products')
         parser.add_argument('-b', dest='-b', type=str, choices = ['1','2','4','8'], help='number of bits per sample output to file [1,2,4,8]')
         parser.add_argument('-F', dest='-F', type=int, help='nchan[:D]     * create a filterbank (voltages only)')
         parser.add_argument('-nsblk', dest='-nsblk', type=int, help='output block size in samples (default=2048)')
         parser.add_argument('-k', dest='-K', action='store_true', help='remove inter-channel dispersion delays')
         opts = parser.parse_args (backend_args.split(" "))
         opts_list = [list(i) for i in  zip(vars(opts).keys(),vars(opts).values())]
+        self.n_pol = "eish"
         return [str(item) for sublist in opts_list for item in sublist if (sublist[1] != None and sublist[1] != False and item != True)] 
                 
 
-    def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1 -c'):
+    def _create_digifits (self, backend_args = '-t 0.000153121770088 -p 1'):
         passed_args = self.get_digifits_args(backend_args)
-        cmd =["numactl", "-C", "5", "digifits"] + passed_args + ["-D","0","-b","8","-v","-nsblk","128","-cuda","0","/home/kat/dada.info"]
+        for e in passed_args:
+            if e == 'p':
+                e = '-p'
+        
+        cmd =["numactl", "-C", "4", "digifits"] + passed_args + ["-D","0","-c","-b","8","-v","-nsblk","256","-cuda","1","/home/kat/dada.info"]
+        cmd =["numactl", "-C", "4", "digifits", "-t", "0.000153121770088","-p","4","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","1","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
         _logger.info("Starting digifits with args:")
         _logger.info(cmd)
+        _logger.info(self.save_dir)
         with open("%s.writing/digifits.log"%self.save_dir,"a") as logfile:
             _logger.info(cmd)
             self._digifits_process = subprocess.Popen(
@@ -274,7 +285,7 @@ class _CaptureSession(object):
  
         with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
             cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
-            cmd = ["numactl","-C","4","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+            cmd = ["numactl","-C","5","/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0,1", "/home/kat/dada.info"]
             _logger.info("Starting dspsr with args:")
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
@@ -347,7 +358,7 @@ class _CaptureSession(object):
         _logger.info("running")
         print ("capture_process+++++++______!!")
         _logger.info("IN METADATA")
-        cmd = ["meerkat_speadmeta", _get_interface_address("p4p1"), beam_y_multicast, "-p", data_port]
+        cmd = ["meerkat_speadmeta", _get_interface_address("p2p1"), beam_y_multicast, "-p", data_port]
         _logger.info(cmd)
         self.run = True
         import re
@@ -363,8 +374,8 @@ class _CaptureSession(object):
             content = content_file.read()
             content = re.sub("ADC_SYNC_TIME",replace,content)
             content = re.sub("FREQ                1283.8955078125", "FREQ                %f"%centre_freq, content)
-            content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%_get_interface_address("p4p1"), content)
-            content = re.sub("DATA_HOST_1         10.100.205.10", "DATA_HOST_1         %s"%_get_interface_address("p4p1"), content)
+            content = re.sub("DATA_HOST_0         10.100.205.10", "DATA_HOST_0         %s"%_get_interface_address("p2p1"), content)
+            content = re.sub("DATA_HOST_1         10.100.205.10", "DATA_HOST_1         %s"%_get_interface_address("p2p1"), content)
             content = re.sub("DATA_MCAST_0        239.9.3.30", "DATA_MCAST_0        %s"%beam_x_multicast, content)
             content = re.sub("DATA_MCAST_1        239.9.3.31", "DATA_MCAST_1        %s"%beam_y_multicast, content)
             content = re.sub("SOURCE              J0835-4510", "SOURCE              %s"%targets[0], content)
@@ -382,12 +393,13 @@ class _CaptureSession(object):
         cap_env["VMA_MTU"] = "9200"
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
-        cmd = ["numactl","-C","0,2,6","meerkat_udpmergedb", c_file, "-f", "spead", "-b", "%d,%d"%(1,3)]
+        cmd = ["numactl","-C","1,3,7","meerkat_udpmergedb", c_file,"-f", "spead", "-b", "%d,%d"%(1,3)]
+        #cmd = ["meerkat_udpmergedb", c_file,"-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
         
         #Sleep to ensure data is flowing
-        _logger.info("Sleeping for 2 minutes to ensure data is flowing")
-        time.sleep(120)
+        _logger.info("Sleeping for 30s to ensure data is flowing")
+        time.sleep(30)
 
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
@@ -469,7 +481,7 @@ class _CaptureSession(object):
                 _logger.info (str(hduPrimary['STT_OFFS'])[2:])
                 _logger.info (self.startTime)
              
-                hduPrimary["TELESCOP"]="KAT"
+                hduPrimary["TELESCOP"]="MEERKAT"
                 hduPrimary["FRONTEND"]="L-BAND"
                 hduPrimary["RA"]=target[-2]
                 hduPrimary["DEC"]=target[-1]
@@ -483,7 +495,7 @@ class _CaptureSession(object):
                 hduPrimary["ANT_X"]=5109318.8410
                 hduPrimary["ANT_Y"]=2006836.3673
                 hduPrimary["ANT_Z"]=-3238921.7749
-                hduPrimary["NRCVR"]=0
+                hduPrimary["NRCVR"]=2
                 hduPrimary["CAL_MODE"]="OFF"
                 hduPrimary["CAL_FREQ"]=0.0
                 hduPrimary["CAL_DCYC"]=0.0
@@ -494,9 +506,14 @@ class _CaptureSession(object):
                 hduPrimary["DATE"]=self.startTime
             
                 hduSubint = data[2].header
-                hduSubint["NPOL"]=1
-                hduSubint["POL_TYPE"]="AA+BB"
+                hduSubint["NPOL"]=self.n_pol
+                if self.n_pol == 1:
+                    hduSubint["POL_TYPE"]="AA+BB"
+                if self.n_pol == 4:
+                    hduSubint["POL_TYPE"]="AABBCRCI"
                 hduSubint["NCHNOFFS"] = 0 
+                hduSubint["NSUBOFFS"] = 0
+                _logger.info("Updated fits headers")
             except:
                 _logger.info("Oh no failed header update")
         try:

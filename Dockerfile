@@ -30,8 +30,9 @@ RUN apt-get install -y autotools-dev \
                       libxml2-dev \
                       hwloc \
                       libhwloc-dev \
-                      libboost-program-options1.55.0 \
-                      libboost-program-options1.55-dev
+                      libboost-program-options1.58.0 \
+                      libboost-program-options1.58-dev \
+                      pgplot5
 RUN mkdir /usr/local/kat
 RUN chown kat:kat /usr/local/kat
 
@@ -117,6 +118,7 @@ RUN touch $HOME/.cvspass
 #RUN mkdir $PSRHOME/psrdada
 WORKDIR $PSRHOME
 #COPY ./beamformer_docker_software/psrdada .
+RUN echo "yolo"
 RUN cvs -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada login
 RUN cvs -z3 -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada co -P psrdada
 
@@ -129,9 +131,9 @@ ENV PSRCAT_FILE $PSRHOME/psrcat_tar/psrcat.db
 ENV PATH $PATH:$PSRHOME/psrcat_tar
 ENV TEMPO2 $PSRHOME/tempo2/T2runtime
 ENV PATH $PATH:$PSRHOME/tempo2/T2runtime/bin
-ENV C_INCLUDE_PATH $C_INCLUDE_PATH:/usr/local/src/tempo2/T2runtime/include:/usr/local/cuda-7.5/include
+ENV C_INCLUDE_PATH $C_INCLUDE_PATH:/usr/local/src/tempo2/T2runtime/include:/usr/local/cuda-8.0/include
 ENV LDFLAGS -lstdc++
-ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/src/tempo2/T2runtime/lib:/usr/local/cuda-7.5/include
+ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/src/tempo2/T2runtime/lib:/usr/local/cuda-8.0/include
 WORKDIR $PSRHOME/psrdada
 RUN ./bootstrap
 RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH --with-hwloc-dir=/usr
@@ -141,20 +143,30 @@ RUN make install
 
 ###############################
 # SPEAD2
-#RUN mkdir $PSRHOME/spead2
-WORKDIR $PSRHOME
-RUN git clone https://github.com/ska-sa/spead2
+#WORKDIR $PSRHOME
+#RUN git clone https://github.com/ska-sa/spead2
 
+#WORKDIR $PSRHOME/spead2
+#RUN ./bootstrap.sh
+#RUN ./configure
+#WORKDIR $PSRHOME/spead2/src 
+#RUN make -j 16
+#RUN cp ./libspead2.a $PSRHOME/$LOGIN_ARCH/lib/
+#RUN mkdir $PSRHOME/$LOGIN_ARCH/include/spead2
+#RUN ls ../include/spead2/*.h
+#RUN cp ../include/spead2/*.h $PSRHOME/$LOGIN_ARCH/include/spead2/
+#RUN cp spead2_bench spead2_recv $PSRHOME/$LOGIN_ARCH/bin/
+
+RUN mkdir $PSRHOME/spead2
 WORKDIR $PSRHOME/spead2
-RUN ./bootstrap.sh
-RUN ./configure
-WORKDIR $PSRHOME/spead2/src 
+COPY ./beamformer_docker_software/spead2 .
+
+WORKDIR $PSRHOME/spead2/src
 RUN make -j 16
 RUN cp ./libspead2.a $PSRHOME/$LOGIN_ARCH/lib/
 RUN mkdir $PSRHOME/$LOGIN_ARCH/include/spead2
-#RUN ls
-#RUN cp ./*.h $PSRHOME/$LOGIN_ARCH/include/spead2/
-RUN cp spead2_bench spead2_recv $PSRHOME/$LOGIN_ARCH/bin/
+RUN cp ./*.h $PSRHOME/$LOGIN_ARCH/include/spead2/
+RUN cp test_recv test_send test_ringbuffer spead2_bench spead2_recv $PSRHOME/$LOGIN_ARCH/bin/
 
 
 ###################################
@@ -188,7 +200,10 @@ ENV PGPLOT_DIR $PSRHOME/pgplot
 ENV PGPLOT_FONT $PGPLOT_DIR/grfont.dat
 ENV CFLAGS -lstdc++
 RUN ./bootstrap
-RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH
+RUN echo "dada dummy fits kat sigproc" > backends.list
+#RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH
+RUN ls $PSRHOME/psrdada
+RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH --x-libraries=/usr/lib/x86_64-linux-gnu CPPFLAGS="-I/usr/local/cuda/include -I"$PSRHOME/psrdada"/install/include" LDFLAGS="-L/usr/local/cuda/lib64" LIBS="-lpgplot -lcpgplot -lcuda -lstdc++"
 RUN make clean
 run make -j 16
 run make install
