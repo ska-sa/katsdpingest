@@ -135,6 +135,10 @@ class VisSenderSet(object):
                 VisSender(thread_pool, endpoints[i], flavour, int_time,
                           Range(a, b), channel0 + i * sub_channels, baselines))
 
+    @property
+    def size(self):
+        return len(self._senders)
+
     @trollius.coroutine
     def start(self):
         """Send a start heap to all streams."""

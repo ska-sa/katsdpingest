@@ -385,11 +385,15 @@ class CBFIngest(object):
         self.cbf_attr = {}
 
         self._my_sensors = my_sensors
-        self.pkt_sensor = self._my_sensors['packets-captured']
-        self.input_rate_sensor = self._my_sensors['input-rate']
-        self.input_bytes = 0
-        self.output_rate_sensor = self._my_sensors['output-rate']
         self.output_bytes = 0
+        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
+        self.output_bytes_sensor.set_value(0)
+        self.output_heaps = 0
+        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
+        self.output_heaps_sensor.set_value(0)
+        self.output_dumps = 0
+        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
+        self.output_dumps_sensor.set_value(0)
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self.ig_sd = None
@@ -408,7 +412,7 @@ class CBFIngest(object):
 
         self.rx = receiver.Receiver(
             opts.cbf_spead, self.channel_ranges.subscribed,
-            len(self.channel_ranges.cbf), telstate, cbf_name)
+            len(self.channel_ranges.cbf), my_sensors, telstate, cbf_name)
         self.cbf_attr = self.rx.cbf_attr
         # Instantiation of the output streams delayed until exact integration time is known
         self.tx_spectral = None
@@ -779,11 +783,16 @@ class CBFIngest(object):
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             # Shift to the centre of the dump
             ts_rel += 0.5 * self.cbf_attr['int_time']
-            self.output_bytes += spec.nbytes + cont.nbytes
             yield From(resource.async_wait_for_events([transfer_done]))
             yield From(trollius.gather(
                 self.tx_spectral.send(spec, ts_rel),
                 self.tx_continuum.send(cont, ts_rel)))
+            self.output_bytes += spec.nbytes + cont.nbytes
+            self.output_bytes_sensor.set_value(self.output_bytes)
+            self.output_heaps += self.tx_spectral.size + self.tx_continuum.size
+            self.output_heaps_sensor.set_value(self.output_heaps)
+            self.output_dumps += 2
+            self.output_dumps_sensor.set_value(self.output_dumps)
             logger.info("Finished dump group with raw timestamps {0}".format(
                         timestamps))
 
@@ -1043,18 +1052,10 @@ class CBFIngest(object):
             # Limit backlog by waiting for previous job to get as far as
             # enqueuing its work before trying to carry on.
             yield From(proc_a.wait())
-            self.input_bytes += frame.nbytes
             self.jobs.add(self._frame_job(proc_a, vis_in_a, channel_flags_a, frame))
 
             # Done with reading this frame
             idx += 1
-            self.pkt_sensor.set_value(idx)
-            if idx % 10 == 0:
-                self.input_rate_sensor.set_value(int(self.input_bytes / (time.time() - rate_timer)))
-                self.output_rate_sensor.set_value(int(self.output_bytes / (time.time() - rate_timer)))
-                self.input_bytes = 0
-                self.output_bytes = 0
-                rate_timer = time.time()
             tt = time.time() - st
             logger.info(
                 "Captured CBF frame with timestamp %i (process_time: %.2f, index: %i)",
