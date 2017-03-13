@@ -388,6 +388,12 @@ class CBFIngest(object):
         self.output_bytes = 0
         self.output_bytes_sensor = self._my_sensors['output-bytes-total']
         self.output_bytes_sensor.set_value(0)
+        self.output_heaps = 0
+        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
+        self.output_heaps_sensor.set_value(0)
+        self.output_dumps = 0
+        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
+        self.output_dumps_sensor.set_value(0)
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self.ig_sd = None
@@ -771,12 +777,16 @@ class CBFIngest(object):
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             # Shift to the centre of the dump
             ts_rel += 0.5 * self.cbf_attr['int_time']
-            self.output_bytes += spec.nbytes + cont.nbytes
-            self.output_bytes_sensor.set_value(self.output_bytes)
             yield From(resource.async_wait_for_events([transfer_done]))
             yield From(trollius.gather(
                 self.tx_spectral.send(spec, ts_rel),
                 self.tx_continuum.send(cont, ts_rel)))
+            self.output_bytes += spec.nbytes + cont.nbytes
+            self.output_bytes_sensor.set_value(self.output_bytes)
+            self.output_heaps += self.tx_spectral.size + self.tx_continuum.size
+            self.output_heaps_sensor.set_value(self.output_heaps)
+            self.output_dumps += 2
+            self.output_dumps_sensor.set_value(self.output_dumps)
             logger.info("Finished dump group with raw timestamps {0}".format(
                         timestamps))
 
