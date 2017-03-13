@@ -468,8 +468,12 @@ class CBFIngest(object):
             bls_ordering = bls_ordering[range(1, len(bls_ordering)) + [0]]
 
         def keep(baseline):
+            input1, input2 = baseline
+            # Eliminate baselines that have the a lower numbered antenna as the
+            # second input as these are almost certainly duplicates. This is only 
+            # a problem in single pol mode and could be removed in the future.
+            if input2 < input1: return False
             if antenna_mask:
-                input1, input2 = baseline
                 return input1[:-1] in antenna_mask and input2[:-1] in antenna_mask
             else:
                 return True
