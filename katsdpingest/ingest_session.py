@@ -470,7 +470,7 @@ class CBFIngest(object):
         def keep(baseline):
             ant1 = baseline[0][:-1]
             ant2 = baseline[1][:-1]
-            # Eliminate baselines that have the a lower numbered antenna as the
+            # Eliminate baselines that have a lower-numbered antenna as the
             # second input as these are almost certainly duplicates. This is only 
             # a problem in single pol mode and could be removed in the future.
             if ant2 < ant1:
