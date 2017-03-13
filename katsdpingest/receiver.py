@@ -340,7 +340,7 @@ class Receiver(object):
                     ts_wrap_offset -= ts_wrap_period
                     data_ts -= ts_wrap_period
                     _logger.warning('Data timestamps reverse wrapped')
-                _logger.info('Received heap with timestamp %d on stream %d, channel %d', data_ts, stream_idx, channel0)
+                _logger.debug('Received heap with timestamp %d on stream %d, channel %d', data_ts, stream_idx, channel0)
                 prev_ts = data_ts
                 # we have new data...
 
