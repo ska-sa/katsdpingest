@@ -171,6 +171,7 @@ RUN cp test_recv test_send test_ringbuffer spead2_bench spead2_recv $PSRHOME/$LO
 
 ###################################
 # SPIP Built
+RUN echo "build form here"
 WORKDIR $PSRHOME
 RUN git clone https://github.com/ajameson/spip.git
 WORKDIR $PSRHOME/spip

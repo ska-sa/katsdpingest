@@ -11,6 +11,7 @@ import os
 import sys
 import katsdptelstate.endpoint
 from katsdpingest.ptuse_ingest_server import KatcpCaptureServer
+import spead2
 
 
 @trollius.coroutine
@@ -30,6 +31,8 @@ def main():
     parser.add_argument('--host', '-a', type=str, default='', help='katcp host address')
     parser.add_argument('--backend', '-b', type=str, default='digifits', help='Processing backend. Options [digifits | dspsr | db_disk]')
     parser.add_argument('--halfband', '-d', type=str, default=False, help='Perform halfband observation.')
+    parser.add_argument('--interface', type=str, help='Network interface for multicast subscription')
+    parser.add_argument('--affinity', type=spead2.parse_range_list, help='List of CPUs to which to bind threads', metavar='CPU,CPU')
     args = parser.parse_args()
     logging.basicConfig(level=args.logging, format='%(asctime)s %(levelname)s:%(name)s: %(message)s')
     if not os.access(args.file_base, os.W_OK):
