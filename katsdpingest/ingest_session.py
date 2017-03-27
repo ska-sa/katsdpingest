@@ -418,6 +418,16 @@ class CBFIngest(object):
         self.tx_spectral = None
         self.tx_continuum = None
 
+    def zero_counters(self):
+        """Zero resource counters such as dumps and bytes.
+        List to clear is hardcoded for now, but could in the future rely
+        on some meta information about the sensor.
+        """
+        to_zero = ['output-bytes-total','output-heaps-total','output-dumps-total',
+                   'input-bytes-total','input-heaps-total','input-dumps-total']
+        for sensor_name in to_zero:
+            self._my_sensors[sensor_name].set_value(0)
+
     def enable_debug(self, debug):
         if debug:
             logger.setLevel(logging.DEBUG)
@@ -1096,3 +1106,4 @@ class CBFIngest(object):
                 logger.debug("\t".join([str(x) for x in description]))
         logger.info("CBF ingest complete")
         self.status_sensor.set_value("complete")
+        self.zero_counters()
