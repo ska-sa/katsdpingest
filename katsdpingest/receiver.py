@@ -321,7 +321,7 @@ class Receiver(object):
                     break
                 updated = ig_cbf.update(heap)
                 if 'xeng_raw' not in updated:
-                    _logger.info("CBF non-data heap received on stream %d", stream_idx)
+                    _logger.debug("CBF non-data heap received on stream %d", stream_idx)
                     continue
                 if 'timestamp' not in updated:
                     _logger.warning("CBF heap without timestamp received on stream %d", stream_idx)
