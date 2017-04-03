@@ -604,7 +604,7 @@ class CBFIngest(object):
             name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
             shape=(n_baselines, 2), dtype=np.float32)
         self.ig_sd.add_item(
-            name=('sd_timeseriesabs'), id=(0x3504), description="Computed timeseries magnitude.",
+            name=('sd_timeseriesabs'), id=(0x3510), description="Computed timeseries magnitude.",
             shape=(n_baselines, 2), dtype=np.float32)
         n_perc_signals = 0
         perc_idx = 0
