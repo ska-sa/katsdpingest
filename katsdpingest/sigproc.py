@@ -3,7 +3,7 @@
 from __future__ import print_function, division, absolute_import
 import pkg_resources
 import numpy as np
-from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, maskedsumabs, reduce
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
 from .utils import Range
 
 
@@ -1042,7 +1042,7 @@ class IngestTemplate(object):
         self.finalise = FinaliseTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.timeseriesabs = maskedsumabs.MaskedSumAbsTemplate(context)
+        self.timeseriesabs = maskedsum.MaskedSumAbsTemplate(context)
         self.percentiles = [percentile.Percentile5Template(
             context, max(size, 1), False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(
