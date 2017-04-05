@@ -1254,7 +1254,7 @@ class IngestOperation(accel.OperationSequence):
                 'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'timeseries:src','timeseriesabs:src'],
                 'sd_spec_weights_fp32': ['accum:weights_out1', 'zero_sd_spec:weights'],
                 'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags'],
-                'timeseries_weights': ['timeseries:mask'],
+                'timeseries_weights': ['timeseries:mask','timeseriesabs:mask'],
                 'timeseries':   ['timeseries:dest'],
                 'timeseriesabs':   ['timeseriesabs:dest']
         }
