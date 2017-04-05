@@ -1042,7 +1042,7 @@ class IngestTemplate(object):
         self.finalise = FinaliseTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.timeseriesabs = maskedsum.MaskedSumTemplate(context,use_amplitudes=True)
+        self.timeseriesabs = maskedsum.MaskedSumTemplate(context, use_amplitudes=True)
         self.percentiles = [percentile.Percentile5Template(
             context, max(size, 1), False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(
@@ -1096,7 +1096,7 @@ class IngestOperation(accel.OperationSequence):
     **timeseries** : kept-channels, complex64
         Weights sum over channels of **sd_spec_vis**
     **timeseriesabs** : kept-channels, float32
-        Weights sum over channels of **sd_spec_vis**
+        Weights sum of abs over channels of **sd_spec_vis**
     **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
         Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
     **percentileN**_flags : kept-channels, uint8 (where *N* is 0, 1, ...)
