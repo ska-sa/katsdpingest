@@ -902,7 +902,7 @@ class CBFIngest(object):
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
-            self.ig_sd['sd_timeseriesabs'].value = _split_array(timeseriesabs, np.float32)
+            self.ig_sd['sd_timeseriesabs'].value = timeseriesabs
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
             # Translate CBF-width center_freq to the center_freq for the
