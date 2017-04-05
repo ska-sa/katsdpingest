@@ -1042,7 +1042,7 @@ class IngestTemplate(object):
         self.finalise = FinaliseTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
-        self.timeseriesabs = maskedsum.MaskedSumAbsTemplate(context)
+        self.timeseriesabs = maskedsum.MaskedSumTemplate(context,use_amplitudes=True)
         self.percentiles = [percentile.Percentile5Template(
             context, max(size, 1), False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(
