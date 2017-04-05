@@ -684,7 +684,7 @@ class TestIngestOperation(object):
                      'cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags']
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
-                   'timeseries','timeseriesabs']
+                   'timeseries', 'timeseriesabs']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))
