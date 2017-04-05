@@ -410,7 +410,7 @@ class TestIngestOperation(object):
             ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192)}),
-            ('ingest:timeseriesabs', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192)}),
+            ('ingest:timeseriesabs', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': True}),
             ('ingest:percentile0', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (0, 8), 'is_amplitude': False, 'max_columns': 8, 'shape': (80, 192)}),
             ('ingest:percentile0_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (0, 8), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)}),
             ('ingest:percentile1', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (10, 22), 'is_amplitude': False, 'max_columns': 12, 'shape': (80, 192)}),
