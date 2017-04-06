@@ -1042,6 +1042,7 @@ class IngestTemplate(object):
         self.finalise = FinaliseTemplate(context, unflagged_bit)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
+        self.timeseriesabs = maskedsum.MaskedSumTemplate(context, use_amplitudes=True)
         self.percentiles = [percentile.Percentile5Template(
             context, max(size, 1), False) for size in percentile_sizes]
         self.percentiles_flags = reduce.HReduceTemplate(
@@ -1094,6 +1095,8 @@ class IngestOperation(accel.OperationSequence):
         Signal display versions of the above
     **timeseries** : kept-channels, complex64
         Weights sum over channels of **sd_spec_vis**
+    **timeseriesabs** : kept-channels, float32
+        Weights sum of abs over channels of **sd_spec_vis**
     **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
         Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
     **percentileN**_flags : kept-channels, uint8 (where *N* is 0, 1, ...)
@@ -1171,6 +1174,8 @@ class IngestOperation(accel.OperationSequence):
                 command_queue, kept_channels, baselines, sd_cont_factor)
         self.timeseries = template.timeseries.instantiate(
                 command_queue, (kept_channels, baselines))
+        self.timeseriesabs = template.timeseriesabs.instantiate(
+                command_queue, (kept_channels, baselines))
         self.compress_weights_spec = template.compress_weights.instantiate(
                 command_queue, kept_channels, baselines)
         self.compress_weights_cont = template.compress_weights.instantiate(
@@ -1219,7 +1224,8 @@ class IngestOperation(accel.OperationSequence):
                 ('accum', self.accum),
                 ('finalise', self.finalise),
                 ('sd_finalise', self.sd_finalise),
-                ('timeseries', self.timeseries)
+                ('timeseries', self.timeseries),
+                ('timeseriesabs', self.timeseriesabs)
         ]
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
@@ -1245,11 +1251,12 @@ class IngestOperation(accel.OperationSequence):
                 'spec_vis':     ['accum:vis_out0', 'zero_spec:vis'],
                 'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
                 'spec_flags':   ['accum:flags_out0', 'zero_spec:flags'],
-                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'timeseries:src'],
+                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'timeseries:src', 'timeseriesabs:src'],
                 'sd_spec_weights_fp32': ['accum:weights_out1', 'zero_sd_spec:weights'],
                 'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags'],
-                'timeseries_weights': ['timeseries:mask'],
-                'timeseries':   ['timeseries:dest']
+                'timeseries_weights': ['timeseries:mask', 'timeseriesabs:mask'],
+                'timeseries':   ['timeseries:dest'],
+                'timeseriesabs': ['timeseriesabs:dest']
         }
         for i in ['', 'sd_']:
             for j in ['spec', 'cont']:
@@ -1318,6 +1325,7 @@ class IngestOperation(accel.OperationSequence):
         """
         self.sd_finalise()
         self.timeseries()
+        self.timeseriesabs()
         for p, f in zip(self.percentiles, self.percentiles_flags):
             p()
             f()

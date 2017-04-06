@@ -409,7 +409,8 @@ class TestIngestOperation(object):
             ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16, 'unflagged_bit': 64}),
             ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
-            ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192)}),
+            ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': False}),
+            ('ingest:timeseriesabs', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': True}),
             ('ingest:percentile0', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (0, 8), 'is_amplitude': False, 'max_columns': 8, 'shape': (80, 192)}),
             ('ingest:percentile0_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (0, 8), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)}),
             ('ingest:percentile1', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (10, 22), 'is_amplitude': False, 'max_columns': 12, 'shape': (80, 192)}),
@@ -582,7 +583,7 @@ class TestIngestOperation(object):
             - cont_vis, cont_weights, cont_flags
             - sd_spec_vis, sd_spec_weights, sd_spec_flags
             - sd_cont_vis, sd_cont_weights, sd_cont_flags
-            - timeseries
+            - timeseries, timeseriesabs
             - percentileN (where N is a non-negative integer)
         """
         expected = self.run_host_basic(
@@ -599,6 +600,8 @@ class TestIngestOperation(object):
         # Time series
         expected['timeseries'] = \
             np.sum(expected['sd_spec_vis'] * timeseries_weights[..., np.newaxis], axis=0)
+        expected['timeseriesabs'] = \
+            np.sum(np.abs(expected['sd_spec_vis']) * timeseries_weights[..., np.newaxis], axis=0)
 
         # Percentiles
         for i, (start, end) in enumerate(percentile_ranges):
@@ -681,7 +684,7 @@ class TestIngestOperation(object):
                      'cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags']
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
-                   'timeseries']
+                   'timeseries', 'timeseriesabs']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))

@@ -603,6 +603,9 @@ class CBFIngest(object):
         self.ig_sd.add_item(
             name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
             shape=(n_baselines, 2), dtype=np.float32)
+        self.ig_sd.add_item(
+            name=('sd_timeseriesabs'), id=(0x3510), description="Computed timeseries magnitude.",
+            shape=(n_baselines, ), dtype=np.float32)
         n_perc_signals = 0
         perc_idx = 0
         while True:
@@ -865,6 +868,7 @@ class CBFIngest(object):
             spec_vis = proc.buffer('sd_spec_vis').get_async(self.command_queue)
             spec_flags = proc.buffer('sd_spec_flags').get_async(self.command_queue)
             timeseries = proc.buffer('timeseries').get_async(self.command_queue)
+            timeseriesabs = proc.buffer('timeseriesabs').get_async(self.command_queue)
             percentiles = []
             percentiles_flags = []
             for i in range(len(proc.percentiles)):
@@ -898,6 +902,7 @@ class CBFIngest(object):
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
+            self.ig_sd['sd_timeseriesabs'].value = timeseriesabs
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
             # Translate CBF-width center_freq to the center_freq for the

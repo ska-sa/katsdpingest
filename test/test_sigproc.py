@@ -99,7 +99,7 @@ def main():
     output_names = ['spec_vis', 'spec_weights', 'spec_flags', 'cont_vis', 'cont_weights', 'cont_flags']
     output_buffers = [proc.buffer(name) for name in output_names]
     output_arrays = [buf.empty_like() for buf in output_buffers]
-    sd_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_cont_weights', 'timeseries']
+    sd_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_cont_weights', 'timeseries', 'timeseriesabs']
     for i in range(5):
         sd_names.append('percentile{0}'.format(i))
     sd_buffers = [proc.buffer(name) for name in sd_names]
