@@ -94,8 +94,6 @@ class _CaptureSession(object):
         self._dada_header_process = None
 
         self._create_dada_header()
-        #self._create_dada_buffer()
-        _logger.info("Created dada_buffer")
         _logger.info("Grabbing script_args")
         config = args.telstate.get('config')
         script_args = args.telstate.get('obs_script_arguments')
@@ -104,13 +102,13 @@ class _CaptureSession(object):
             bandwidth = script_args['beam_bandwidth']
             self.backend = script_args['backend']
             backend_args=script_args['backend_args']
-            if backend_args and '-p 4' in backend_args and bandwidth > 512:
+            if 'digifits' in backend and backend_args and '-p 4' in backend_args and bandwidth > 512:
                 bandwidth = 428
-            if backend_args and '-p 1' in backend_args and bandwidth > 642:
+            elif 'digifits' in backend or (backend_args and '-p 1' in backend_args) and bandwidth > 642:
                 bandwidth = 642
 
-            _logger.info(bandwidth)
-            self._create_dada_buffer(4194304*bandwidth/856*16*4)
+            self._create_dada_buffer(4194304*bandwidth/856*16*4 nBuffers=128)
+            _logger.info("Created dada_buffer")
             _logger.info("SCRIPT ARGS :")
             _logger.info(script_args)
             _logger.info("backend")
@@ -130,11 +128,13 @@ class _CaptureSession(object):
             elif (backend in "dada_dbdisk"):
                 self._create_dada_dbdisk()
             time.sleep(1)
+            _logger.info (eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'])
             beam_x_multicast = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'].split(":")[1][2:]
             beam_y_multicast = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0y'].split(":")[1][2:]
             _logger.info("Subscribing to beam_x on %s"%beam_x_multicast)
             _logger.info("Subscribing to beam_y on %s"%beam_y_multicast)
-            data_port = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'].split(":")[1][-2:]
+            data_port = int(eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0x'].split(":")[-1])
+            _logger.info("Port %i"%data_port)
             self._run_future = trollius.async(self._run(bandwidth=bandwidth, obs_length = script_args['target_duration'], centre_freq=script_args["beam_centre_freq"], targets=script_args["targets"], cores=args.affinity[1:], interface=args.interface, halfband=True, beam_x_multicast=beam_x_multicast, beam_y_multicast=beam_y_multicast, data_port=data_port), loop=self._loop)
 
     def _create_dada_buffer(self, bufsz, dadaId = 'dada', numaCore = 1, nBuffers =32):
@@ -214,7 +214,6 @@ class _CaptureSession(object):
         if '-p' in passed_args:
             self.n_pol= passed_args[passed_args.index('-p')+1]
         cmd =["numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
-        #cmd =["numactl", "-C", str(core), "digifits", "-t", "0.000153121770088","-p","4","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
         self.save_dir = "/data/%.0fsf"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
         _logger.info("Starting digifits with args:")
@@ -375,8 +374,7 @@ class _CaptureSession(object):
         replace = "ADC_SYNC_TIME       %s"%self.args.telstate.get("cbf_sync_time")
         content = ""
 
-        total_parts=int(beam_y_multicast[11:13])+1
-        _logger.info("total_parts = %i"%total_parts)
+        total_parts=int(beam_y_multicast.split('+')[-1])+1
         part_bandwidth=856.0/total_parts
         part_chan=4096/total_parts
         part_bytes_p_s=3424000000.0/total_parts
@@ -390,11 +388,7 @@ class _CaptureSession(object):
         ip2int = lambda ipstr: struct.unpack('!I', socket.inet_aton(ipstr))[0]
         int2ip = lambda n: socket.inet_ntoa(struct.pack('!I', n))
 
-        _logger.info(part_centre)
-        _logger.info(centre_freq)
-        _logger.info(bandwidth)
         bottom_chan_ip = (part_centre - 856 - bandwidth / 2) / part_bandwidth
-        _logger.info(bottom_chan_ip)
         x_ip = int2ip(ip2int(beam_x_multicast.split('+')[0]) + bottom_chan_ip)
         y_ip = int2ip(ip2int(beam_y_multicast.split('+')[0]) + bottom_chan_ip)
         start_chan = bottom_chan_ip*part_chan
@@ -417,6 +411,8 @@ class _CaptureSession(object):
             content = re.sub("DATA_MCAST_0        239.9.3.30", "DATA_MCAST_0        %s+%i"%(x_ip,n_parts-1), content)
             content = re.sub("DATA_MCAST_1        239.9.3.31", "DATA_MCAST_1        %s+%i"%(y_ip,n_parts-1), content)
             content = re.sub("SOURCE              J0835-4510", "SOURCE              %s"%targets[0], content)
+            content = re.sub("DATA_PORT_0         7148", "DATA_PORT_0         %i"%data_port, content)
+            content = re.sub("DATA_PORT_1         7148", "DATA_PORT_1         %i"%data_port, content)
             _logger.info ("Running with : \n%s"%content)
         with open (c_file, 'r+') as content_file:
             content_file.seek(0)
@@ -432,10 +428,8 @@ class _CaptureSession(object):
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         cmd = ["numactl","-C","%i,%i,%i"%(cores[0],cores[1],cores[2]),"meerkat_udpmergedb", c_file,"-f", "spead"]
-        #cmd = ["meerkat_udpmergedb", c_file,"-f", "spead", "-b", "%d,%d"%(1,3)]
         self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
-        #cmd = ["meerkat_udpmergedb", c_file,"-f", "spead"]
-        _logger.info("/scratch/%s"%self.save_dir)
+        _logger.info("/scratch/%s"%self.save_dir[6:])
         
         #Sleep to ensure data is flowing
         _logger.info("Sleeping for 120s to ensure data is flowing")
@@ -447,7 +441,7 @@ class _CaptureSession(object):
 
         _logger.info("Capture started with args:")
         _logger.info(cmd)
-        _logger.info("Process logs in %s"%self.save_dir)
+        _logger.info("Process logs in /scratch/%s"%self.save_dir[6:])
 
     #@trollius.coroutine
     def stop(self):
