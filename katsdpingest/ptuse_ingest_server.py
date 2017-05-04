@@ -22,6 +22,7 @@ import argparse
 import pyfits
 from astropy.time import Time
 
+
 _logger = logging.getLogger(__name__)
 
 def _get_interface_address(interface):
@@ -62,6 +63,10 @@ class _CaptureSession(object):
         Time interval (in ADC clocks) between spectra
     """
     def __init__(self, args, loop):
+        #config = args.telstate.get('config')
+        #pubsub_thread = PubSubThread(1,config['stream_sources']['cam.http']['camdata'],_logger)
+        #pubsub_thread.start()
+        #_logger.info("started pubsub")
         _logger.info("Capture-init received ___YO___")
         _logger.info("ARGS")
         _logger.info(args)
@@ -95,19 +100,37 @@ class _CaptureSession(object):
 
         self._create_dada_header()
         _logger.info("Grabbing script_args")
+        #config = args.telstate.get('config')
+
         config = args.telstate.get('config')
+        #_logger.info(config)
+        #_logger.info(config['stream_sources'])
+        #_logger.info('])
+        _logger.info(config['antenna_mask'])
+        an_ant = config['antenna_mask'].split(',')[0]
+        self.pubsub_thread = PubSubThread(1,eval(config['stream_sources'])['cam.http']['camdata'],_logger,self,an_ant)
+        self.pubsub_thread.start()
+        _logger.info("started pubsub")
+
+
+
+
+        #for k in args.telstate.keys():
+        #    _logger.info(k)
+        #    _logger.info(args.telstate.get(k))
         script_args = args.telstate.get('obs_script_arguments')
+        self.driftscan = script_args['drift_scan']
         if script_args:
             backend = script_args['backend']
             bandwidth = script_args['beam_bandwidth']
             self.backend = script_args['backend']
             backend_args=script_args['backend_args']
-            if 'digifits' in backend and backend_args and '-p 4' in backend_args and bandwidth > 512:
+            if 'digifits' in backend and backend_args and '-p 4' in backend_args and bandwidth >= 428:
                 bandwidth = 428
-            elif 'digifits' in backend or (backend_args and '-p 1' in backend_args) and bandwidth > 642:
+            elif 'digifits' in backend or (backend_args and '-p 1' in backend_args) and bandwidth >= 642:
                 bandwidth = 642
 
-            self._create_dada_buffer(4194304*bandwidth/856*16*4 nBuffers=128)
+            self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=128)
             _logger.info("Created dada_buffer")
             _logger.info("SCRIPT ARGS :")
             _logger.info(script_args)
@@ -432,9 +455,31 @@ class _CaptureSession(object):
         _logger.info("/scratch/%s"%self.save_dir[6:])
         
         #Sleep to ensure data is flowing
-        _logger.info("Sleeping for 120s to ensure data is flowing")
-        time.sleep(120)
+        #_logger.info("Sleeping for 120s to ensure data is flowing")
+        #time.sleep(120)
 
+        #self._capture_process = subprocess.Popen(
+        #cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
+        #)
+
+        #_logger.info("Capture started with args:")
+        #_logger.info(cmd)
+        #_logger.info("Process logs in /scratch/%s"%self.save_dir[6:])
+
+    def capture_start (self):
+        cores=self.args.affinity[1:]
+        config_file = "/home/kat/hardware_cbf_4096chan_2pol.cfg"
+        cap_env = os.environ.copy()
+
+        cap_env["LD_PRELOAD"] = "libvma.so"
+        cap_env["VMA_MTU"] = "9200"
+        cap_env["VMA_RX_POLL_YIELD"] = "1"
+        cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
+        cmd = ["numactl","-C","%i,%i,%i"%(cores[0],cores[1],cores[2]),"meerkat_udpmergedb", config_file,"-f", "spead"]
+        self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
+        _logger.info("/scratch/%s"%self.save_dir[6:])
+
+        #Sleep to ensure data is flowing
         self._capture_process = subprocess.Popen(
         cmd, subprocess.PIPE, stdout=self.capture_log, stderr=self.capture_log, env=cap_env
         )
@@ -449,6 +494,7 @@ class _CaptureSession(object):
         is a coroutine.
         """
         _logger.info("Capture-stop")
+        self.pubsub_thread.join()
         if self._capture_process is not None and self._capture_process.poll() is None:
             self._capture_process.send_signal(signal.SIGINT)
             _logger.info("Capture process still running, sending SIGINT")
@@ -610,6 +656,13 @@ class CaptureServer(object):
             except Exception as e:
                 print ("Exception caught " + str(e))
                 #self.stop_capture()
+
+    def capture_start(self):
+        if self._capture is not None:
+            try:
+                self._capture.capture_start()
+            except Exception as e:
+                print ("Exception caught " + str(e))
                                                         
     #@trollius.coroutine
     def stop_capture(self):
@@ -675,12 +728,119 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
         self._stop_capture()
         raise tornado.gen.Return(('ok',))
 
+    @request()
+    @return_reply()
+    @tornado.gen.coroutine
+    def request_capture_start(self, sock):
+        """Start a capture process."""
+        self.capture_start()
+        raise tornado.gen.Return(('ok',))
+
+
     @tornado.gen.coroutine
     def stop(self):
         yield self._stop_capture()
         yield katcp.DeviceServer.stop(self)
 
     stop.__doc__ = katcp.DeviceServer.stop.__doc__
+
+import tornado.gen
+from katportalclient import KATPortalClient
+import logging
+import threading
+import time
+
+class PubSubThread (threading.Thread):
+
+  def __init__ (self, id, server, _logger, ingest,ant):
+    threading.Thread.__init__(self)
+    #self.script.log(2, "PubSubThread.__init__()")
+    self.ingest = ingest
+    self.ant = ant
+
+    self.metadata_server = server
+    self.logger = _logger
+    self.logger.info(server)
+    self.io_loop = []
+    self.policy = "event-rate 1.0 300.0"
+    self.title  = "bf_unconfigured"
+    self.running = False
+    self.restart_io_loop = True
+    self.tracks = 0
+
+  def run (self):
+    #self.script.log(2, "PubSubThread::run starting while")
+
+    while self.restart_io_loop:
+
+      # open connection to CAM
+      self.io_loop = tornado.ioloop.IOLoop()
+      self.io_loop.add_callback (self.connect, self.logger)
+
+      #self.script.log(1, "PubSubThread::run starting IO loop")
+
+      self.running = True
+      self.restart_io_loop = False
+      self.io_loop.start()
+      self.running = False
+      self.io_loop = []
+
+      #self.script.log(1, "PubSubThread::run unsubscribing")
+      # unsubscribe and disconnect from CAM
+      self.ws_client.unsubscribe(self.title)
+      self.ws_client.disconnect()
+
+    #self.script.log(2, "PubSubThread::run exiting")
+
+  def join (self):
+    #self.script.log(1, "PubSubThread::join self.stop()")
+    self.stop()
+    time.sleep(0.1)
+
+  def stop (self):
+    #self.script.log(2, "PubSubThread::stop()")
+    #if self.running:
+      #self.script.log(2, "PubSubThread::stop io_loop.stop()")
+     # self.restart_io_loop = True 
+     # self.running = False
+    self.io_loop.stop()
+    return
+
+  def restart (self):
+    # get the IO loop to restart on the call to stop()
+    self.restart_io_loop = True
+    if self.running:
+      #self.script.log(2, "PubSubThread::restart self.stop()")
+      self.stop()
+    return
+
+  @tornado.gen.coroutine
+  def connect (self, logger):
+    #self.script.log(2, "PubSubThread::connect()")
+    self.ws_client = KATPortalClient(self.metadata_server, self.on_update_callback, logger=logger)
+    yield self.ws_client.connect()
+    result = yield self.ws_client.subscribe(self.title)
+
+    list = ['%s.activity'%self.ant]
+
+    results = yield self.ws_client.set_sampling_strategies(
+        self.title, list, self.policy)
+
+    #for result in results:
+    #  self.script.log(2, "PubSubThread::connect subscribed to " + str(result))
+
+  def on_update_callback (self, msg):
+    self.logger.info(msg)
+    #self.logger.info(type(msg))
+    self.logger.info("self.tracks = %i"%self.tracks)
+    if msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and self.tracks == 1 and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan:
+      self.logger.info("STARTING CAPTURE")
+      self.ingest.capture_start()
+    elif msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan == False:
+      self.logger.info("STARTING CAPTURE")
+      self.ingest.capture_start()
+    elif msg['msg_data']['value'] == 'track':
+      self.tracks+=1
 
 
 __all__ = ['CaptureServer', 'KatcpCaptureServer']

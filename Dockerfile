@@ -27,7 +27,6 @@ RUN apt-get install -y autotools-dev \
                       libx11-dev \
                       x11-common \
                       libgsl0-dev \
-                      libxml2-dev \
                       hwloc \
                       libhwloc-dev \
                       libboost-program-options1.58.0 \
