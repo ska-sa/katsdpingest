@@ -27,7 +27,6 @@ RUN apt-get install -y autotools-dev \
                       libx11-dev \
                       x11-common \
                       libgsl0-dev \
-                      libxml2-dev \
                       hwloc \
                       libhwloc-dev \
                       libboost-program-options1.58.0 \
@@ -115,12 +114,11 @@ RUN chmod -R a+r .
 ###############################
 # PSRDADA build 
 RUN touch $HOME/.cvspass
-#RUN mkdir $PSRHOME/psrdada
+RUN mkdir $PSRHOME/psrdada
 WORKDIR $PSRHOME
-#COPY ./beamformer_docker_software/psrdada .
-RUN echo "yolo"
-RUN cvs -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada login
-RUN cvs -z3 -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada co -P psrdada
+COPY ./beamformer_docker_software/psrdada ./psrdada
+#RUN cvs -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada login
+#RUN cvs -z3 -d:pserver:anonymous@psrdada.cvs.sourceforge.net:/cvsroot/psrdada co -P psrdada
 
 RUN chown -R kat .
 RUN chown -R kat $PSRHOME/$LOGIN_ARCH
