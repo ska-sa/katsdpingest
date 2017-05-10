@@ -719,6 +719,4 @@ class PubSubThread (threading.Thread):
     elif msg['msg_data']['value'] == 'track':
       self.tracks+=1
 
-
-
 __all__ = ['CaptureServer', 'KatcpCaptureServer']
