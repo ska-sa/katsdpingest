@@ -1,0 +1,20 @@
+/Makefile.am/1.2/Tue Oct 14 04:24:08 2008//
+/Makefile.targets/1.1/Tue Feb  2 23:18:54 2010//
+/README.txt/1.1/Mon Jun 30 01:44:05 2008//
+/acx_pthread.m4/1.1/Fri Nov 14 09:32:59 2008//
+/affinity.m4/1.1/Thu Sep 22 20:05:28 2011//
+/ax_openmp.m4/1.1/Tue Oct 21 04:53:24 2008//
+/cuda.m4/1.8/Tue Jun 28 00:21:55 2016//
+/fftw.m4/1.1/Wed Dec  5 05:36:38 2012//
+/gsl.m4/1.2/Mon Nov  3 23:10:45 2014//
+/hwloc.m4/1.1/Tue Aug 11 01:33:14 2015//
+/ipp.m4/1.4/Thu May 23 01:15:55 2013//
+/mkl.m4/1.2/Wed Oct 17 01:44:46 2012//
+/package.m4/1.1/Thu Aug  5 16:33:08 2010//
+/pgplot.m4/1.3/Thu Oct  6 09:33:31 2016//
+/rdmacm.m4/1.2/Thu Oct  6 09:33:31 2016//
+/site.cfg/1.4/Tue Jun 28 00:24:40 2016//
+/sofa.m4/1.2/Mon Aug 10 05:51:57 2015//
+/x11.m4/1.1/Mon Jun 30 01:44:05 2008//
+/xgpu.m4/1.1/Mon Jun 27 23:05:27 2016//
+D

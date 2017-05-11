@@ -51,6 +51,7 @@ class _CaptureSession(object):
         Handle to the ``bf_raw`` dataset
     _timestamps : :class:`list`
         Timestamp for the start of each heap
+
     _manual_stop : :class:`bool`
         Whether :meth:`stop` has been called
     _ig : :class:`spead2.ItemGroup`
@@ -66,21 +67,13 @@ class _CaptureSession(object):
         _logger.info("Capture-init received")
         _logger.info("ARGS")
         _logger.info(args)
-        self.script = ""
-        self.run = False
         self.args=args
         self._loop = loop
         self._args = args
         self._dada_dbdisk_process = None
         self._capture_process = None
-        self._timestamps = []
-        self._manual_stop = False
-        self._endpoints = []
-        self.cpture_log = None
-        self._timestep = None
         self.backend = None
         self.n_pol = None
-        self._ig = spead2.ItemGroup()
         self._dada_dbdisk_process = None
         self._capture_process = None
         self._speadmeta_process = None
@@ -89,7 +82,6 @@ class _CaptureSession(object):
         self._speadmeta_process = None
         self._dada_header_process = None
 
-        #self._create_dada_header()
         _logger.info("Grabbing script_args")
 
         config = args.telstate.get('config')
@@ -99,6 +91,7 @@ class _CaptureSession(object):
         self.script_args = args.telstate.get('obs_script_arguments')
         self.driftscan = self.script_args['drift_scan']
         
+        #script_args is only populated for beamformer observervations.
         if self.script_args:
             pubsub_thread = PubSubThread(1,eval(config['stream_sources'])['cam.http']['camdata'],_logger,self,an_ant)
             pubsub_thread.start()
@@ -396,7 +389,6 @@ class _CaptureSession(object):
         if self._capture_process is not None and self._capture_process.poll() is None:
             self._capture_process.send_signal(signal.SIGINT)
             _logger.info("Capture process still running, sending SIGINT")
-        self._manual_stop = True
         if  self._capture_process is not None and self._capture_process.poll() is None:
             self._capture_process.send_signal(signal.SIGINT)
             self._capture_process.send_signal(signal.SIGINT)
@@ -412,11 +404,9 @@ class _CaptureSession(object):
         if self._dspsr_process is not None and self._dspsr_process.poll() is None:
             self._dspsr_process.send_signal(signal.SIGTERM)
             _logger.info("dspsr did not stop")
-        if self._dada_header_process is not None and self._dada_header_process.poll():
-            comm = self._dada_header_process.communicate()
-            _logger.info ("header comm is %s"%str(comm))
-            dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
-            _logger.info(dada_header)
+
+        comm = self._dada_header_process.communicate()
+        dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
             try: 
@@ -434,7 +424,8 @@ class _CaptureSession(object):
                 obs_info.write ("UTC_START;%s\n"%dada_header["UTC_START"])
                 obs_info.close() 
             except:
-                _logger.info("Not a real beamformer observation")
+
+                _logger.info("Obs info file not correctly filled")
 
         if self.backend and self.backend == 'digifits':
             try:
@@ -677,12 +668,11 @@ class PubSubThread (threading.Thread):
       self.ws_client.disconnect()
 
   def join (self):
-    self.logger.info("JOINING")
     self.stop()
     time.sleep(0.1)
 
   def stop (self):
-    self.logger.info("stopping pubsub")
+    self.logger.info("Stopping pubsub")
     if self.running:
       self.running = False
       self.io_loop.stop()

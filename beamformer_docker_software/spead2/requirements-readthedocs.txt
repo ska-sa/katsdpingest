@@ -1,0 +1,7 @@
+numpy
+nose
+decorator
+six
+sphinx
+breathe
+trollius
