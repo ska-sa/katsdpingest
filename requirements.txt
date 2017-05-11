@@ -38,6 +38,7 @@ astropy==1.2.1
 fakeredis==0.8.2
 omnijson==0.1.2
 ujson==1.35
+future==0.16
 git+ssh://git@github.com/ska-sa/katcp-python#egg=katcp
 git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpdisp#egg=katsdpdisp
