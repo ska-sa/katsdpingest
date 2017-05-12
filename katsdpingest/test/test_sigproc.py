@@ -165,6 +165,7 @@ class TestAccum(object):
             'weights_in':    np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
             'flags_in':      np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
             'channel_flags': np.array([2, 0, 0], dtype=np.uint8),
+            'baseline_flags':np.array([0], dtype=np.uint8),
             'vis_out0':      np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
             'weights_out0':  np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
             'flags_out0':    np.array([[1 | unflagged_bit, 9, unflagged_bit]], dtype=np.uint8).T
@@ -203,6 +204,7 @@ class TestAccum(object):
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
         flags_in = random_flags(rs, (baselines, channels), 7, p=0.2)
         channel_flags = random_flags(rs, (kept_channels,), 7, p=0.02)
+        baseline_flags = random_flags(rs, (baselines,), 7, p=0.01)
         vis_out = []
         weights_out = []
         flags_out = []
@@ -223,7 +225,8 @@ class TestAccum(object):
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in),
-                              ('flags_in', flags_in), ('channel_flags', channel_flags)]:
+                              ('flags_in', flags_in), ('channel_flags', channel_flags),
+                              ('baseline_flags', baseline_flags)]:
             fn.buffer(name).set(queue, value)
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
                               ('flags_out', flags_out)]:
@@ -233,7 +236,9 @@ class TestAccum(object):
 
         # Perform the operation on the host
         kept_vis = vis_in[:, channel_range.start : channel_range.stop]
-        kept_flags = flags_in[:, channel_range.start : channel_range.stop] | channel_flags[np.newaxis, :]
+        kept_flags = flags_in[:, channel_range.start : channel_range.stop] \
+                | channel_flags[np.newaxis, :] \
+                | baseline_flags[:, np.newaxis]
         flagged_weights = weights_in * ((kept_flags == 0) + flag_scale)
         # unflagged inputs need the unflagged_bit set
         kept_flags |= np.where(kept_flags, 0, unflagged_bit).astype(np.uint8)
@@ -432,7 +437,7 @@ class TestIngestOperation(object):
         return vis, flags, weights, weights_channel
 
 
-    def run_host_basic(self, vis, channel_flags, n_accs, permutation,
+    def run_host_basic(self, vis, channel_flags, baseline_flags, n_accs, permutation,
                        input_auto_baseline, baseline_inputs,
                        cont_factor, channel_range, n_sigma):
         """Simple CPU implementation. All inputs and outputs are channel-major.
@@ -446,6 +451,8 @@ class TestIngestOperation(object):
             Input dump visibilities (first axis being time)
         channel_flags : array-like
             Input per-channel flags (indexed by time and channel)
+        baseline_flags : array-like
+            Input per-baseline flags (indexed by time and post-permutation baseline)
         n_accs : int
             Number of correlations accumulated in `vis`
         permutation : sequence
@@ -497,6 +504,7 @@ class TestIngestOperation(object):
         for i in range(len(vis)):
             flags[i, ...] = flagger(vis[i, ...])
             flags[i, channel_range.asslice()] |= channel_flags[i, :, np.newaxis]
+            flags[i, ...] |= baseline_flags[i, np.newaxis, :]
         # Apply flags to weights
         weights *= (flags == 0).astype(np.float32) + 2**-64
         # Mark unflagged visibilities
@@ -536,7 +544,8 @@ class TestIngestOperation(object):
         }
 
     def run_host(
-            self, vis, channel_flags, n_vis, n_sd_vis, n_accs, permutation,
+            self, vis, channel_flags, baseline_flags,
+            n_vis, n_sd_vis, n_accs, permutation,
             input_auto_baseline, baseline_inputs,
             cont_factor, sd_cont_factor, channel_range,
             n_sigma, timeseries_weights, percentile_ranges):
@@ -550,6 +559,8 @@ class TestIngestOperation(object):
             Input dump visibilities (first axis being time)
         channel_flags : array-like
             Input per-channel flags (indexed by time and channel)
+        baseline_flags : array-like
+            Input per-baseline flags (indexed by time and post-permutation baseline)
         n_vis : int
             number of dumps to use for main calculations
         n_sd_vis : int
@@ -587,11 +598,11 @@ class TestIngestOperation(object):
             - percentileN (where N is a non-negative integer)
         """
         expected = self.run_host_basic(
-            vis[:n_vis], channel_flags[:n_vis],
+            vis[:n_vis], channel_flags[:n_vis], baseline_flags[:n_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             cont_factor, channel_range, n_sigma)
         sd_expected = self.run_host_basic(
-            vis[:n_sd_vis], channel_flags[:n_sd_vis],
+                vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, n_sigma)
         for (name, value) in sd_expected.iteritems():
@@ -657,7 +668,8 @@ class TestIngestOperation(object):
             vis_in[..., orig_baseline, 1].fill(0)
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
-        channel_flags = random_flags(rs, (dumps, kept_channels), 2, p=0.1)
+        channel_flags = random_flags(rs, (dumps, kept_channels), 2, p=0.05)
+        baseline_flags = random_flags(rs, (dumps, baselines), 2, p=0.05)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
                 context, width=13)
@@ -697,6 +709,7 @@ class TestIngestOperation(object):
         for i in range(max(dumps, sd_dumps)):
             fn.buffer('vis_in').set(queue, vis_in[i])
             fn.buffer('channel_flags').set(queue, channel_flags[i])
+            fn.buffer('baseline_flags').set(queue, baseline_flags[i])
             fn()
             if i + 1 == dumps:
                 fn.end_sum()
@@ -708,7 +721,8 @@ class TestIngestOperation(object):
                     actual[name] = fn.buffer(name).get(queue)
 
         expected = self.run_host(
-                vis_in, channel_flags, dumps, sd_dumps, n_accs, permutation,
+                vis_in, channel_flags, baseline_flags,
+                dumps, sd_dumps, n_accs, permutation,
                 input_auto_baseline, baseline_inputs,
                 cont_factor, sd_cont_factor, channel_range, n_sigma,
                 timeseries_weights, percentile_ranges)

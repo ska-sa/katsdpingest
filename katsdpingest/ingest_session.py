@@ -289,8 +289,8 @@ class CBFIngest(object):
     ----------
     vis_in_resource : :class:`katsdpsigproc.resource.Resource`
         Resource wrapping the `vis_in` device buffer
-    channel_flags_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the `channel_flags` device buffer
+    external_flags_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the `channel_flags` and `baseline_flags` device buffers
     timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
         Resource wrapping the `timeseries_weights` device buffer
     output_resource : :class:`katsdpsigproc.resource.Resource`
@@ -403,7 +403,7 @@ class CBFIngest(object):
         self.proc = None
         self.proc_resource = None
         self.vis_in_resource = None
-        self.channel_flags_resource = None
+        self.external_flags_resource = None
         self.timeseries_weights_resource = None
         self.output_resource = None
         self.sd_output_resource = None
@@ -711,7 +711,8 @@ class CBFIngest(object):
         # Set up resources
         self.proc_resource = resource.Resource(self.proc)
         self.vis_in_resource = resource.Resource(self.proc.buffer('vis_in'))
-        self.channel_flags_resource = resource.Resource(self.proc.buffer('channel_flags'))
+        self.external_flags_resource = resource.Resource(
+            (self.proc.buffer('channel_flags'), self.proc.buffer('baseline_flags')))
         self.timeseries_weights_resource = resource.Resource(self.proc.buffer('timeseries_weights'))
         self.output_resource = resource.Resource(None)
         self.sd_output_resource = resource.Resource(None)
@@ -921,13 +922,41 @@ class CBFIngest(object):
             logger.info("Finished SD group with raw timestamps {0}".format(
                         timestamps))
 
+    def _set_baseline_flags(self, baseline_flags, timestamp):
+        """Query telstate for per-baseline flags to set.
+
+        The last value set in prior to the end of the dump is used.
+        """
+        end_time = timestamp + self.cbf_attr['int_time']
+        if self.telstate is None:
+            baseline_flags.fill(0)
+            return
+        cache = {}
+        baselines = self.cbf_attr['bls_ordering']  # actually sdp_l0_bls_ordering
+        cam_flag = 1 << sp.IngestTemplate.flag_names.index('cam')
+        for i, baseline in enumerate(baselines):
+            # [:-1] indexing strips off h/v pol
+            a = baseline[0][:-1]
+            b = baseline[1][:-1]
+            for antenna in (a, b):
+                if antenna not in cache:
+                    sensor_name = '{}_data_suspect'.format(antenna)
+                    try:
+                        values = self.telstate.get_range(sensor_name, et=end_time)
+                        value = values[-1][0]     # Last entry, value element of pair
+                    except (KeyError, IndexError):
+                        value = False
+                    cache[antenna] = value
+            baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
+
     @trollius.coroutine
-    def _frame_job(self, proc_a, vis_in_a, channel_flags_a, frame):
+    def _frame_job(self, proc_a, vis_in_a, external_flags_a, frame):
         with proc_a as proc, \
              vis_in_a as vis_in_buffer, \
-             channel_flags_a as channel_flags_buffer:
+             external_flags_a as external_flags_buffers:
+            channel_flags_buffer, baseline_flags_buffer = external_flags_buffers
             # Load data
-            events = (yield From(vis_in_a.wait())) + (yield From(channel_flags_a.wait()))
+            events = (yield From(vis_in_a.wait())) + (yield From(external_flags_a.wait()))
             self.command_queue.enqueue_wait_for_events(events)
             # First channel of the current item
             item_channel = self.channel_ranges.subscribed.start
@@ -947,6 +976,8 @@ class CBFIngest(object):
                 vis_in_buffer.zero(self.command_queue)
             channel_flags = channel_flags_buffer.empty_like()
             channel_flags.fill(0)
+            baseline_flags = baseline_flags_buffer.empty_like()
+            self._set_baseline_flags(baseline_flags, frame.timestamp)
             data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
@@ -962,7 +993,9 @@ class CBFIngest(object):
                 vis_in_buffer.set_region(
                     self.command_queue, item,
                     dest_range.asslice(), src_range.asslice(), blocking=False)
+
             channel_flags_buffer.set_async(self.command_queue, channel_flags)
+            baseline_flags_buffer.set_async(self.command_queue, baseline_flags)
             transfer_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
 
@@ -972,7 +1005,7 @@ class CBFIngest(object):
             proc()
             done_event = self.command_queue.enqueue_marker()
             vis_in_a.ready([done_event])
-            channel_flags_a.ready([done_event])
+            external_flags_a.ready([done_event])
             proc_a.ready([done_event])
 
             # Keep vis_in live until the transfer is complete
@@ -1053,11 +1086,11 @@ class CBFIngest(object):
 
             proc_a = self.proc_resource.acquire()
             vis_in_a = self.vis_in_resource.acquire()
-            channel_flags_a = self.channel_flags_resource.acquire()
+            external_flags_a = self.external_flags_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # enqueuing its work before trying to carry on.
             yield From(proc_a.wait())
-            self.jobs.add(self._frame_job(proc_a, vis_in_a, channel_flags_a, frame))
+            self.jobs.add(self._frame_job(proc_a, vis_in_a, external_flags_a, frame))
 
             # Done with reading this frame
             idx += 1
