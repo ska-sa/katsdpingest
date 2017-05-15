@@ -66,7 +66,7 @@ extensions = [
             get_include('pybind11'),
             get_include('pybind11', user=True)] + hdf5['include_dirs'],
         define_macros=hdf5['define_macros'],
-        extra_compile_args=['-std=c++11', '-g0'],
+        extra_compile_args=['-std=c++11', '-g0', '-fvisibility=hidden'],
         library_dirs=hdf5['library_dirs'],
         libraries=['boost_system', 'hdf5_cpp'] + hdf5['libraries']
     )
