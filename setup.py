@@ -2,6 +2,7 @@
 from setuptools import setup, find_packages, Extension
 from distutils.command.build_ext import build_ext
 import glob
+import importlib
 import sys
 import subprocess
 import os.path
@@ -16,18 +17,18 @@ except ImportError:
 
 tests_require = ['mock', 'nose']
 
-# Different OSes install the Boost.Python library under different names
-bp_library_names = [
-    'boost_python-py{0}{1}'.format(sys.version_info.major, sys.version_info.minor),
-    'boost_python{0}'.format(sys.version_info.major),
-    'boost_python',
-    'boost_python-mt']
-for name in bp_library_names:
-    if ctypes.util.find_library(name):
-        bp_library = name
-        break
-else:
-    raise RuntimeError('Cannot find Boost.Python library')
+class get_include(object):
+    """Helper class to defer importing a module until build time for fetching
+    the include directory.
+    """
+    def __init__(self, module, *args, **kwargs):
+        self.module = module
+        self.args = args
+        self.kwargs = kwargs
+
+    def __str__(self):
+        module = importlib.import_module(self.module)
+        return getattr(module, 'get_include')(*self.args, **self.kwargs)
 
 
 # Hack: this is copied and edited from spead2, so that we can run configure
@@ -57,14 +58,17 @@ extensions = [
         sources=(glob.glob('spead2/src/common_*.cpp') +
                  glob.glob('spead2/src/recv_*.cpp') +
                  glob.glob('spead2/src/send_*.cpp') +
-                 ['spead2/src/py_common.cpp', 'katsdpingest/bf_ingest_session.cpp']),
+                 ['katsdpingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/src/*.h'),
         language='c++',
-        include_dirs=['spead2/include'] + hdf5['include_dirs'],
+        include_dirs=[
+            'spead2/include',
+            get_include('pybind11'),
+            get_include('pybind11', user=True)] + hdf5['include_dirs'],
         define_macros=hdf5['define_macros'],
         extra_compile_args=['-std=c++11', '-g0'],
         library_dirs=hdf5['library_dirs'],
-        libraries=[bp_library, 'boost_system', 'boost_regex', 'hdf5_cpp'] + hdf5['libraries']
+        libraries=['boost_system', 'hdf5_cpp'] + hdf5['libraries']
     )
 ]
 
@@ -84,7 +88,7 @@ setup(
         "scripts/ingest_autotune.py",
         "scripts/cam2telstate.py"
     ],
-    setup_requires=['katversion', 'pkgconfig'],
+    setup_requires=['katversion', 'pkgconfig', 'pybind11'],
     install_requires=[
         'h5py',
         'futures',

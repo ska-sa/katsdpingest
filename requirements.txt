@@ -28,6 +28,7 @@ ply
 ProxyTypes
 psutil==4.1.0
 py
+pybind11==2.1.1
 pycuda
 pytest
 pytools
