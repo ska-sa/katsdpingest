@@ -206,10 +206,13 @@ class _CaptureSession(object):
 
     def _create_digifits (self, core, backend_args = '-t 0.000153121770088 -p 1'):
         passed_args = self.get_digifits_args(backend_args)
+        self.save_dir = "/data/%.0fsf"%time.time()
         if '-p' in passed_args:
             self.n_pol= passed_args[passed_args.index('-p')+1]
-        cmd =["numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
-        self.save_dir = "/data/%.0fsf"%time.time()
+        if "profile" in self.backend:
+            cmd =["nvprof","--analysis-metrics","--cpu-profiling","--export-profile","%s/digifits.nvprof"%self.save_dir,"numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
+        else:
+            cmd =["numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
         os.mkdir("%s.writing"%self.save_dir)
         _logger.info("Starting digifits with args:")
         _logger.info(cmd)
@@ -238,7 +241,7 @@ class _CaptureSession(object):
             parser.add_argument('-m', dest='-m', type=str, help='set the start MJD of the observation')
             parser.add_argument('-2', dest='-2', action='store_true', help='unpacker options ("2-bit" excision)')
             parser.add_argument('-skz', dest='-skz', action='store_true', help='apply spectral kurtosis filterbank RFI zapping')
-            parser.add_argument('-noskz_too', dest='-noskz_too', action='store_true', help='also produce un-zapmesos-3c52c442-e322-41af-8b6c-0381856777f5-S0.702cdbcb-05dc-4084-a2ea-b9b87489c386ped version of output')
+            parser.add_argument('-noskz_too', dest='-noskz_too', action='store_true', help='also produce un-zapped version of output')
             parser.add_argument('-skzm', dest='-skzm', type=int, help='samples to integrate for spectral kurtosis statistics')
             parser.add_argument('-skzs', dest='-skzs', type=int, help='number of std deviations to use for spectral kurtosis excisions')
             parser.add_argument('-skz_start', dest='-skz_start', type=int, help='first channel where signal is expected')
@@ -285,10 +288,11 @@ class _CaptureSession(object):
 
         self.save_dir = "/data/%.0far"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
- 
-        with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
-            cmd = ["taskset","5,7","dspsr"] + passed_args + ["-cuda","0","/home/kat/dada.info"]
+        if "profile" in self.backend:
+            cmd = ["nvprof","--analysis-metrics","--cpu-profiling","--export-profile","%s/digifits.nvprof"%self.save_dir,"numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+        else:
             cmd = ["numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+        with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
             _logger.info("Starting dspsr with args:")
             _logger.info(cmd)
             self._dspsr_process = subprocess.Popen(
