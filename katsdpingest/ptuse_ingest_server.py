@@ -93,6 +93,7 @@ class _CaptureSession(object):
         
         #script_args is only populated for beamformer observervations.
         if self.script_args:
+            _logger.info ("Running with script args of %s"%str(self.script_args))
             pubsub_thread = PubSubThread(1,eval(config['stream_sources'])['cam.http']['camdata'],_logger,self,an_ant)
             pubsub_thread.start()
             backend = self.script_args['backend']
@@ -105,8 +106,10 @@ class _CaptureSession(object):
             elif 'digifits' in backend or (backend_args and '-p 1' in backend_args) and bandwidth >= 642:
                 _logger.info("Bandwidth set to 642 as this is the max bandwidth digifits can handle with p=1")
                 bandwidth = 642
-
-            self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=128)
+            if self.backend in "dada_dbdisk": #Make massive RAM buffer, but first we need to increase RAM provided by Mesos
+                self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=128)
+            else:# Ring buffer of 32 TB divided into 256 MB chunks
+                self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=128)
             _logger.info("Created dada_buffer")
             self._create_dada_header()
             if (self.backend in "digifits"):
@@ -139,7 +142,7 @@ class _CaptureSession(object):
         numaCore :
             NUMA node to attach dada buffer to
         """
-        cmd = ['dada_db', '-k', dadaId, '-b', str(bufsz),'-c', '%d'%numaCore,'-p','-l','-n', '%d'%nBuffers]
+        cmd = ['dada_db', '-k', dadaId, '-b', str(bufsz),'-c', '%d'%self.args.affinity[0],'-p','-l','-n', '%d'%nBuffers]
         dada_buffer_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -168,7 +171,9 @@ class _CaptureSession(object):
                 Location to write captured data
         """
         _logger.info("dada_dbdisk")
-        cmd = ['dada_dbdisk', '-k', dadaId, '-c','%d'%cpuCore, '-D', outputDir, '-z', '-s']
+        self.save_dir = "/data/%.0fdada"%time.time()
+        os.mkdir("%s.writing"%self.save_dir)
+        cmd = ['dada_dbdisk', '-k', dadaId, '-b','%d'%self.args.affinity[1], '-D', "%s.writing"%self.save_dir, '-z', '-s']
         self._dada_dbdisk_process = subprocess.Popen(
         cmd, stdout=subprocess.PIPE
         )
@@ -404,9 +409,12 @@ class _CaptureSession(object):
         if self._dspsr_process is not None and self._dspsr_process.poll() is None:
             self._dspsr_process.send_signal(signal.SIGTERM)
             _logger.info("dspsr did not stop")
-
+        
         comm = self._dada_header_process.communicate()
-        dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
+        try:
+            dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
+        except:
+            _logger.info("Could not parse dada header:\n%s"%str(comm))
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
             try: 
@@ -428,19 +436,29 @@ class _CaptureSession(object):
                 _logger.info("Obs info file not correctly filled")
 
         if self.backend and self.backend == 'digifits':
-            try:
-                data_files = os.listdir("%s.writing"%self.save_dir)
-                index = 0
-                while index < len(data_files) and data_files[index][-2:] != 'sf':
-                    index+=1
+            
+            data_files = os.listdir("%s.writing"%self.save_dir)
+            index = 0
+            while index < len(data_files) and data_files[index][-2:] != 'sf':
+                index+=1
 
+            try:
                 data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[index]), mode="update", memmap=True, save_backup=False)
                 target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
                 hduPrimary=data[0].header
                 start_time = Time([hduPrimary['STT_IMJD'] + hduPrimary['STT_SMJD'] / 3600.0 / 24.0],format='mjd')
                 start_time.format = 'isot'
                 self.startTime=start_time.value[0][:-3] + str(hduPrimary['STT_OFFS'])[2:]
-             
+                 
+
+                _logger.info(target)
+                _logger.info(self.startTime.split('.')[0])
+                hduPrimary["PROJID"]=self.script_args['sb_id_code']
+                hduPrimary["OBSERVER"]=self.script_args['observer']
+                hduPrimary["ANT_X"]=5109318.8410
+                hduPrimary["ANT_Y"]=2006836.3673
+                hduPrimary["ANT_Z"]=-3238921.7749
+                hduPrimary["BACKEND"]="BFI1"
                 hduPrimary["TELESCOP"]="MEERKAT"
                 hduPrimary["FRONTEND"]="L-BAND"
                 hduPrimary["RA"]=target[-2]
@@ -462,11 +480,13 @@ class _CaptureSession(object):
                 hduPrimary["CAL_PHS"]=0.0
                 hduPrimary["CAL_NPHS"]=0.0
                 hduPrimary["CHAN_DM"] = 0.0
-                hduPrimary["DATE-OBS"]=self.startTime
+                hduPrimary["DATE-OBS"]=self.startTime.split('.')[0]
                 hduPrimary["DATE"]=self.startTime
-            
+                hduPrimary["SCANLEN"]=self.script_args['target_duration']
+                
                 hduSubint = data[2].header
                 hduSubint["NPOL"]=self.n_pol
+                _logger.info("n_pol = %s"%self.n_pol)
                 if int(self.n_pol) == 1:
                     hduSubint["POL_TYPE"]="AA+BB"
                 if int(self.n_pol) == 4:
