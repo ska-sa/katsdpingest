@@ -6,3 +6,4 @@ cover
 doc/_build
 katsdpingest/_bf_ingest_session.so
 *.egg-info
+.git
