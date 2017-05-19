@@ -59,7 +59,7 @@ extensions = [
                  glob.glob('spead2/src/recv_*.cpp') +
                  glob.glob('spead2/src/send_*.cpp') +
                  ['katsdpingest/bf_ingest_session.cpp']),
-        depends=glob.glob('spead2/src/*.h'),
+        depends=glob.glob('spead2/include/spead2/*.h'),
         language='c++',
         include_dirs=[
             'spead2/include',
