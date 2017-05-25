@@ -554,6 +554,8 @@ class Accum(accel.Operation):
         Input flags: non-zero values cause downweighting by 2^-64
     **channel_flags** : kept-channels, uint8
         Predetermined flags per channel
+    **baseline_flags** : baselines, uint8
+        Predetermined flags per baseline
     **vis_outN** : kept-channels × baselines, complex64
         Incremented by weight × visibility
     **weights_outN** : kept-channels × baselines, float32
@@ -601,6 +603,8 @@ class Accum(accel.Operation):
                 (padded_baselines, padded_channels), np.uint8)
         self.slots['channel_flags'] = accel.IOSlot(
                 (accel.Dimension(kept_channels, tilex),), np.uint8)
+        self.slots['baseline_flags'] = accel.IOSlot(
+                (accel.Dimension(baselines, tiley),), np.uint8)
         for i in range(self.template.outputs):
             label = str(i)
             self.slots['vis_out' + label] = accel.IOSlot(
@@ -615,12 +619,12 @@ class Accum(accel.Operation):
         for i in range(self.template.outputs):
             label = str(i)
             buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
-        buffer_names.extend(['vis_in', 'weights_in', 'flags_in', 'channel_flags'])
+        buffer_names.extend(['vis_in', 'weights_in', 'flags_in', 'channel_flags', 'baseline_flags'])
         buffers = [self.buffer(x) for x in buffer_names]
         args = [x.buffer for x in buffers] + [
             np.int32(buffers[0].padded_shape[1]),
+            np.int32(buffers[-5].padded_shape[1]),
             np.int32(buffers[-4].padded_shape[1]),
-            np.int32(buffers[-3].padded_shape[1]),
             np.int32(self.channel_range.start)]
 
         kept_channels = len(self.channel_range)
@@ -1063,7 +1067,9 @@ class IngestOperation(accel.OperationSequence):
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
     **channel_flags** : kept-channels, uint8
-        Predefined flags
+        Predefined per-channel flags
+    **baseline_flags** : baselines, uint8
+        Predefined per-baseline flags, in the post-permutation ordering
     **permutation** : baselines, int16
         Permutation mapping original to new baseline index
     **input_auto_baseline** : inputs, uint16
@@ -1237,6 +1243,7 @@ class IngestOperation(accel.OperationSequence):
         compounds = {
                 'vis_in':       ['prepare:vis_in'],
                 'channel_flags': ['accum:channel_flags'],
+                'baseline_flags': ['accum:baseline_flags'],
                 'permutation':  ['prepare:permutation'],
                 'vis_t':        ['prepare:vis_out', 'auto_weights:vis',
                                  'transpose_vis:src', 'accum:vis_in'],

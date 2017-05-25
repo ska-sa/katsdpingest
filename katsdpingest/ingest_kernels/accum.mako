@@ -28,6 +28,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
     const GLOBAL float * RESTRICT in_weights,
     const GLOBAL unsigned char * RESTRICT in_flags,
     const GLOBAL unsigned char * RESTRICT channel_flags,
+    const GLOBAL unsigned char * RESTRICT baseline_flags,
     int out_stride,
     int in_full_stride,
     int in_kept_stride,
@@ -46,7 +47,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
         int kept_addr = ${r} * in_kept_stride + ${c};
         local_vis.arr[${lr}][${lc}] = in_vis[full_addr];
         local_weights.arr[${lr}][${lc}] = in_weights[kept_addr];
-        local_flags.arr[${lr}][${lc}] = in_flags[full_addr];
+        local_flags.arr[${lr}][${lc}] = in_flags[full_addr] | baseline_flags[${r}];
     </%transpose:transpose_load>
 
     BARRIER();
