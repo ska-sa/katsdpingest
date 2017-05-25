@@ -11,7 +11,7 @@ katsdp.setDependencies([
 catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
-    katsdp.stageMakeDocker()
+    katsdp.stageMakeDocker(venv: true)
 
     stage('autotuning') {
         if (currentBuild.result == null) {
