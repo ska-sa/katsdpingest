@@ -349,7 +349,8 @@ class CBFIngest(object):
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
-        background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
+        background_template = rfi.BackgroundMedianFilterDeviceTemplate(
+                context, width=13, use_flags=True)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
                 context, transposed=True, flag_value=flag_value)
@@ -983,6 +984,7 @@ class CBFIngest(object):
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
                 channel_flags_range = item_range.intersection(self.channel_ranges.computed)
+                channel_flags_range = channel_flags_range.relative_to(self.channel_ranges.input)
                 if item is None:
                     channel_flags[channel_flags_range.asslice()] = data_lost_flag
                 use_range = item_range.intersection(self.channel_ranges.input)
