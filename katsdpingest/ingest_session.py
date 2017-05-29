@@ -976,7 +976,14 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             channel_flags = channel_flags_buffer.empty_like()
-            channel_flags.fill(0)
+            try:
+                channel_flags[:] = self.telstate['x_channel_flags']  # Name for testing only
+            except KeyError:
+                channel_flags.fill(0)
+            except ValueError:
+                # Could happen if the telstate key has the wrong shape
+                logger.warn('Error loading channel flags from telstate', exc_info=True)
+                channel_flags.fill(0)
             baseline_flags = baseline_flags_buffer.empty_like()
             self._set_baseline_flags(baseline_flags, frame.timestamp)
             data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
