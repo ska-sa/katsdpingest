@@ -308,7 +308,7 @@ class CBFIngest(object):
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
     # configurations.
-    tune_antennas = [2, 4, 8, 16]
+    tune_antennas = [2, 4, 8, 16, 32]
     tune_channels = [4096, 8192, 9216, 32768]
 
     @classmethod
