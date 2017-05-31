@@ -4,7 +4,9 @@
 Makes autotuning happen for common configurations and for all discovered
 devices, so that a subsequent run will not have to wait for autotuning.
 """
+from __future__ import print_function
 import logging
+import sys
 from katsdpingest import ingest_session
 from katsdpsigproc import accel
 
@@ -25,7 +27,11 @@ def autotune_device(device):
 def main():
     logging.basicConfig(level='INFO')
     logging.getLogger('katsdpsigproc.tune').setLevel(logging.INFO)
-    for device in accel.all_devices():
+    devices = accel.all_devices()
+    if not devices:
+        print("Error: no acceleration devices found", file=sys.stderr)
+        sys.exit(1)
+    for device in devices:
         autotune_device(device)
 
 if __name__ == '__main__':

@@ -1,0 +1,6 @@
+docker-pycreds==0.2.1     # via docker
+docker==2.3.0
+ipaddress==1.0.18         # via docker
+requests                  # via docker
+six                       # via docker, docker-pycreds
+websocket-client==0.40.0  # via docker
