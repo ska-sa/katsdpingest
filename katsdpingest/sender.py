@@ -50,6 +50,8 @@ class VisSender(object):
         Thread pool servicing the stream
     endpoint : `katsdptelstate.endpoint.Endpoint`
         Stream endpoint
+    interface_address : str
+        IP address of network interface to use, or ``None``
     flavour : `spead2.Flavour`
         SPEAD flavour to use on `stream`
     int_time : float
@@ -60,7 +62,8 @@ class VisSender(object):
         Index of first channel, within the full bandwidth of the CBF output
     baselines : number of baselines in output
     """
-    def __init__(self, thread_pool, endpoint, flavour, int_time, channel_range, channel0, baselines):
+    def __init__(self, thread_pool, endpoint, interface_address,
+                 flavour, int_time, channel_range, channel0, baselines):
         channels = len(channel_range)
         dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
         dump_size += channels * np.dtype(np.float32).itemsize
@@ -71,9 +74,13 @@ class VisSender(object):
         # packet, which is a fraction of total size) and to allow us to catch
         # up if we temporarily fall behind the rate.
         rate = dump_size / int_time * 1.05
+        kwargs = {}
+        if interface_address is not None:
+            kwargs['interface_address'] = interface_address
+            kwargs['ttl'] = 1
         self._stream = spead2.send.trollius.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=8972, rate=rate))
+            spead2.send.StreamConfig(max_packet_size=8972, rate=rate), **kwargs)
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
         self._channel0 = channel0
@@ -121,7 +128,8 @@ class VisSenderSet(object):
     """Manages a collection of :class:`VisSender` objects, and provides similar
     functions that work collectively on all the streams.
     """
-    def __init__(self, thread_pool, endpoints, flavour, int_time, channel_range, channel0, baselines):
+    def __init__(self, thread_pool, endpoints, interface_address,
+                 flavour, int_time, channel_range, channel0, baselines):
         channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
@@ -132,7 +140,7 @@ class VisSenderSet(object):
             a = channel_range.start + i * sub_channels
             b = a + sub_channels
             self._senders.append(
-                VisSender(thread_pool, endpoints[i], flavour, int_time,
+                VisSender(thread_pool, endpoints[i], interface_address, flavour, int_time,
                           Range(a, b), channel0 + i * sub_channels, baselines))
 
     @property
