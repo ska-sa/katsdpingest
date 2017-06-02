@@ -369,7 +369,9 @@ class CBFIngest(object):
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.spectral_spead_endpoints = opts.l0_spectral_spead
+        self.spectral_spead_ifaddr = utils.get_interface_address(opts.l0_spectral_interface)
         self.continuum_spead_endpoints = opts.l0_continuum_spead
+        self.continuum_spead_ifaddr = utils.get_interface_address(opts.l0_continuum_interface)
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -411,7 +413,7 @@ class CBFIngest(object):
         # Done with blocks
 
         self.rx = receiver.Receiver(
-            opts.cbf_spead, self.channel_ranges.subscribed,
+            opts.cbf_spead, opts.cbf_interface, self.channel_ranges.subscribed,
             len(self.channel_ranges.cbf), my_sensors, telstate, cbf_name)
         self.cbf_attr = self.rx.cbf_attr
         # Instantiation of the output streams delayed until exact integration time is known
@@ -735,6 +737,7 @@ class CBFIngest(object):
         self.tx_spectral = sender.VisSenderSet(
             thread_pool,
             self.spectral_spead_endpoints,
+            self.spectral_spead_ifaddr,
             l0_flavour,
             self._output_avg.int_time,
             spectral_channels,
@@ -743,6 +746,7 @@ class CBFIngest(object):
         self.tx_continuum = sender.VisSenderSet(
             thread_pool,
             self.continuum_spead_endpoints,
+            self.continuum_spead_ifaddr,
             l0_flavour,
             self._output_avg.int_time,
             continuum_channels,

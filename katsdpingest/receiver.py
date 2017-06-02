@@ -1,13 +1,13 @@
 """Receives from multiple SPEAD streams and combines heaps into frames."""
 
 from __future__ import print_function, absolute_import, division
+import logging
+import multiprocessing
+from collections import deque
 import spead2
 import spead2.recv.trollius
 import trollius
 from trollius import From, Return
-import logging
-from collections import deque
-import multiprocessing
 import numpy as np
 from . import utils
 from .utils import Range
@@ -56,6 +56,8 @@ class Receiver(object):
     endpoints : list of :class:`katsdptelstate.Endpoint`
         Endpoints for SPEAD streams. These must be listed in order
         of increasing channel number.
+    interface : str
+        Name of interface to subscribe to for endpoints
     channel_range : :class:`katsdpingest.utils.Range`
         Channels to capture. These must be aligned to the stream boundaries.
     cbf_channels : int
@@ -98,7 +100,7 @@ class Receiver(object):
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
     """
-    def __init__(self, endpoints, channel_range, cbf_channels, sensors,
+    def __init__(self, endpoints, interface, channel_range, cbf_channels, sensors,
                  telstate=None, cbf_name='cbf', active_frames=2, loop=None):
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
@@ -118,6 +120,7 @@ class Receiver(object):
         self.active_frames = active_frames
         self.channel_range = channel_range
         self.cbf_channels = cbf_channels
+        self._interface_address = utils.get_interface_address(interface)
         self._streams = [None] * len(use_endpoints)
         self._frames = None
         self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
@@ -139,8 +142,9 @@ class Receiver(object):
         for i, endpoint in enumerate(use_endpoints):
             self._futures.append(trollius.async(self._read_stream(thread_pool, endpoint, i), loop=loop))
         self._running = len(use_endpoints)
-        _logger.info("CBF SPEAD stream reception on {0}".format(
-            [str(x) for x in use_endpoints]))
+        _logger.info("CBF SPEAD stream reception on %s via %s",
+            [str(x) for x in use_endpoints],
+            interface if interface is not None else 'default interface')
 
     def stop(self):
         """Stop all the individual streams."""
@@ -232,8 +236,14 @@ class Receiver(object):
         # TODO: once CBF switches to new format, require 'frequency' too
         if self._interval is None:
             self._interval = self.cbf_attr['ticks_between_spectra'] * self.cbf_attr['n_accs']
-
         return True
+
+    def _add_reader(self, stream, endpoint):
+        if self._interface_address is None:
+            stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+        else:
+            stream.add_udp_reader(endpoint.host, endpoint.port,
+                                  interface_address=self._interface_address)
 
     @trollius.coroutine
     def _read_stream(self, thread_pool, endpoint, stream_idx):
@@ -249,7 +259,7 @@ class Receiver(object):
             ring_heaps = 4
             stream = spead2.recv.trollius.Stream(thread_pool, max_heaps=4,
                                                  ring_heaps=ring_heaps, loop=self._loop)
-            stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+            self._add_reader(stream, endpoint)
             self._streams[stream_idx] = stream
             ig_cbf = spead2.ItemGroup()
             if self.telstate is None:
@@ -306,7 +316,7 @@ class Receiver(object):
             memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                             memory_pool_heaps, memory_pool_heaps)
             stream.set_memory_allocator(memory_pool)
-            stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+            self._add_reader(stream, endpoint)
             self._streams[stream_idx] = stream
 
             # Ready to receive data (using the same item group, since it has

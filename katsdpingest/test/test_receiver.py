@@ -74,11 +74,10 @@ class QueueRecvStream(object):
         self._loop = kwargs.pop('loop', None)
         self._stream = None
 
-    def add_udp_reader(self, port, *args, **kwargs):
-        bind_hostname = kwargs['bind_hostname']
+    def add_udp_reader(self, multicast_group, port, *args, **kwargs):
         if self._stream is not None:
             raise RuntimeError('QueueRecvStream only supports one reader')
-        self._stream = QueueStream.get_instance(bind_hostname, port, self._loop)
+        self._stream = QueueStream.get_instance(multicast_group, port, self._loop)
 
     @trollius.coroutine
     def get(self):
@@ -106,7 +105,7 @@ class TestReceiver(object):
         self.n_xengs = 4
         self.n_chans = 4096
         sensors = mock.MagicMock()
-        self.rx = Receiver(endpoints, Range(0, self.n_chans), self.n_chans,
+        self.rx = Receiver(endpoints, 'lo', Range(0, self.n_chans), self.n_chans,
                            sensors, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
