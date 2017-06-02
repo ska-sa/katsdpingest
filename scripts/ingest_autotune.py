@@ -29,7 +29,7 @@ def main():
     logging.getLogger('katsdpsigproc.tune').setLevel(logging.INFO)
     devices = accel.all_devices()
     if not devices:
-        print("Error: no acceleration devices found", file=sys.stderr)
+        logging.error('No acceleration devices found')
         sys.exit(1)
     for device in devices:
         autotune_device(device)
