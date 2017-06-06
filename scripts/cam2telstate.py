@@ -131,6 +131,7 @@ SENSORS = [
     Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
     Sensor('{stream_visibility}_int_time', immutable=True),
     Sensor('{stream_visibility}_n_accs', immutable=True),
+    Sensor('{stream_visibility}_n_chans_per_substream', immutable=True),
     # Beamformer metadata are not immutable, because controlled by passband
     Sensor('{stream_beamformer}_n_chans'),
     Sensor('{stream_beamformer}_{inputn}_weight'),
