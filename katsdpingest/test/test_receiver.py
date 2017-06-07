@@ -99,6 +99,8 @@ class QueueRecvStream(object):
 
 class TestReceiver(object):
     def setup(self):
+        self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
+        self.patcher.start()
         self.loop = trollius.get_event_loop_policy().new_event_loop()
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+1')
         self.n_streams = 2
@@ -132,7 +134,7 @@ class TestReceiver(object):
             'ticks_between_spectra': 2 * self.n_chans,
             'bls_ordering': baselines
         }
-        self.rx = Receiver(endpoints, '127.0.0.1', Range(0, self.n_chans), self.n_chans,
+        self.rx = Receiver(endpoints, '127.0.0.1', False, Range(0, self.n_chans), self.n_chans,
                            sensors, cbf_attr, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
@@ -146,8 +148,6 @@ class TestReceiver(object):
                 (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_heap())
-        self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
-        self.patcher.start()
 
     def teardown(self):
         self.patcher.stop()

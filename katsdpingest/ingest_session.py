@@ -382,6 +382,7 @@ class CBFIngest(object):
         self.continuum_spead_ifaddr = utils.get_interface_address(opts.l0_continuum_interface)
         self.rx_spead_endpoints = opts.cbf_spead
         self.rx_spead_ifaddr = utils.get_interface_address(opts.cbf_interface)
+        self.rx_spead_ibv = opts.cbf_ibv
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -763,7 +764,8 @@ class CBFIngest(object):
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
         self.rx = receiver.Receiver(
-            self.rx_spead_endpoints, self.rx_spead_ifaddr, self.channel_ranges.subscribed,
+            self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
+            self.channel_ranges.subscribed,
             len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
         # At this point we transition from using _stop_future to abort to relying
         # on stop() calling rx.stop(). There is a race condition if stop() is
