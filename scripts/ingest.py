@@ -99,6 +99,8 @@ def parse_opts():
     opts = parser.parse_args()
     if opts.telstate is None:
         parser.error('argument --telstate is required')
+    if opts.cbf_ibv and opts.cbf_interface is None:
+        parser.error('--cbf-ibv requires --cbf-interface')
     if opts.output_channels is None:
         opts.output_channels = Range(0, opts.cbf_channels)
     if opts.sd_output_channels is None:
