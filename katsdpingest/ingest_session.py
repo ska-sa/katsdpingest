@@ -1091,8 +1091,12 @@ class CBFIngest(object):
                                cancel_future=self._stop_future)
         for attr in CBF_CRITICAL_ATTRS:
             telstate_name = '{}_{}'.format(self.cbf_name, attr)
-            self.cbf_attr[attr] = self.telstate[telstate_name]
-            logger.info('Setting cbf_attr %s to %r', attr, self.cbf_attr[attr])
+            try:
+                self.cbf_attr[attr] = self.telstate[telstate_name]
+                logger.info('Setting cbf_attr %s to %r', attr, self.cbf_attr[attr])
+            except KeyError:
+                # Telstate's KeyError does not have a useful description
+                raise KeyError('Telstate key {} not found'.format(telstate_name))
         logger.info('All metadata received')
 
     @trollius.coroutine
