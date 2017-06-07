@@ -194,9 +194,10 @@ class Receiver(object):
                 else:
                     stream.add_udp_reader(endpoint.host, endpoint.port,
                                           interface_address=ifaddr)
-        _logger.info("CBF SPEAD stream reception on %s via %s",
+        _logger.info("CBF SPEAD stream reception on %s via %s%s",
             [str(x) for x in endpoints],
-            ifaddr if ifaddr is not None else 'default interface')
+            ifaddr if ifaddr is not None else 'default interface',
+            ' with ibv' if self._ibv else '')
 
     def _make_stream(self, endpoints):
         """Prepare a stream, which may combine multiple endpoints."""
