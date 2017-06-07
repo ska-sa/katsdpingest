@@ -105,13 +105,7 @@ class TestReceiver(object):
         self.n_xengs = 4
         self.n_chans = 4096
         sensors = mock.MagicMock()
-        self.rx = Receiver(endpoints, 'lo', Range(0, self.n_chans), self.n_chans,
-                           sensors, active_frames=3, loop=self.loop)
-        self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
-                   for i in range(self.n_streams)]
-        self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         self.adc_sample_rate = 1712000000
-        self.center_freq = 1412000000.0
         self.n_accs = 256000
         self.n_ants = 4
         self.n_bls = self.n_ants * (self.n_ants + 1) * 2
@@ -124,29 +118,26 @@ class TestReceiver(object):
                         name2 = 'm{:03}{}'.format(j, pol2)
                         baselines.append([name1, name2])
         baselines = np.array(baselines)
+        cbf_attr = {
+            'adc_sample_rate': self.adc_sample_rate,
+            'bandwidth': self.adc_sample_rate / 2,
+            'n_accs': self.n_accs,
+            'n_ants': self.n_ants,
+            'n_bls': self.n_bls,
+            'n_chans': self.n_chans,
+            'n_chans_per_substream': self.n_chans // self.n_xengs,
+            'int_time': self.n_accs * self.n_chans * 2 / self.adc_sample_rate,
+            'sync_time': 14000000.0,
+            'scale_factor_timestamp': self.adc_sample_rate,
+            'ticks_between_spectra': 2 * self.n_chans,
+            'bls_ordering': baselines
+        }
+        self.rx = Receiver(endpoints, '127.0.0.1', Range(0, self.n_chans), self.n_chans,
+                           sensors, cbf_attr, active_frames=3, loop=self.loop)
+        self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
+                   for i in range(self.n_streams)]
+        self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
-            ig.add_item(0x1007, 'adc_sample_rate', 'Expected ADC sample rate (sampled/second)',
-                        (), format=[('u', 64)], value=self.adc_sample_rate)
-            ig.add_item(0x1008, 'n_bls', 'The total number of baselines in the data product. Each pair of inputs (polarisation pairs) is considered a baseline.',
-                (), format=[('u', 48)], value=self.n_bls)
-            ig.add_item(0x1009, 'n_chans', 'The total number of frequency channels present in any integration.',
-                        (), format=[('u', 48)], value=self.n_chans)
-            ig.add_item(0x100C, 'bls_ordering', "The X-engine baseline output ordering. The form is a list of arrays of strings of user-defined antenna names ('input1','input2'). For example [('antC23x','antC23y'), ('antB12y','antA29y')]",
-                baselines.shape, baselines.dtype, value=baselines)
-            ig.add_item(0x1011, 'center_freq', 'The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.',
-                (), format=[('f', 64)], value=self.center_freq)
-            ig.add_item(0x1013, 'bandwidth', 'The analogue bandwidth of the digitally processed signal in Hz.',
-                        (), format=[('f', 64)], value=self.adc_sample_rate / 2)
-            ig.add_item(0x1015, 'n_accs', 'The number of spectra that are accumulated per integration.',
-                (), format=[('u', 48)], value=self.n_accs)
-            ig.add_item(0x1016, 'int_time', "Approximate (it's a float!) time per accumulation in seconds. This is intended for reference only. Each accumulation has an associated timestamp which should be used to determine the time of the integration rather than incrementing the start time by this value for sequential integrations (which would allow errors to grow).",
-                (), format=[('f', 64)], value=self.n_accs * self.n_chans * 2 / self.adc_sample_rate)
-            ig.add_item(0x1027, 'sync_time', 'Time at which the system was last synchronised (armed and triggered by a 1PPS) in seconds since the Unix Epoch.',
-                (), format=[('u', 48)], value=14000000)
-            ig.add_item(0x1046, 'scale_factor_timestamp', 'Timestamp scaling factor. Divide the SPEAD data packet timestamp by this number to get back to seconds since last sync.',
-                (), format=[('f', 64)], value=self.adc_sample_rate)
-            ig.add_item(0x104A, 'ticks_between_spectra', 'Number of sample ticks between spectra.',
-                (), format=[('u', 48)], value=2 * self.n_chans)
             ig.add_item(0x1600, 'timestamp', 'Timestamp of start of this integration. uint counting multiples of ADC samples since last sync (sync_time, id=0x1027). Divide this number by timestamp_scale (id=0x1046) to get back to seconds since last sync when this integration was actually started. Note that the receiver will need to figure out the centre timestamp of the accumulation (eg, by adding half of int_time, id 0x1016).',
                 (), None, format=[('u', 48)])
             ig.add_item(0x4103, 'frequency', 'Identifies the first channel in the band of frequencies in the SPEAD heap. Can be used to reconstruct the full spectrum.',

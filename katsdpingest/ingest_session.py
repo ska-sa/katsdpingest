@@ -17,10 +17,16 @@ import katsdptelstate
 import logging
 import trollius
 from trollius import From
+import concurrent.futures
 from . import utils, receiver, sender
 
 
 logger = logging.getLogger(__name__)
+# Attributes that are required for data to be correctly ingested
+CBF_CRITICAL_ATTRS = frozenset([
+    'adc_sample_rate', 'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
+    'bandwidth', 'center_freq',
+    'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
 
 def get_collection_products(bls_ordering):
@@ -366,12 +372,16 @@ class CBFIngest(object):
         self._sdisp_ips = {}
         self._center_freq = None
         self._run_future = None
+        # Signalled by stop to abort a wait for metadata
+        self._stop_future = concurrent.futures.Future()
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.spectral_spead_endpoints = opts.l0_spectral_spead
         self.spectral_spead_ifaddr = utils.get_interface_address(opts.l0_spectral_interface)
         self.continuum_spead_endpoints = opts.l0_continuum_spead
         self.continuum_spead_ifaddr = utils.get_interface_address(opts.l0_continuum_interface)
+        self.rx_spead_endpoints = opts.cbf_spead
+        self.rx_spead_ifaddr = utils.get_interface_address(opts.cbf_interface)
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
         self.sd_int_time = opts.sd_int_time
@@ -412,11 +422,9 @@ class CBFIngest(object):
         self.jobs = resource.JobQueue()
         # Done with blocks
 
-        self.rx = receiver.Receiver(
-            opts.cbf_spead, opts.cbf_interface, self.channel_ranges.subscribed,
-            len(self.channel_ranges.cbf), my_sensors, telstate, cbf_name)
-        self.cbf_attr = self.rx.cbf_attr
-        # Instantiation of the output streams delayed until exact integration time is known
+        # Instantiation of input streams and output streams delayed until
+        # metadata is received.
+        self.rx = None
         self.tx_spectral = None
         self.tx_continuum = None
 
@@ -654,7 +662,7 @@ class CBFIngest(object):
 
     @trollius.coroutine
     def _initialise(self):
-        """Initialise variables on reception of the first usable frame."""
+        """Initialise variables once metadata is available."""
         cbf_baselines = len(self.cbf_attr['bls_ordering'])
         # Configure the masking and reordering of baselines
         orig_bls_ordering = self.cbf_attr['bls_ordering']
@@ -719,7 +727,7 @@ class CBFIngest(object):
         self.output_resource = resource.Resource(None)
         self.sd_output_resource = resource.Resource(None)
         # Record information about the processing in telstate
-        if self.telstate_name is not None and self.telstate is not None:
+        if self.telstate_name is not None:
             descriptions = list(self.proc.descriptions())
             attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
             self._set_telstate_entry(attribute_name, descriptions)
@@ -754,6 +762,15 @@ class CBFIngest(object):
             baselines)
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
+        self.rx = receiver.Receiver(
+            self.rx_spead_endpoints, self.rx_spead_ifaddr, self.channel_ranges.subscribed,
+            len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
+        # At this point we transition from using _stop_future to abort to relying
+        # on stop() calling rx.stop(). There is a race condition if stop() is
+        # called after receiving metadata but before self.rx is created, which
+        # is handled by this check.
+        if self._stop_future.done():
+            self.rx.stop()
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
@@ -1028,12 +1045,17 @@ class CBFIngest(object):
         will wait for the shutdown to complete.
         """
         if self._run_future:
-            logger.info('Stopping receiver...')
-            self.rx.stop()
-            logger.info('Receiver stopped. Waiting for run to stop...')
+            if not self._stop_future.done():
+                # Aborts the metadata thread if stuck in wait_key
+                self._stop_future.set_result(None)
+            if self.rx is not None:
+                logger.info('Stopping receiver...')
+                self.rx.stop()
+            logger.info('Waiting for run to stop...')
             yield From(self._run_future)
             logger.info('Run stopped')
             self._run_future = None
+            self.rx = None
 
     @trollius.coroutine
     def run(self):
@@ -1058,27 +1080,44 @@ class CBFIngest(object):
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
+    def _get_metadata(self):
+        """Wait for then retrieve metadata from telstate.
+
+        This is a blocking function that is run on a separate thread.
+        """
+        self.status_sensor.set_value("wait-metadata")
+        logger.info('Waiting for cam2telstate')
+        self.telstate.wait_key('sdp_cam2telstate_status', lambda value: value == 'ready',
+                               cancel_future=self._stop_future)
+        for attr in CBF_CRITICAL_ATTRS:
+            telstate_name = '{}_{}'.format(self.cbf_name, attr)
+            try:
+                self.cbf_attr[attr] = self.telstate[telstate_name]
+                logger.info('Setting cbf_attr %s to %r', attr, self.cbf_attr[attr])
+            except KeyError:
+                # Telstate's KeyError does not have a useful description
+                raise KeyError('Telstate key {} not found'.format(telstate_name))
+        logger.info('All metadata received')
+
     @trollius.coroutine
-    def _run(self):
-        """Real implementation of `run`."""
+    def _get_data(self):
+        """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
         rate_timer = 0
-        self.status_sensor.set_value("idle")
-        self._output_avg = None
-        self._sd_avg = None
+        self.status_sensor.set_value("wait-data")
         while True:
             try:
                 frame = yield From(self.rx.get())
             except spead2.Stopped:
                 logger.info('Detected receiver stopped')
-                break
+                yield From(self.rx.join())
+                return
 
             st = time.time()
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
                 self.status_sensor.set_value("capturing")
                 rate_timer = time.time()
-                yield From(self._initialise())
 
             # Generate timestamps
             current_ts_rel = frame.timestamp / self.cbf_attr['scale_factor_timestamp']
@@ -1106,8 +1145,24 @@ class CBFIngest(object):
             # thrown as soon as possible.
             self.jobs.clean()
 
-        # Stop received.
-        yield From(self.rx.join())
+    @trollius.coroutine
+    def _run(self):
+        """Real implementation of `run`."""
+        self._output_avg = None
+        self._sd_avg = None
+        # TelescopeState.wait_key is blocking, so we have to use a separate
+        # thread to wait for metadata if we still want to remain responsive to
+        # ?capture-done.
+        try:
+            with concurrent.futures.ThreadPoolExecutor(1) as executor:
+                loop = trollius.get_event_loop()
+                yield From(loop.run_in_executor(executor, self._get_metadata))
+        except katsdptelstate.CancelledError:
+            logger.warn('Stopped before metadata was received')
+        else:
+            yield From(self._initialise())
+            yield From(self._get_data())
+
         logger.info('Joined with receiver. Flushing final groups...')
         if self.proc_resource is not None:    # Could be None if no heaps arrived
             acq = self.proc_resource.acquire()

@@ -74,7 +74,6 @@ def range_str(value):
 
 def parse_opts():
     parser = katsdpservices.ArgumentParser()
-    parser.add_argument('--no-cam2telstate', dest='cam2telstate', default=True, action='store_false', help='Do not wait for cam2telstate to signal readiness')
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--cbf-interface', help='interface to subscribe to for CBF SPEAD data. [default=auto]', metavar='INTERFACE')
@@ -97,6 +96,8 @@ def parse_opts():
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
                         help='log level to use')
     opts = parser.parse_args()
+    if opts.telstate is None:
+        parser.error('argument --telstate is required')
     if opts.output_channels is None:
         opts.output_channels = Range(0, opts.cbf_channels)
     if opts.sd_output_channels is None:
@@ -239,14 +240,6 @@ class IngestDeviceServer(DeviceServer):
     def request_capture_init(self, req, msg):
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
-        if opts.telstate is not None and opts.cam2telstate:
-            logger.info('Waiting for cam2telstate')
-            with concurrent.futures.ThreadPoolExecutor(1) as executor:
-                yield executor.submit(opts.telstate.wait_key,
-                    'sdp_cam2telstate_status',
-                    lambda value: value == 'ready')
-            logger.info('cam2telstate ready')
-
         if self.cbf_session is not None:
             raise tornado.gen.Return(("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop."))
         if self._stopping:
