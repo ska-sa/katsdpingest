@@ -1241,13 +1241,9 @@ class CBFIngest(object):
 
         logger.info('Joined with receiver. Flushing final groups...')
         if self.proc_resource is not None:    # Could be None if no heaps arrived
-            acq = self.proc_resource.acquire()
-            with acq:
-                yield From(acq.wait_events())
-                if self._output_avg is not None:
-                    self._output_avg.finish()
-                self._sd_avg.finish()
-                acq.ready()
+            if self._output_avg is not None:
+                self._output_avg.finish()
+            self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
         yield From(self.jobs.finish())
         logger.info('Jobs complete')
