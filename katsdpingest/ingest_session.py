@@ -285,6 +285,45 @@ class ChannelRanges(object):
         assert self.subscribed.issubset(self.cbf)
 
 
+class _ResourceSet(object):
+    """Collection of device buffers with host staging areas.
+
+    A resource set groups together
+    - a :class:`katsdpsigproc.resource.Resource` containing a dict mapping
+      names to :class:`katsdpsigproc.accel.DeviceArray`s.
+    - N :class:`katsdpsigproc.resource.Resource`s containing dicts mapping
+      names to :class:`katsdpsigproc.accel.HostArray`s.
+    This provides N-buffered staging of data into or out of the device buffers.
+
+    Parameters
+    ----------
+    proc : :class:`katsdpsigproc.accel.Operation`
+        Processing operation from which the buffers will be found by name.
+    names : list of str
+        Names of buffers to find in `proc`
+    N : int
+        Number of host arrays to create for each buffer
+    """
+    def __init__(self, proc, names, N):
+        if N <= 0:
+            raise ValueError('_ResourceSet needs at least one buffer')
+        buffers = {name: proc.buffer(name) for name in names}
+        self._device = resource.Resource(buffers)
+        self._host = []
+        for i in range(N):
+            host = {name: buffer.empty_like() for name, buffer in buffers.items()}
+            self._host.append(resource.Resource(host))
+        self._next = 0     # Next host buffer to return from acquire
+
+    def acquire(self):
+        """Acquire device resource and next available host resource."""
+        ret = (self._device.acquire(), self._host[self._next].acquire())
+        self._next += 1
+        if self._next == len(self._host):
+            self._next = 0
+        return ret
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -298,24 +337,15 @@ class CBFIngest(object):
     host_input_resource : :class:`katsdpsigproc.resource.Resource`
         Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s
         used to stage the inputs
-    output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the L0 output device buffers, namely `spec_vis`,
+    output_resource : :class:`_ResourceSet`
+        Wrapper of the L0 output device buffers, namely `spec_vis`,
         `spec_flags`, `spec_weights` and `spec_weights_channel`, and the
         same for `cont_`.
-    host_output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s used to
-        stage the outputs.
-    sd_input_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the buffers that serve as inputs to signal display
+    sd_input_resource : :class:`_ResourceSet`
+        Wrapper of the buffers that serve as inputs to signal display
         processing (currently `timeseries_weights`).
-    host_sd_input_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s used to
-        stage the signal display inputs.
-    sd_output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the signal display output device buffers.
-    host_sd_output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s used to
-        stage the signal display outputs.
+    sd_output_resource : :class:`_ResourceSet`
+        Wrapper of the signal display output device buffers.
     proc_resource : :class:`katsdpsigproc.resource.Resource`
         The proc object, and the contents of all its buffers except for those
         covered by other resources above.
@@ -428,13 +458,9 @@ class CBFIngest(object):
         self.proc = None
         self.proc_resource = None
         self.input_resource = None
-        self.host_input_resource = None
         self.output_resource = None
-        self.host_output_resource = None
         self.sd_input_resource = None
-        self.host_sd_input_resource = None
         self.sd_output_resource = None
-        self.host_sd_output_resource = None
         self.jobs = resource.JobQueue()
         # Done with blocks
 
@@ -676,31 +702,6 @@ class CBFIngest(object):
             description="The frequency channel of the data in this heap.",
             shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
 
-    def _make_resources(self, names):
-        """Prepare resource objects to wrap a set of device buffers and host arrays.
-
-        The device resource object wrappers the proc buffers in `names`. The
-        value of the resource is a :class:`dict` mapping the name to the
-        buffer. For each buffer, a matching
-        :class:`~katsdpsigproc.accel.HostArray` is allocated, and a similar
-        :class:`dict` is returned in the second resource.
-
-        Parameters
-        ----------
-        names : list of str
-            Names of the buffer in ``self.proc``
-
-        Returns
-        -------
-        device_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the device buffers
-        host_resource : :class:`katsdpsigproc.resource.Resource`
-            Resource wrapping the host buffers
-        """
-        buffers = {name: self.proc.buffer(name) for name in names}
-        host = {name: buffer.empty_like() for name, buffer in buffers.items()}
-        return resource.Resource(buffers), resource.Resource(host)
-
     @trollius.coroutine
     def _initialise(self):
         """Initialise variables once metadata is available."""
@@ -762,22 +763,20 @@ class CBFIngest(object):
         # Set up resources
         self.proc_resource = resource.Resource(self.proc)
 
-        self.input_resource, self.host_input_resource = \
-            self._make_resources(['vis_in', 'channel_flags', 'baseline_flags'])
-        self.output_resource, self.host_output_resource = \
-            self._make_resources([prefix + suffix
-                for prefix in ['spec_', 'cont_']
-                for suffix in ['vis', 'flags', 'weights', 'weights_channel']])
-        self.sd_input_resource, self.host_sd_input_resource = \
-            self._make_resources(['timeseries_weights'])
+        self.input_resource = _ResourceSet(
+            self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
+        self.output_resource = _ResourceSet(
+            self.proc, [prefix + suffix
+                        for prefix in ['spec_', 'cont_']
+                        for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
+        self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
         sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
                            'timeseries', 'timeseriesabs']
         for i in range(len(self.proc.percentiles)):
             base_name = 'percentile{}'.format(i)
             sd_output_names.append(base_name)
             sd_output_names.append(base_name + '_flags')
-        self.sd_output_resource, self.host_sd_output_resource = \
-            self._make_resources(sd_output_names)
+        self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
 
         # Record information about the processing in telstate
         if self.telstate_name is not None:
@@ -829,8 +828,7 @@ class CBFIngest(object):
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
-        output_a = self.output_resource.acquire()
-        host_output_a = self.host_output_resource.acquire()
+        output_a, host_output_a = self.output_resource.acquire()
         self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, timestamps))
 
     @trollius.coroutine
@@ -915,10 +913,8 @@ class CBFIngest(object):
         mask[used.asslice()] = full_mask[self.channel_ranges.sd_output.asslice()]
 
         proc_a = self.proc_resource.acquire()
-        sd_input_a = self.sd_input_resource.acquire()
-        host_sd_input_a = self.host_sd_input_resource.acquire()
-        sd_output_a = self.sd_output_resource.acquire()
-        host_sd_output_a = self.host_sd_output_resource.acquire()
+        sd_input_a, host_sd_input_a = self.sd_input_resource.acquire()
+        sd_output_a, host_sd_output_a = self.sd_output_resource.acquire()
         self.jobs.add(self._flush_sd_job(
                 proc_a, sd_input_a, host_sd_input_a,
                 sd_output_a, host_sd_output_a,
@@ -1209,10 +1205,9 @@ class CBFIngest(object):
             self._sd_avg.add_timestamp(frame.timestamp)
 
             proc_a = self.proc_resource.acquire()
-            input_a = self.input_resource.acquire()
-            host_input_a = self.host_input_resource.acquire()
+            input_a, host_input_a = self.input_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
-            # transferring its data before trying to carry on.
+            # start to transfer its data before trying to carry on.
             yield From(host_input_a.wait())
             self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame))
 
