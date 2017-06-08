@@ -1154,8 +1154,8 @@ class CBFIngest(object):
             in_a = self.in_resource.acquire()
             host_in_a = self.host_in_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
-            # enqueuing its work before trying to carry on.
-            yield From(proc_a.wait())
+            # transferring its data before trying to carry on.
+            yield From(host_in_a.wait())
             self.jobs.add(self._frame_job(proc_a, in_a, host_in_a, frame))
 
             # Done with reading this frame
