@@ -2,7 +2,6 @@
 
 from __future__ import print_function, absolute_import, division
 import logging
-import multiprocessing
 from collections import deque
 import spead2
 import spead2.recv.trollius
@@ -45,6 +44,8 @@ class Receiver(object):
         of increasing channel number.
     interface_address : str
         Address of interface to subscribe to for endpoints
+    ibv : bool
+        If true, use ibverbs for acceleration
     channel_range : :class:`katsdpingest.utils.Range`
         Channels to capture. These must be aligned to the stream boundaries.
     cbf_channels : int
@@ -80,16 +81,18 @@ class Receiver(object):
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
     """
-    def __init__(self, endpoints, interface_address, channel_range, cbf_channels, sensors,
+    def __init__(self, endpoints, interface_address, ibv, channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, loop=None):
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
             raise ValueError('cbf_channels not divisible by the number of endpoints')
-        stream_channels = cbf_channels // len(endpoints)
-        if not channel_range.isaligned(stream_channels):
+        self._endpoint_channels = cbf_channels // len(endpoints)
+        if not channel_range.isaligned(self._endpoint_channels):
             raise ValueError('channel_range is not aligned to the stream boundaries')
-        use_endpoints = endpoints[channel_range.start // stream_channels :
-                                  channel_range.stop // stream_channels]
+        if self._endpoint_channels % cbf_attr['n_chans_per_substream'] != 0:
+            raise ValueError('Number of channels in substream does not divide into per-endpoint channels')
+        use_endpoints = endpoints[channel_range.start // self._endpoint_channels :
+                                  channel_range.stop // self._endpoint_channels]
 
         if loop is None:
             loop = trollius.get_event_loop()
@@ -99,7 +102,8 @@ class Receiver(object):
         self.channel_range = channel_range
         self.cbf_channels = cbf_channels
         self._interface_address = interface_address
-        self._streams = [None] * len(use_endpoints)
+        self._ibv = ibv
+        self._streams = []
         self._frames = None
         self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
         self._futures = []
@@ -114,15 +118,17 @@ class Receiver(object):
         self._input_heaps_sensor.set_value(0)
         self._input_dumps_sensor = sensors['input-dumps-total']
         self._input_dumps_sensor.set_value(0)
-        # If we have a large number of streams, we avoid creating more
-        # threads than CPU cores.
-        thread_pool = spead2.ThreadPool(min(multiprocessing.cpu_count(), len(use_endpoints)))
-        for i, endpoint in enumerate(use_endpoints):
-            self._futures.append(trollius.async(self._read_stream(thread_pool, endpoint, i), loop=loop))
-        self._running = len(use_endpoints)
-        _logger.info("CBF SPEAD stream reception on %s via %s",
-            [str(x) for x in use_endpoints],
-            interface_address if interface_address is not None else 'default interface')
+        # 2 threads (with a stream per thread) should be enough to keep up, and
+        # more risks excessive context switching. endpoints are distributed
+        # amongst the streams.
+        n_streams = min(2, len(use_endpoints))
+        for i in range(n_streams):
+            first = len(use_endpoints) * i // n_streams
+            last = len(use_endpoints) * (i + 1) // n_streams
+            self._streams.append(self._make_stream(use_endpoints[first:last]))
+            self._futures.append(trollius.async(
+                self._read_stream(self._streams[-1], i), loop=loop))
+        self._running = n_streams
 
     def stop(self):
         """Stop all the individual streams."""
@@ -173,55 +179,68 @@ class Receiver(object):
             self._pop_frame()
             yield From(self._put_frame(frame))
 
-    def _add_reader(self, stream, endpoint):
-        if self._interface_address is None:
-            stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+    def _add_readers(self, stream, endpoints):
+        """Subscribe a stream to a list of endpoints."""
+        ifaddr = self._interface_address
+        if self._ibv:
+            if ifaddr is None:
+                raise ValueError('Cannot use ibverbs without an interface address')
+            endpoint_tuples = [(endpoint.host, endpoint.port) for endpoint in endpoints]
+            stream.add_udp_ibv_reader(endpoint_tuples, ifaddr)
         else:
-            stream.add_udp_reader(endpoint.host, endpoint.port,
-                                  interface_address=self._interface_address)
+            for endpoint in endpoints:
+                if ifaddr is None:
+                    stream.add_udp_reader(endpoint.port, bind_hostname=endpoint.host)
+                else:
+                    stream.add_udp_reader(endpoint.host, endpoint.port,
+                                          interface_address=ifaddr)
+        _logger.info("CBF SPEAD stream reception on %s via %s%s",
+            [str(x) for x in endpoints],
+            ifaddr if ifaddr is not None else 'default interface',
+            ' with ibv' if self._ibv else '')
+
+    def _make_stream(self, endpoints):
+        """Prepare a stream, which may combine multiple endpoints."""
+        # Figure out how many heaps will have the same timestamp, and set
+        # up the stream.
+        heap_channels = self.cbf_attr['n_chans_per_substream']
+        stream_channels = len(endpoints) * self._endpoint_channels
+        baselines = len(self.cbf_attr['bls_ordering'])
+        heap_data_size = np.dtype(np.complex64).itemsize * heap_channels * baselines
+        stream_xengs = stream_channels // heap_channels
+        ring_heaps = stream_xengs
+        # CBF currently sends 2 metadata heaps in a row, hence the + 2
+        # We assume that each xengine will not overlap packets between
+        # heaps, and that there is enough of a gap between heaps that
+        # reordering in the network is a non-issue.
+        max_heaps = stream_xengs + 2 * len(endpoints)
+        # We need space in the memory pool for:
+        # - live heaps (max_heaps, plus a newly incoming heap)
+        # - ringbuffer heaps
+        # - per X-engine:
+        #   - heap that has just been popped from the ringbuffer (1)
+        #   - active frames
+        #   - complete frames queue (1)
+        #   - frame being processed by ingest_session (which could be several, depending on
+        #     latency of the pipeline, but assume 3 to be on the safe side)
+        memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
+        stream = spead2.recv.trollius.Stream(
+            spead2.ThreadPool(),
+            max_heaps=max_heaps,
+            ring_heaps=ring_heaps, loop=self._loop)
+        memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
+                                        memory_pool_heaps, memory_pool_heaps)
+        stream.set_memory_allocator(memory_pool)
+        self._add_readers(stream, endpoints)
+        return stream
 
     @trollius.coroutine
-    def _read_stream(self, thread_pool, endpoint, stream_idx):
+    def _read_stream(self, stream, stream_idx):
         """Co-routine that sucks data from a single stream and populates
         :attr:`_frames_complete`."""
         try:
-            # Figure out how many heaps will have the same timestamp, and set
-            # up the stream.
-            ring_heaps = 4
             heap_channels = self.cbf_attr['n_chans_per_substream']
-            baselines = len(self.cbf_attr['bls_ordering'])
-            heap_data_size = np.dtype(np.complex64).itemsize * heap_channels * baselines
-            stream_channels = len(self.channel_range) // len(self._streams)
-            if stream_channels % heap_channels != 0:
-                raise ValueError('Number of channels in substream does not divide into per-stream channels')
             xengs = len(self.channel_range) // heap_channels
-            stream_xengs = stream_channels // heap_channels
-            # CBF currently send 2 metadata heaps in a row, hence the + 2
-            # We assume that each xengine will not overlap packets between
-            # heaps, and that there is enough of a gap between heaps that
-            # reordering in the network is a non-issue.
-            max_heaps = stream_xengs + 2
-            # We need space in the memory pool for:
-            # - live heaps (max_heaps, plus a newly incoming heap)
-            # - ringbuffer heaps
-            # - per X-engine:
-            #   - heap that has just been popped from the ringbuffer (1)
-            #   - active frames
-            #   - complete frames queue (1)
-            #   - frame being processed by ingest_session (which could be several, depending on
-            #     latency of the pipeline, but assume 3 to be on the safe side)
-            memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
-            stream = spead2.recv.trollius.Stream(
-                thread_pool,
-                max_heaps=max_heaps,
-                ring_heaps=ring_heaps, loop=self._loop)
-            memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
-                                            memory_pool_heaps, memory_pool_heaps)
-            stream.set_memory_allocator(memory_pool)
-            self._streams[stream_idx] = stream
-            self._add_reader(stream, endpoint)
-
-            # Ready to receive data
             prev_ts = None
             ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
             ts_wrap_period = 2**48
@@ -238,15 +257,10 @@ class Receiver(object):
                 if 'timestamp' not in updated:
                     _logger.warning("CBF heap without timestamp received on stream %d", stream_idx)
                     continue
-                channel0 = 0
-                if 'frequency' in updated:
-                    channel0 = updated['frequency'].value
-                else:
-                    # Old format, with only one engine per stream
-                    if stream_xengs != 1:
-                        _logger.warning('CBF heap without frequency received on stream %d', stream_idx)
-                        continue
-                    channel0 = stream_channels * stream_idx
+                if 'frequency' not in updated:
+                    _logger.warning("CBF heap without frequency received on stream %d", stream_idx)
+                    continue
+                channel0 = updated['frequency'].value
                 heap_channel_range = Range(channel0, channel0 + heap_channels)
                 if not (heap_channel_range.isaligned(heap_channels) and
                         heap_channel_range.issubset(self.channel_range)):
@@ -327,8 +341,7 @@ class Receiver(object):
             frame = yield From(self._frames_complete.get())
             if isinstance(frame, int):
                 # It's actually the index of a finished stream
-                if self._streams[frame] is not None:
-                    self._streams[frame].stop()   # In case the co-routine exited with an exception
+                self._streams[frame].stop()   # In case the co-routine exited with an exception
                 yield From(self._futures[frame])
                 self._futures[frame] = None
                 self._running -= 1

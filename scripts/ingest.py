@@ -77,6 +77,7 @@ def parse_opts():
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--cbf-interface', help='interface to subscribe to for CBF SPEAD data. [default=auto]', metavar='INTERFACE')
+    parser.add_argument('--cbf-ibv', action='store_true', help='use ibverbs acceleration for CBF SPEAD data [default=no].')
     parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--l0-spectral-interface', help='interface on which to send spectral L0 output. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINTS')
@@ -98,6 +99,8 @@ def parse_opts():
     opts = parser.parse_args()
     if opts.telstate is None:
         parser.error('argument --telstate is required')
+    if opts.cbf_ibv and opts.cbf_interface is None:
+        parser.error('--cbf-ibv requires --cbf-interface')
     if opts.output_channels is None:
         opts.output_channels = Range(0, opts.cbf_channels)
     if opts.sd_output_channels is None:
