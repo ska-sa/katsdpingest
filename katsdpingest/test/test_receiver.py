@@ -96,6 +96,9 @@ class QueueRecvStream(object):
     def set_memory_pool(self, memory_pool):
         pass
 
+    def set_memcpy(self, id):
+        pass
+
 
 class TestReceiver(object):
     def setup(self):
