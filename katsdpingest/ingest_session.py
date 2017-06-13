@@ -14,6 +14,7 @@ from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
 import katsdptelstate
+import katsdpservices
 import logging
 import trollius
 from trollius import From
@@ -419,11 +420,11 @@ class CBFIngest(object):
 
         # TODO: remove my_sensors and rather use the model to drive local sensor updates
         self.spectral_spead_endpoints = opts.l0_spectral_spead
-        self.spectral_spead_ifaddr = utils.get_interface_address(opts.l0_spectral_interface)
+        self.spectral_spead_ifaddr = katsdpservices.get_interface_address(opts.l0_spectral_interface)
         self.continuum_spead_endpoints = opts.l0_continuum_spead
-        self.continuum_spead_ifaddr = utils.get_interface_address(opts.l0_continuum_interface)
+        self.continuum_spead_ifaddr = katsdpservices.get_interface_address(opts.l0_continuum_interface)
         self.rx_spead_endpoints = opts.cbf_spead
-        self.rx_spead_ifaddr = utils.get_interface_address(opts.cbf_interface)
+        self.rx_spead_ifaddr = katsdpservices.get_interface_address(opts.cbf_interface)
         self.rx_spead_ibv = opts.cbf_ibv
         self.sd_spead_rate = opts.sd_spead_rate
         self.output_int_time = opts.output_int_time
