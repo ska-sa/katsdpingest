@@ -285,6 +285,45 @@ class ChannelRanges(object):
         assert self.subscribed.issubset(self.cbf)
 
 
+class _ResourceSet(object):
+    """Collection of device buffers with host staging areas.
+
+    A resource set groups together
+    - a :class:`katsdpsigproc.resource.Resource` containing a dict mapping
+      names to :class:`katsdpsigproc.accel.DeviceArray`s.
+    - N :class:`katsdpsigproc.resource.Resource`s containing dicts mapping
+      names to :class:`katsdpsigproc.accel.HostArray`s.
+    This provides N-buffered staging of data into or out of the device buffers.
+
+    Parameters
+    ----------
+    proc : :class:`katsdpsigproc.accel.Operation`
+        Processing operation from which the buffers will be found by name.
+    names : list of str
+        Names of buffers to find in `proc`
+    N : int
+        Number of host arrays to create for each buffer
+    """
+    def __init__(self, proc, names, N):
+        if N <= 0:
+            raise ValueError('_ResourceSet needs at least one buffer')
+        buffers = {name: proc.buffer(name) for name in names}
+        self._device = resource.Resource(buffers)
+        self._host = []
+        for i in range(N):
+            host = {name: buffer.empty_like() for name, buffer in buffers.items()}
+            self._host.append(resource.Resource(host))
+        self._next = 0     # Next host buffer to return from acquire
+
+    def acquire(self):
+        """Acquire device resource and next available host resource."""
+        ret = (self._device.acquire(), self._host[self._next].acquire())
+        self._next += 1
+        if self._next == len(self._host):
+            self._next = 0
+        return ret
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -293,17 +332,20 @@ class CBFIngest(object):
 
     Attributes
     ----------
-    vis_in_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the `vis_in` device buffer
-    external_flags_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the `channel_flags` and `baseline_flags` device buffers
-    timeseries_weights_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the `timeseries_weights` device buffer
-    output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the L0 output device buffers, namely `spec_vis`,
-        `spec_flags`, `cont_vis` and `cont_flags`
-    sd_output_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the signal display output device buffers.
+    input_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the device buffers that contain inputs
+    host_input_resource : :class:`katsdpsigproc.resource.Resource`
+        Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s
+        used to stage the inputs
+    output_resource : :class:`_ResourceSet`
+        Wrapper of the L0 output device buffers, namely `spec_vis`,
+        `spec_flags`, `spec_weights` and `spec_weights_channel`, and the
+        same for `cont_`.
+    sd_input_resource : :class:`_ResourceSet`
+        Wrapper of the buffers that serve as inputs to signal display
+        processing (currently `timeseries_weights`).
+    sd_output_resource : :class:`_ResourceSet`
+        Wrapper of the signal display output device buffers.
     proc_resource : :class:`katsdpsigproc.resource.Resource`
         The proc object, and the contents of all its buffers except for those
         covered by other resources above.
@@ -415,10 +457,9 @@ class CBFIngest(object):
         # Instantiation of the template delayed until data shape is known (TODO: can do it here)
         self.proc = None
         self.proc_resource = None
-        self.vis_in_resource = None
-        self.external_flags_resource = None
-        self.timeseries_weights_resource = None
+        self.input_resource = None
         self.output_resource = None
+        self.sd_input_resource = None
         self.sd_output_resource = None
         self.jobs = resource.JobQueue()
         # Done with blocks
@@ -721,12 +762,22 @@ class CBFIngest(object):
         self.proc.start_sd_sum()
         # Set up resources
         self.proc_resource = resource.Resource(self.proc)
-        self.vis_in_resource = resource.Resource(self.proc.buffer('vis_in'))
-        self.external_flags_resource = resource.Resource(
-            (self.proc.buffer('channel_flags'), self.proc.buffer('baseline_flags')))
-        self.timeseries_weights_resource = resource.Resource(self.proc.buffer('timeseries_weights'))
-        self.output_resource = resource.Resource(None)
-        self.sd_output_resource = resource.Resource(None)
+
+        self.input_resource = _ResourceSet(
+            self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
+        self.output_resource = _ResourceSet(
+            self.proc, [prefix + suffix
+                        for prefix in ['spec_', 'cont_']
+                        for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
+        self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
+        sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
+                           'timeseries', 'timeseriesabs']
+        for i in range(len(self.proc.percentiles)):
+            base_name = 'percentile{}'.format(i)
+            sd_output_names.append(base_name)
+            sd_output_names.append(base_name + '_flags')
+        self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
+
         # Record information about the processing in telstate
         if self.telstate_name is not None:
             descriptions = list(self.proc.descriptions())
@@ -777,12 +828,12 @@ class CBFIngest(object):
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
-        output_a = self.output_resource.acquire()
-        self.jobs.add(self._flush_output_job(proc_a, output_a, timestamps))
+        output_a, host_output_a = self.output_resource.acquire()
+        self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, timestamps))
 
     @trollius.coroutine
-    def _flush_output_job(self, proc_a, output_a, timestamps):
-        with proc_a as proc, output_a:
+    def _flush_output_job(self, proc_a, output_a, host_output_a, timestamps):
+        with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
             events = yield From(proc_a.wait())
             events += yield From(output_a.wait())
@@ -790,27 +841,34 @@ class CBFIngest(object):
 
             # Compute
             proc.end_sum()
-            proc_done = self.command_queue.enqueue_marker()
-            proc_a.ready([proc_done])
-
-            # Transfer (TODO: use pre-allocated pinned memory, with corresponding resource)
-            spec = sender.Data()
-            cont = sender.Data()
-            for field in ['vis', 'flags', 'weights', 'weights_channel']:
-                setattr(spec, field, proc.buffer('spec_' + field).get_async(self.command_queue))
-                setattr(cont, field, proc.buffer('cont_' + field).get_async(self.command_queue))
-            transfer_done = self.command_queue.enqueue_marker()
-            # Prepare for the next group (which only touches the output
-            # buffers).
-            proc.start_sum()
-            output_done = self.command_queue.enqueue_marker()
+            end_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
-            output_a.ready([output_done])
+
+            # Wait for the host output buffers to be available
+            events = yield From(host_output_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+
+            # Transfer
+            data = {'spec': sender.Data(), 'cont': sender.Data()}
+            for prefix in ['spec', 'cont']:
+                for field in ['vis', 'flags', 'weights', 'weights_channel']:
+                    name = prefix + '_' + field
+                    setattr(data[prefix], field, host_output[name])
+                    output[name].get_async(self.command_queue, host_output[name])
+            transfer_done = self.command_queue.enqueue_marker()
+            # Prepare for the next group.
+            proc.start_sum()
+            proc_done = self.command_queue.enqueue_marker()
+            self.command_queue.flush()
+            proc_a.ready([proc_done])
+            output_a.ready([proc_done])
 
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             # Shift to the centre of the dump
             ts_rel += 0.5 * self.cbf_attr['int_time']
             yield From(resource.async_wait_for_events([transfer_done]))
+            spec = data['spec']
+            cont = data['cont']
             yield From(trollius.gather(
                 self.tx_spectral.send(spec, ts_rel),
                 self.tx_continuum.send(cont, ts_rel)))
@@ -820,6 +878,7 @@ class CBFIngest(object):
             self.output_heaps_sensor.set_value(self.output_heaps)
             self.output_dumps += 2
             self.output_dumps_sensor.set_value(self.output_dumps)
+            host_output_a.ready()
             logger.info("Finished dump group with raw timestamps {0}".format(
                         timestamps))
 
@@ -854,66 +913,84 @@ class CBFIngest(object):
         mask[used.asslice()] = full_mask[self.channel_ranges.sd_output.asslice()]
 
         proc_a = self.proc_resource.acquire()
-        sd_output_a = self.sd_output_resource.acquire()
-        timeseries_weights_a = self.timeseries_weights_resource.acquire()
+        sd_input_a, host_sd_input_a = self.sd_input_resource.acquire()
+        sd_output_a, host_sd_output_a = self.sd_output_resource.acquire()
         self.jobs.add(self._flush_sd_job(
-                proc_a, sd_output_a, timeseries_weights_a,
+                proc_a, sd_input_a, host_sd_input_a,
+                sd_output_a, host_sd_output_a,
                 timestamps, custom_signals_indices, mask))
 
     @trollius.coroutine
-    def _flush_sd_job(self, proc_a, sd_output_a, timeseries_weights_a,
+    def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
+                      sd_output_a, host_sd_output_a,
                       timestamps, custom_signals_indices, mask):
-        with proc_a as proc, sd_output_a, timeseries_weights_a as timeseries_weights:
+        with proc_a as proc, \
+                sd_input_a as sd_input_buffers, \
+                host_sd_input_a as host_sd_input, \
+                sd_output_a as sd_output_buffers, \
+                host_sd_output_a as host_sd_output:
             spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
             cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
                                         spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
-            # Load timeseries weights
-            events = yield From(timeseries_weights_a.wait())
+            # Copy inputs to HostArrays
+            yield From(host_sd_input_a.wait_events())
+            host_sd_input['timeseries_weights'][:] = mask
+
+            # Transfer to device
+            events = yield From(sd_input_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
-            try:
-                timeseries_weights.set_async(self.command_queue, mask)
-            except Exception:
-                logger.warn('Failed to set timeseries_weights', exc_info=True)
+            for name in host_sd_input:
+                sd_input_buffers[name].set_async(self.command_queue, host_sd_input[name])
+            transfer_in_done = self.command_queue.enqueue_marker()
+            host_sd_input_a.ready([transfer_in_done])
+            self.command_queue.flush()
 
             # Compute
             events = yield From(proc_a.wait())
             events += yield From(sd_output_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             proc.end_sd_sum()
+            sd_input_a.ready([self.command_queue.enqueue_marker()])
+            self.command_queue.flush()
+
+            # Transfer back to host
+            events = yield From(host_sd_output_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            for name in host_sd_output:
+                sd_output_buffers[name].get_async(self.command_queue, host_sd_output[name])
+            transfer_out_done = self.command_queue.enqueue_marker()
+
+            # Prepare for the next group
+            proc.start_sd_sum()
             proc_done = self.command_queue.enqueue_marker()
             proc_a.ready([proc_done])
-            timeseries_weights_a.ready([proc_done])
+            sd_output_a.ready([proc_done])
+            self.command_queue.flush()
 
-            # Transfer
+            # Mangle and transmit the retrieved values
+            yield From(resource.async_wait_for_events([transfer_out_done]))
             ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
             ts = self.cbf_attr['sync_time'] + ts_rel
-            cont_vis = proc.buffer('sd_cont_vis').get_async(self.command_queue)
-            cont_flags = proc.buffer('sd_cont_flags').get_async(self.command_queue)
-            spec_vis = proc.buffer('sd_spec_vis').get_async(self.command_queue)
-            spec_flags = proc.buffer('sd_spec_flags').get_async(self.command_queue)
-            timeseries = proc.buffer('timeseries').get_async(self.command_queue)
-            timeseriesabs = proc.buffer('timeseriesabs').get_async(self.command_queue)
+            cont_vis = host_sd_output['sd_cont_vis']
+            cont_flags = host_sd_output['sd_cont_flags']
+            spec_vis = host_sd_output['sd_spec_vis']
+            spec_flags = host_sd_output['sd_spec_flags']
+            timeseries = host_sd_output['timeseries']
+            timeseriesabs = host_sd_output['timeseriesabs']
             percentiles = []
             percentiles_flags = []
             for i in range(len(proc.percentiles)):
                 name = 'percentile{0}'.format(i)
-                p = proc.buffer(name).get_async(self.command_queue)
-                pflags = proc.buffer(name + '_flags').get_async(self.command_queue)
+                p = host_sd_output[name]
+                pflags = host_sd_output[name + '_flags']
                 p = p[..., spec_channels]
                 pflags = pflags[..., spec_channels]
                 percentiles.append(p)
                 # Signal display server wants flags duplicated to broadcast with
                 # the percentiles
                 percentiles_flags.append(np.tile(pflags, (p.shape[0], 1)))
-            transfer_done = self.command_queue.enqueue_marker()
-            # Prepare for the next group
-            proc.start_sd_sum()
-            output_done = self.command_queue.enqueue_marker()
-            self.command_queue.flush()
-            sd_output_a.ready([output_done])
 
             # populate new datastructure to supersede sd_data etc
-            yield From(resource.async_wait_for_events([transfer_done]))
             self.ig_sd['sd_timestamp'].value = int(ts * 100)
             if np.all(custom_signals_indices < spec_vis.shape[1]):
                 self.ig_sd['sd_data'].value = \
@@ -942,6 +1019,7 @@ class CBFIngest(object):
                 self.ig_sd['center_freq'].value = sd_center_freq
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
+            host_sd_output_a.ready()
             logger.info("Finished SD group with raw timestamps {0}".format(
                         timestamps))
 
@@ -973,14 +1051,18 @@ class CBFIngest(object):
             baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
 
     @trollius.coroutine
-    def _frame_job(self, proc_a, vis_in_a, external_flags_a, frame):
+    def _frame_job(self, proc_a, input_a, host_input_a, frame):
         with proc_a as proc, \
-             vis_in_a as vis_in_buffer, \
-             external_flags_a as external_flags_buffers:
-            channel_flags_buffer, baseline_flags_buffer = external_flags_buffers
+             input_a as input_buffers, \
+             host_input_a as host_input:
+            vis_in_buffer = input_buffers['vis_in']
+            channel_flags_buffer = input_buffers['channel_flags']
+            baseline_flags_buffer = input_buffers['baseline_flags']
+            vis_in = host_input['vis_in']
+            channel_flags = host_input['channel_flags']
+            baseline_flags = host_input['baseline_flags']
             # Load data
-            events = (yield From(vis_in_a.wait())) + (yield From(external_flags_a.wait()))
-            self.command_queue.enqueue_wait_for_events(events)
+            yield From(host_input_a.wait_events())
             # First channel of the current item
             item_channel = self.channel_ranges.subscribed.start
             # We only receive frames with at least one populated item, so we
@@ -991,15 +1073,7 @@ class CBFIngest(object):
                     channels_per_item = item.shape[0]
                     break
             assert channels_per_item is not None
-            if not frame.ready():
-                # We want missing data to be zero-filled. katsdpsigproc doesn't
-                # currently have a zero_region, and device bandwidth is so much
-                # higher than PCIe transfer bandwidth that it doesn't really
-                # cost much more to zero-fill the entire buffer.
-                vis_in_buffer.zero(self.command_queue)
-            channel_flags = channel_flags_buffer.empty_like()
             channel_flags.fill(0)
-            baseline_flags = baseline_flags_buffer.empty_like()
             self._set_baseline_flags(baseline_flags, frame.timestamp)
             data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
@@ -1009,30 +1083,31 @@ class CBFIngest(object):
                 if item is None:
                     channel_flags[channel_flags_range.asslice()] = data_lost_flag
                 use_range = item_range.intersection(self.channel_ranges.input)
-                if not use_range or item is None:
+                if not use_range:
                     continue
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
-                vis_in_buffer.set_region(
-                    self.command_queue, item,
-                    dest_range.asslice(), src_range.asslice(), blocking=False)
+                if item is None:
+                    vis_in[dest_range.asslice()] = 0
+                else:
+                    vis_in[dest_range.asslice()] = item[src_range.asslice()]
 
-            channel_flags_buffer.set_async(self.command_queue, channel_flags)
-            baseline_flags_buffer.set_async(self.command_queue, baseline_flags)
+            # Transfer data to the device
+            events = yield From(input_a.wait())
+            self.command_queue.enqueue_wait_for_events(events)
+            for name in input_buffers:
+                input_buffers[name].set_async(self.command_queue, host_input[name])
             transfer_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
+            host_input_a.ready([transfer_done])
 
             # Perform data processing
             events = yield From(proc_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             proc()
             done_event = self.command_queue.enqueue_marker()
-            vis_in_a.ready([done_event])
-            external_flags_a.ready([done_event])
+            input_a.ready([done_event])
             proc_a.ready([done_event])
-
-            # Keep vis_in live until the transfer is complete
-            yield From(resource.async_wait_for_events([transfer_done]))
 
     def _set_telstate_entry(self, name, value, attribute=True):
         utils.set_telstate_entry(self.telstate, name, value, None, attribute)
@@ -1130,12 +1205,11 @@ class CBFIngest(object):
             self._sd_avg.add_timestamp(frame.timestamp)
 
             proc_a = self.proc_resource.acquire()
-            vis_in_a = self.vis_in_resource.acquire()
-            external_flags_a = self.external_flags_resource.acquire()
+            input_a, host_input_a = self.input_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
-            # enqueuing its work before trying to carry on.
-            yield From(proc_a.wait())
-            self.jobs.add(self._frame_job(proc_a, vis_in_a, external_flags_a, frame))
+            # start to transfer its data before trying to carry on.
+            yield From(host_input_a.wait())
+            self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame))
 
             # Done with reading this frame
             idx += 1
@@ -1167,13 +1241,9 @@ class CBFIngest(object):
 
         logger.info('Joined with receiver. Flushing final groups...')
         if self.proc_resource is not None:    # Could be None if no heaps arrived
-            acq = self.proc_resource.acquire()
-            with acq:
-                yield From(acq.wait_events())
-                if self._output_avg is not None:
-                    self._output_avg.finish()
-                self._sd_avg.finish()
-                acq.ready()
+            if self._output_avg is not None:
+                self._output_avg.finish()
+            self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
         yield From(self.jobs.finish())
         logger.info('Jobs complete')
