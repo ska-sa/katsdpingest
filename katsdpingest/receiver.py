@@ -186,7 +186,8 @@ class Receiver(object):
             if ifaddr is None:
                 raise ValueError('Cannot use ibverbs without an interface address')
             endpoint_tuples = [(endpoint.host, endpoint.port) for endpoint in endpoints]
-            stream.add_udp_ibv_reader(endpoint_tuples, ifaddr)
+            stream.add_udp_ibv_reader(endpoint_tuples, ifaddr,
+                                      buffer_size=64 * 1024**2)
         else:
             for endpoint in endpoints:
                 if ifaddr is None:
@@ -231,6 +232,7 @@ class Receiver(object):
         memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                         memory_pool_heaps, memory_pool_heaps)
         stream.set_memory_allocator(memory_pool)
+        stream.set_memcpy(spead2.MEMCPY_NONTEMPORAL)
         self._add_readers(stream, endpoints)
         return stream
 
