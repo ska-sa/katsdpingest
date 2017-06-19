@@ -2,6 +2,7 @@
 
 import logging
 import katsdptelstate
+import netifaces
 
 
 _logger = logging.getLogger(__name__)
@@ -122,4 +123,4 @@ class Range(object):
 
 
 
-__all__ = ['set_telstate_entry', 'Range']
+__all__ = ['set_telstate_entry', 'get_interface_address', 'Range']

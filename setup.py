@@ -95,7 +95,7 @@ setup(
         'manhole',
         'netifaces',
         'numpy',
-        'spead2>=1.2.2',   # Need fix for https://github.com/ska-sa/spead2/issues/53
+        'spead2>=1.3.1',   # Need fix for add_udp_ibv_reader with multiple endpoints
         'ipaddress',
         'katcp',
         'katsdpsigproc',

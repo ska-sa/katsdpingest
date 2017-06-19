@@ -12,7 +12,7 @@ fi
 IMAGE="$DOCKER_REGISTRY/katsdpingest_$GPU:$LABEL"
 BASE_IMAGE="$DOCKER_REGISTRY/katsdpingest:$LABEL"
 COPY_FROM="$DOCKER_REGISTRY/katsdpingest_$GPU:latest"
-pip install docker==2.0.2
+install-requirements.py -d ../katsdpdockerbase/docker-base/base-requirements.txt -r requirements-autotune.txt
 docker pull "$BASE_IMAGE"
 docker pull "$COPY_FROM"
 scripts/autotune_mkimage.py -H $DOCKER_HOST --tls --copy --copy-from "$COPY_FROM" "$IMAGE" "$BASE_IMAGE"
