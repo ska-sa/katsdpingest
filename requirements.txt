@@ -21,6 +21,7 @@ netifaces
 nose
 numpy
 omnijson==0.1.2
+pandas
 pbr
 pkgconfig==1.2.2
 pkginfo
@@ -31,7 +32,9 @@ py
 pybind11==2.1.1
 pycuda
 pytest
+python-dateutil
 pytools
+pytz
 redis
 scipy
 singledispatch

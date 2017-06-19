@@ -552,7 +552,7 @@ class Accum(accel.Operation):
         Input weights
     **flags_in** : baselines × channels, uint8
         Input flags: non-zero values cause downweighting by 2^-64
-    **channel_flags** : kept-channels, uint8
+    **channel_flags** : full-channels, uint8
         Predetermined flags per channel
     **baseline_flags** : baselines, uint8
         Predetermined flags per baseline
@@ -601,8 +601,13 @@ class Accum(accel.Operation):
                 (padded_baselines, padded_kept_channels), np.float32)
         self.slots['flags_in'] = accel.IOSlot(
                 (padded_baselines, padded_channels), np.uint8)
+        # The minimum padded size for channel_flags is tricky because it is
+        # the kept-channels part that needs to be aligned to be a multiple of
+        # tilex.
+        channel_flags_size = max(channels, accel.roundup(kept_channels, tilex) +
+                                           channel_range.start)
         self.slots['channel_flags'] = accel.IOSlot(
-                (accel.Dimension(kept_channels, tilex),), np.uint8)
+                (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot(
                 (accel.Dimension(baselines, tiley),), np.uint8)
         for i in range(self.template.outputs):
@@ -1242,7 +1247,7 @@ class IngestOperation(accel.OperationSequence):
         assert 'flags_t' in self.flagger.slots
         compounds = {
                 'vis_in':       ['prepare:vis_in'],
-                'channel_flags': ['accum:channel_flags'],
+                'channel_flags': ['flagger:channel_flags', 'accum:channel_flags'],
                 'baseline_flags': ['accum:baseline_flags'],
                 'permutation':  ['prepare:permutation'],
                 'vis_t':        ['prepare:vis_out', 'auto_weights:vis',

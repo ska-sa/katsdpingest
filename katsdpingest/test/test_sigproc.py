@@ -164,7 +164,7 @@ class TestAccum(object):
             'vis_in':        np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
             'weights_in':    np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
             'flags_in':      np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
-            'channel_flags': np.array([2, 0, 0], dtype=np.uint8),
+            'channel_flags': np.array([0, 2, 0, 0, 2], dtype=np.uint8),
             'baseline_flags':np.array([0], dtype=np.uint8),
             'vis_out0':      np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
             'weights_out0':  np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
@@ -203,7 +203,7 @@ class TestAccum(object):
                   rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
         flags_in = random_flags(rs, (baselines, channels), 7, p=0.2)
-        channel_flags = random_flags(rs, (kept_channels,), 7, p=0.02)
+        channel_flags = random_flags(rs, (channels,), 7, p=0.02)
         baseline_flags = random_flags(rs, (baselines,), 7, p=0.01)
         vis_out = []
         weights_out = []
@@ -237,7 +237,7 @@ class TestAccum(object):
         # Perform the operation on the host
         kept_vis = vis_in[:, channel_range.start : channel_range.stop]
         kept_flags = flags_in[:, channel_range.start : channel_range.stop] \
-                | channel_flags[np.newaxis, :] \
+                | channel_flags[np.newaxis, channel_range.start : channel_range.stop] \
                 | baseline_flags[:, np.newaxis]
         flagged_weights = weights_in * ((kept_flags == 0) + flag_scale)
         # unflagged inputs need the unflagged_bit set
@@ -502,9 +502,9 @@ class TestIngestOperation(object):
         # Compute flags
         flags = np.empty(vis.shape, dtype=np.uint8)
         for i in range(len(vis)):
-            flags[i, ...] = flagger(vis[i, ...])
-            flags[i, channel_range.asslice()] |= channel_flags[i, :, np.newaxis]
-            flags[i, ...] |= baseline_flags[i, np.newaxis, :]
+            flags[i, ...] = flagger(vis[i, ...]) | \
+                channel_flags[i, :, np.newaxis] | \
+                baseline_flags[i, np.newaxis, :]
         # Apply flags to weights
         weights *= (flags == 0).astype(np.float32) + 2**-64
         # Mark unflagged visibilities
@@ -668,7 +668,7 @@ class TestIngestOperation(object):
             vis_in[..., orig_baseline, 1].fill(0)
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
-        channel_flags = random_flags(rs, (dumps, kept_channels), 2, p=0.05)
+        channel_flags = random_flags(rs, (dumps, channels), 2, p=0.05)
         baseline_flags = random_flags(rs, (dumps, baselines), 2, p=0.05)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(

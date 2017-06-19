@@ -398,7 +398,8 @@ class CBFIngest(object):
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
-        background_template = rfi.BackgroundMedianFilterDeviceTemplate(context, width=13)
+        background_template = rfi.BackgroundMedianFilterDeviceTemplate(
+                context, width=13, use_flags=True)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
                 context, transposed=True, flag_value=flag_value)
@@ -1074,13 +1075,29 @@ class CBFIngest(object):
                     channels_per_item = item.shape[0]
                     break
             assert channels_per_item is not None
-            channel_flags.fill(0)
+            if not frame.ready():
+                # We want missing data to be zero-filled. katsdpsigproc doesn't
+                # currently have a zero_region, and device bandwidth is so much
+                # higher than PCIe transfer bandwidth that it doesn't really
+                # cost much more to zero-fill the entire buffer.
+                vis_in_buffer.zero(self.command_queue)
+            channel_flags = channel_flags_buffer.empty_like()
+            try:
+                channel_flags[:] = self.telstate['x_channel_flags']  # Name for testing only
+            except KeyError:
+                channel_flags.fill(0)
+            except ValueError:
+                # Could happen if the telstate key has the wrong shape
+                logger.warn('Error loading channel flags from telstate', exc_info=True)
+                channel_flags.fill(0)
+            baseline_flags = baseline_flags_buffer.empty_like()
             self._set_baseline_flags(baseline_flags, frame.timestamp)
             data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
                 channel_flags_range = item_range.intersection(self.channel_ranges.computed)
+                channel_flags_range = channel_flags_range.relative_to(self.channel_ranges.input)
                 if item is None:
                     channel_flags[channel_flags_range.asslice()] = data_lost_flag
                 use_range = item_range.intersection(self.channel_ranges.input)
