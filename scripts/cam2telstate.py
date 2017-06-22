@@ -18,6 +18,8 @@ import numpy as np
 import katsdptelstate
 import katsdpservices
 import katportalclient
+import katcp
+import katsdpingest
 
 
 STATUS_KEY = 'sdp_cam2telstate_status'
@@ -154,6 +156,7 @@ SENSORS = [
     Sensor('{subarray}_sub_nr', immutable=True),
     Sensor('{subarray}_dump_rate', immutable=True),
     Sensor('{subarray}_pool_resources', immutable=True),
+    Sensor('{subarray}_state'),
     # Misc other sensors
     Sensor('anc_air_pressure'),
     Sensor('anc_air_relative_humidity'),
@@ -168,10 +171,16 @@ def parse_args():
     parser = katsdpservices.ArgumentParser()
     parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
-    parser.add_argument('--namespace', type=str, help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument('--streams', type=str, help='String of comma separated full_stream_name:stream_type pairs.')
+    parser.add_argument('--namespace', type=str,
+                        help='Namespace to create in katportal [sp_subarray_N]')
+    parser.add_argument('--streams', type=str,
+                        help='String of comma separated full_stream_name:stream_type pairs.')
     parser.add_argument('--collapse-streams', action='store_true',
                         help='Collapse instrument and stream prefixes for compatibility with AR1.')
+    parser.add_argument('-a', '--host', type=str, metavar='HOST', default='',
+                        help='Hostname to bind for katcp interface')
+    parser.add_argument('-p', '--port', type=int, metavar='N', default=2047,
+                        help='Port to bind for katcp interface [%(default)s]')
     args = parser.parse_args()
     if args.namespace is None:
         args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
@@ -188,10 +197,29 @@ def parse_args():
     return args
 
 
+class DeviceServer(katcp.AsyncDeviceServer):
+    VERSION_INFO = ("cam2telstate", 1, 0)
+    BUILD_INFO = ("cam2telstate",) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
+
+    def __init__(self, host, port):
+        super(DeviceServer, self).__init__(host, port)
+
+    def setup_sensors(self):
+        self._status_sensor = katcp.Sensor.discrete(
+            'status', 'State of the initialisation state machine', '',
+            ('connecting', 'initialising', 'ready'))
+        self.add_sensor(self._status_sensor)
+
+    def set_status(self, status):
+        self._status_sensor.set_value(status)
+
+
 class Client(object):
     def __init__(self, args, logger):
         self._args = args
         self._telstate = args.telstate
+        self._device_server = DeviceServer(args.host, args.port)
+        self._device_server.start()
         self._logger = logger
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
@@ -200,7 +228,6 @@ class Client(object):
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
-        self._active = tornado.concurrent.Future()  #: Set once subarray_N_state is active
         self._cbf_name = None     #: Set once _pool_resources result is set
         self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
@@ -311,18 +338,9 @@ class Client(object):
         yield self._input_labels
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
-    @tornado.gen.coroutine
-    def wait_active(self):
-        """Subscribe to subarray_N_state and wait for its value to become
-        'active'."""
-        sensor = 'subarray_{}_state'.format(self._args.subarray_numeric_id)
-        yield self.subscribe_one(sensor)
-        # Wait until we get a callback to say that its active
-        yield self._active
-        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
-
     def set_status(self, status):
         self._telstate.add(STATUS_KEY, status)
+        self._device_server.set_status(status)
 
     @tornado.gen.coroutine
     def start(self):
@@ -331,9 +349,6 @@ class Client(object):
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
-            self.set_status('waiting for subarray activation')
-            # Wait to be sure that the subarray is fully activated
-            yield self.wait_active()
             self.set_status('initialising')
             # First find out which resources are allocated to the subarray
             yield self.get_resources()
@@ -364,6 +379,7 @@ class Client(object):
                 self._logger.debug('Set signal handler for %s', signal_number)
         except Exception:
             self._logger.error("Exception during startup", exc_info=True)
+            yield self._device_server.stop(timeout=None)
             self._loop.stop()
         else:
             self._logger.info("Startup complete")
@@ -400,11 +416,7 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == 'subarray_{}_state'.format(self._args.subarray_numeric_id):
-            if not self._active.done() and value == 'active' and status == 'nominal':
-                self._active.set_result(None)
-            return
-        elif name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
+        if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
                 self._receptors = []
@@ -461,6 +473,8 @@ class Client(object):
         yield self._portal_client.unsubscribe(self._args.namespace)
         self._portal_client.disconnect()
         self._logger.info("disconnected")
+        yield self._device_server.stop(timeout=None)
+        self._logger.info("device server shut down")
         self._loop.stop()
 
 
