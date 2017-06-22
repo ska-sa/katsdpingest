@@ -205,21 +205,14 @@ class DeviceServer(katcp.AsyncDeviceServer):
         super(DeviceServer, self).__init__(host, port)
 
     def setup_sensors(self):
-        self._status_sensor = katcp.Sensor.discrete(
-            'status', 'State of the initialisation state machine', '',
-            ('connecting', 'initialising', 'ready'))
-        self.add_sensor(self._status_sensor)
-
-    def set_status(self, status):
-        self._status_sensor.set_value(status)
+        pass
 
 
 class Client(object):
     def __init__(self, args, logger):
         self._args = args
         self._telstate = args.telstate
-        self._device_server = DeviceServer(args.host, args.port)
-        self._device_server.start()
+        self._device_server = None
         self._logger = logger
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
@@ -340,7 +333,6 @@ class Client(object):
 
     def set_status(self, status):
         self._telstate.add(STATUS_KEY, status)
-        self._device_server.set_status(status)
 
     @tornado.gen.coroutine
     def start(self):
@@ -457,8 +449,10 @@ class Client(object):
                 self.sensor_update(sensor, value, status, timestamp)
             finally:
                 if last:
-                    self._logger.info('Initial values for all sensors seen')
+                    self._logger.info('Initial values for all sensors seen, starting katcp server')
                     self.set_status('ready')
+                    self._device_server = DeviceServer(self._args.host, self._args.port)
+                    self._device_server.start()
 
     def update_callback(self, msg):
         self._logger.debug("update_callback: %s", pprint.pformat(msg))
@@ -473,7 +467,9 @@ class Client(object):
         yield self._portal_client.unsubscribe(self._args.namespace)
         self._portal_client.disconnect()
         self._logger.info("disconnected")
-        yield self._device_server.stop(timeout=None)
+        if self._device_server is not None:
+            yield self._device_server.stop(timeout=None)
+            self._device_server = None
         self._logger.info("device server shut down")
         self._loop.stop()
 
