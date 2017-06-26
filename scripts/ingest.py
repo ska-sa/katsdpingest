@@ -370,7 +370,7 @@ def main():
     try:
         cbf_attr = get_cbf_attr(args.telstate, 'cbf')
     except KeyError as error:
-        logger.error('%s', error.message)
+        logger.error('Terminating due to catastrophic failure: %s', error.message)
         sys.exit(1)
     cbf_channels = cbf_attr['n_chans']
     if args.output_channels is None:
