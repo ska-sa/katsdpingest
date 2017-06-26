@@ -8,7 +8,6 @@ import spead2.recv.trollius
 import trollius
 from trollius import From, Return
 import numpy as np
-from . import utils
 from .utils import Range
 
 
@@ -34,8 +33,7 @@ class Frame(object):
 
 class Receiver(object):
     """Class that receives from multiple SPEAD streams and combines heaps into
-    frames. It also collects CBF metadata from the first stream and uses it to
-    populate telescope state.
+    frames.
 
     Parameters
     ----------
@@ -62,7 +60,7 @@ class Receiver(object):
     Attributes
     ----------
     cbf_attr : dict
-        Attributes read from CBF metadata when available. Otherwise populated from telstate.
+        Dictionary mapping CBF attribute names to value
     active_frames : int
         Value of `active_frames` passed to constructor
     _interval : int
@@ -97,7 +95,6 @@ class Receiver(object):
         if loop is None:
             loop = trollius.get_event_loop()
         self.cbf_attr = cbf_attr
-        self.n_chans = cbf_channels
         self.active_frames = active_frames
         self.channel_range = channel_range
         self.cbf_channels = cbf_channels
@@ -195,7 +192,8 @@ class Receiver(object):
                 else:
                     stream.add_udp_reader(endpoint.host, endpoint.port,
                                           interface_address=ifaddr)
-        _logger.info("CBF SPEAD stream reception on %s via %s%s",
+        _logger.info(
+            "CBF SPEAD stream reception on %s via %s%s",
             [str(x) for x in endpoints],
             ifaddr if ifaddr is not None else 'default interface',
             ' with ibv' if self._ibv else '')

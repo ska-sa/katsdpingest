@@ -161,14 +161,14 @@ class TestAccum(object):
         unflagged_bit = 128
         # Host copies of arrays
         host = {
-            'vis_in':        np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
-            'weights_in':    np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
-            'flags_in':      np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
-            'channel_flags': np.array([0, 2, 0, 0, 2], dtype=np.uint8),
-            'baseline_flags':np.array([0], dtype=np.uint8),
-            'vis_out0':      np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
-            'weights_out0':  np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
-            'flags_out0':    np.array([[1 | unflagged_bit, 9, unflagged_bit]], dtype=np.uint8).T
+            'vis_in':         np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
+            'weights_in':     np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
+            'flags_in':       np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
+            'channel_flags':  np.array([0, 2, 0, 0, 2], dtype=np.uint8),
+            'baseline_flags': np.array([0], dtype=np.uint8),
+            'vis_out0':       np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
+            'weights_out0':   np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
+            'flags_out0':     np.array([[1 | unflagged_bit, 9, unflagged_bit]], dtype=np.uint8).T
         }
 
         template = sigproc.AccumTemplate(context, 1, unflagged_bit)
@@ -219,7 +219,6 @@ class TestAccum(object):
             scale = np.where(flags_out[-1] & unflagged_bit, 1, flag_scale)
             vis_out[-1] *= scale
             weights_out[-1] *= scale
-
 
         template = sigproc.AccumTemplate(context, outputs, unflagged_bit)
         fn = template.instantiate(queue, channels, channel_range, baselines)
@@ -436,7 +435,6 @@ class TestIngestOperation(object):
         flags = np.where(flags & self.unflagged_bit, 0, flags)
         return vis, flags, weights, weights_channel
 
-
     def run_host_basic(self, vis, channel_flags, baseline_flags, n_accs, permutation,
                        input_auto_baseline, baseline_inputs,
                        cont_factor, channel_range, n_sigma):
@@ -602,7 +600,7 @@ class TestIngestOperation(object):
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             cont_factor, channel_range, n_sigma)
         sd_expected = self.run_host_basic(
-                vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
+            vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, n_sigma)
         for (name, value) in sd_expected.iteritems():

@@ -5,7 +5,7 @@
 import logging
 import threading
 import time
-import concurrent.futures
+import sys
 import katsdpservices
 
 
@@ -29,7 +29,7 @@ class Logger(logging.getLoggerClass()):
 
 logging.setLoggerClass(Logger)
 
-import time
+
 import manhole
 import signal
 import trollius
@@ -41,15 +41,13 @@ from katcp import DeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
 
 import katsdpingest
-from katsdpingest.ingest_session import CBFIngest, ChannelRanges
+from katsdpingest.ingest_session import CBFIngest, ChannelRanges, BaselineOrdering, get_cbf_attr
 from katsdpingest.utils import Range
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
-import katsdptelstate
 
 
 logger = logging.getLogger("katsdpingest.ingest")
-opts = None
 
 
 def comma_list(type_):
@@ -72,7 +70,7 @@ def range_str(value):
         return Range(int(fields[0]), int(fields[1]))
 
 
-def parse_opts():
+def parse_args():
     parser = katsdpservices.ArgumentParser()
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
@@ -84,9 +82,7 @@ def parse_opts():
     parser.add_argument('--l0-continuum-interface', help='interface on which to send continuum L0 output. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
     parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
-    parser.add_argument('--antennas', default=2, type=int, help='number of antennas (prior to masking). [default=%(default)s]')
     parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
-    parser.add_argument('--cbf-channels', default=32768, type=int, help='number of channels. [default=%(default)s]')
     parser.add_argument('--output-channels', type=range_str, help='output spectral channels, in format A:B [default=all]')
     parser.add_argument('--sd-output-channels', type=range_str, help='signal display channels, in format A:B [default=all]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
@@ -96,16 +92,12 @@ def parse_opts():
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
                         help='log level to use')
-    opts = parser.parse_args()
-    if opts.telstate is None:
+    args = parser.parse_args()
+    if args.telstate is None:
         parser.error('argument --telstate is required')
-    if opts.cbf_ibv and opts.cbf_interface is None:
+    if args.cbf_ibv and args.cbf_interface is None:
         parser.error('--cbf-ibv requires --cbf-interface')
-    if opts.output_channels is None:
-        opts.output_channels = Range(0, opts.cbf_channels)
-    if opts.sd_output_channels is None:
-        opts.sd_output_channels = Range(0, opts.cbf_channels)
-    return opts
+    return args
 
 
 class IngestDeviceServer(DeviceServer):
@@ -114,12 +106,13 @@ class IngestDeviceServer(DeviceServer):
 
     Parameters
     ----------
-    sdisp_endpoints : list of `katsdptelstate.endpoint.Endpoint`
-        Endpoints for signal display data
-    antennas : int
-        Number of antennas in output
+    user_args : :class:`argparse.Namespace`
+        Command-line arguments
     channel_ranges : :class:`katsdpingest.ingest_session.ChannelRanges`
         Ranges of channels for various parts of the pipeline
+    cbf_attr : dict
+        CBF stream configuration, as returned by
+        :func:`katsdpingest.ingest_session.get_cbf_attr`.
     args, kwargs
         Passed to :class:`katcp.DeviceServer`
     """
@@ -127,18 +120,23 @@ class IngestDeviceServer(DeviceServer):
     VERSION_INFO = ("sdp-ingest", 0, 1)
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
-    def __init__(self, sdisp_endpoints, antennas, channel_ranges, *args, **kwargs):
+    def __init__(self, user_args, channel_ranges, cbf_attr, *args, **kwargs):
         self._stopping = False
         # reference to the CBF ingest session
         self.cbf_session = None
         self.sdisp_ips = {}
         self.channel_ranges = channel_ranges
+        self.cbf_attr = cbf_attr
+        self.user_args = user_args
         # add default or user specified endpoints
-        for sdisp_endpoint in sdisp_endpoints:
+        for sdisp_endpoint in user_args.sdisp_spead:
             self.sdisp_ips[sdisp_endpoint.host] = sdisp_endpoint.port
         # compile the device code
+        baselines = BaselineOrdering(cbf_attr['bls_ordering'], user_args.antenna_mask)
+        percentile_sizes = set(r[1] - r[0] for r in baselines.percentile_ranges)
         context = accel.create_some_context(interactive=False)
-        self.proc_template = CBFIngest.create_proc_template(context, antennas, len(channel_ranges.input))
+        self.proc_template = CBFIngest.create_proc_template(
+            context, percentile_sizes, len(channel_ranges.input))
 
         sensors = [
             Sensor(
@@ -244,13 +242,15 @@ class IngestDeviceServer(DeviceServer):
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
         if self.cbf_session is not None:
-            raise tornado.gen.Return(("fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop."))
+            raise tornado.gen.Return((
+                "fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop."))
         if self._stopping:
-            raise tornado.gen.Return(("fail", "Cannot start a capture session while ingest is shutting down"))
+            raise tornado.gen.Return((
+                "fail", "Cannot start a capture session while ingest is shutting down"))
 
         self.cbf_session = CBFIngest(
-                opts, self.channel_ranges, self.proc_template,
-                self._my_sensors, opts.telstate, 'cbf')
+                self.user_args, self.cbf_attr, self.channel_ranges, self.proc_template,
+                self._my_sensors, self.user_args.telstate)
         # add in existing signal display recipients...
         for (ip, port) in self.sdisp_ips.iteritems():
             self.cbf_session.add_sdisp_ip(ip, port)
@@ -361,25 +361,31 @@ def main():
     logging.setLoggerClass(Logger)
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
-    global opts
-    opts = parse_opts()
-    if opts.log_level is not None:
-        logging.root.setLevel(opts.log_level.upper())
+    args = parse_args()
+    if args.log_level is not None:
+        logging.root.setLevel(args.log_level.upper())
 
     ioloop = AsyncIOMainLoop()
     ioloop.install()
-    antennas = len(opts.antenna_mask) if opts.antenna_mask else opts.antennas
+    try:
+        cbf_attr = get_cbf_attr(args.telstate, 'cbf')
+    except KeyError as error:
+        logger.error('Terminating due to catastrophic failure: %s', error.message)
+        sys.exit(1)
+    cbf_channels = cbf_attr['n_chans']
+    if args.output_channels is None:
+        args.output_channels = Range(0, cbf_channels)
+    if args.sd_output_channels is None:
+        args.sd_output_channels = Range(0, cbf_channels)
     # TODO: determine an appropriate value for guard
     channel_ranges = ChannelRanges(
-        opts.cbf_channels, opts.continuum_factor, opts.sd_continuum_factor,
-        len(opts.cbf_spead), 64, opts.output_channels, opts.sd_output_channels)
-    server = IngestDeviceServer(opts.sdisp_spead, antennas,
-                                channel_ranges,
-                                opts.host, opts.port)
+        cbf_channels, args.continuum_factor, args.sd_continuum_factor,
+        len(args.cbf_spead), 64, args.output_channels, args.sd_output_channels)
+    server = IngestDeviceServer(args, channel_ranges, cbf_attr, args.host, args.port)
     server.set_concurrency_options(thread_safe=False, handler_thread=False)
     server.set_ioloop(ioloop)
-    # allow remote debug connections and expose server and opts
-    manhole.install(oneshot_on='USR1', locals={'server': server, 'opts': opts})
+    # allow remote debug connections and expose server and args
+    manhole.install(oneshot_on='USR1', locals={'server': server, 'args': args})
 
     trollius.get_event_loop().add_signal_handler(
         signal.SIGINT, lambda: trollius.async(on_shutdown(server)))

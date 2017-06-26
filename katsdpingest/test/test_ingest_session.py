@@ -81,7 +81,7 @@ class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_session.CBFIngest.create_proc_template(context, 8, 4096)
+        template = ingest_session.CBFIngest.create_proc_template(context, [4, 12], 4096)
         template.instantiate(
             queue, 1024, Range(96, 1024 - 96), 16, 544, 512,
             8, 16, [(0, 4), (500, 512)],
@@ -92,12 +92,6 @@ class TestCBFIngest(unittest.TestCase):
         assert_equal(8, ingest_session.CBFIngest._tune_next(5, [2, 4, 8, 16]))
         assert_equal(8, ingest_session.CBFIngest._tune_next(8, [2, 4, 8, 16]))
         assert_equal(21, ingest_session.CBFIngest._tune_next(21, [2, 4, 8, 16]))
-
-    def test_tune_next_antennas(self):
-        assert_equal(2, ingest_session.CBFIngest._tune_next_antennas(0))
-        assert_equal(8, ingest_session.CBFIngest._tune_next_antennas(5))
-        assert_equal(8, ingest_session.CBFIngest._tune_next_antennas(8))
-        assert_equal(32, ingest_session.CBFIngest._tune_next_antennas(21))
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([
@@ -141,12 +135,11 @@ class TestCBFIngest(unittest.TestCase):
             [2, 1]
         ])
 
-        permutation, input_auto_baseline, baseline_inputs, new_ordering = \
-            ingest_session.CBFIngest.baseline_permutation(orig_ordering)
-        np.testing.assert_equal(expected_ordering, new_ordering)
-        np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], permutation)
-        np.testing.assert_equal([0, 1, 2, 3], input_auto_baseline)
-        np.testing.assert_equal(expected_baseline_inputs, baseline_inputs)
+        bls = ingest_session.BaselineOrdering(orig_ordering)
+        np.testing.assert_equal(expected_ordering, bls.sdp_bls_ordering)
+        np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], bls.permutation)
+        np.testing.assert_equal([0, 1, 2, 3], bls.input_auto_baseline)
+        np.testing.assert_equal(expected_baseline_inputs, bls.baseline_inputs)
 
     def test_baseline_permutation_masked(self):
         orig_ordering = np.array([
@@ -169,9 +162,8 @@ class TestCBFIngest(unittest.TestCase):
             ['m001v', 'm001h']])
         antenna_mask = set(['m001'])
 
-        permutation, input_auto_baseline, baseline_inputs, new_ordering = \
-            ingest_session.CBFIngest.baseline_permutation(orig_ordering, antenna_mask)
-        np.testing.assert_equal(expected_ordering, new_ordering)
-        np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], permutation)
-        np.testing.assert_equal([0, 1], input_auto_baseline)
-        np.testing.assert_equal([[0, 0], [1, 1], [0, 1], [1, 0]], baseline_inputs)
+        bls = ingest_session.BaselineOrdering(orig_ordering, antenna_mask)
+        np.testing.assert_equal(expected_ordering, bls.sdp_bls_ordering)
+        np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], bls.permutation)
+        np.testing.assert_equal([0, 1], bls.input_auto_baseline)
+        np.testing.assert_equal([[0, 0], [1, 1], [0, 1], [1, 0]], bls.baseline_inputs)
