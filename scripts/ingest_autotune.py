@@ -13,15 +13,10 @@ from katsdpsigproc import accel
 
 def autotune_device(device):
     context = device.make_context()
-    tune_antennas = ingest_session.CBFIngest.tune_antennas
     tune_channels = ingest_session.CBFIngest.tune_channels
-
-    # The tuning parameters are independent, so we just need to tune along a
-    # line in each dimension, rather than the Cartesian product.
-    for antennas in tune_antennas:
-        ingest_session.CBFIngest.create_proc_template(context, antennas, tune_channels[0])
+    tune_percentile_sizes = ingest_session.CBFIngest.tune_percentile_sizes
     for channels in tune_channels:
-        ingest_session.CBFIngest.create_proc_template(context, tune_antennas[0], channels)
+        ingest_session.CBFIngest.create_proc_template(context, tune_percentile_sizes, channels)
 
 
 def main():
@@ -33,6 +28,7 @@ def main():
         sys.exit(1)
     for device in devices:
         autotune_device(device)
+
 
 if __name__ == '__main__':
     main()

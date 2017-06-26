@@ -13,12 +13,10 @@ import katsdpingest.sigproc as sp
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
-import katsdptelstate
 import katsdpservices
 import logging
 import trollius
 from trollius import From
-import concurrent.futures
 from . import utils, receiver, sender
 
 
@@ -28,40 +26,6 @@ CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
-
-
-def get_collection_products(bls_ordering):
-    """
-    This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`.
-    """
-    auto = []
-    autohh = []
-    autovv = []
-    autohv = []
-    cross = []
-    crosshh = []
-    crossvv = []
-    crosshv = []
-    for ibls, bls in enumerate(bls_ordering):
-        if bls[0][:-1] == bls[1][:-1]:       # auto
-            if bls[0][-1] == bls[1][-1]:     # autohh or autovv
-                auto.append(ibls)
-                if bls[0][-1] == 'h':
-                    autohh.append(ibls)
-                else:
-                    autovv.append(ibls)
-            else:                            # autohv or vh
-                autohv.append(ibls)
-        else:                                # cross
-            if bls[0][-1] == bls[1][-1]:     # crosshh or crossvv
-                cross.append(ibls)
-                if bls[0][-1] == 'h':
-                    crosshh.append(ibls)
-                else:
-                    crossvv.append(ibls)
-            else:                            # crosshv or vh
-                crosshv.append(ibls)
-    return [auto, autohh, autovv, autohv, cross, crosshh, crossvv, crosshv]
 
 
 class _TimeAverage(object):
@@ -325,6 +289,153 @@ class _ResourceSet(object):
         return ret
 
 
+def get_cbf_attr(telstate, cbf_name):
+    """Load the configuration of the CBF stream from a telescope state.
+
+    Parameters
+    ----------
+    telstate : :class:`katsdptelstate.TelescopeState`
+        Telescope state from which the CBF stream metadata is retrieved.
+    cbf_name : str
+        Common prefix on telstate keys
+    """
+    cbf_attr = {}
+    for attr in CBF_CRITICAL_ATTRS:
+        telstate_name = '{}_{}'.format(cbf_name, attr)
+        try:
+            cbf_attr[attr] = telstate[telstate_name]
+            logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
+        except KeyError:
+            # Telstate's KeyError does not have a useful description
+            raise KeyError('Telstate key {} not found'.format(telstate_name))
+    logger.info('All metadata received from telstate')
+    return cbf_attr
+
+
+class BaselineOrdering(object):
+    """Encapsulates lookup tables related to baseline ordering.
+
+    Parameters
+    ----------
+    cbf_bls_ordering : list of pairs of str
+        Input ordering.
+    antenna_mask : iterable of str, optional
+        If given, only those antennas in this set will be retained in the output.
+
+    Attributes
+    ----------
+    permutation : list
+        The permutation specifying the reordering. Element *i* indicates
+        the position in the new order corresponding to element *i* of
+        the original order, or -1 if the baseline was masked out.
+    input_auto_baseline : list
+        The post-permutation baseline index for each autocorrelation
+    baseline_inputs : list
+        Inputs (indexed as for `input_auto_baseline`) for each baseline
+    sdp_bls_ordering : ndarray
+        Replacement ordering, in the same format as `cbf_bls_ordering`
+    percentile_ranges : list of pairs of int
+        Intervals of the new ordering which get grouped together for percentile
+        calculations.
+    """
+
+    def __init__(self, cbf_bls_ordering, antenna_mask=None):
+        def keep(baseline):
+            ant1 = baseline[0][:-1]
+            ant2 = baseline[1][:-1]
+            # Eliminate baselines that have a lower-numbered antenna as the
+            # second input as these are almost certainly duplicates. This is only
+            # a problem in single pol mode and could be removed in the future.
+            if ant2 < ant1:
+                return False
+            if antenna_mask:
+                return ant1 in antenna_mask and ant2 in antenna_mask
+            else:
+                return True
+
+        def key(item):
+            input1, input2 = item[1]
+            pol1 = input1[-1]
+            pol2 = input2[-1]
+            return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
+
+        def input_idx(input):
+            try:
+                return inputs.index(input)
+            except ValueError:
+                inputs.append(input)
+                return len(inputs) - 1
+
+        def get_collection_products(bls_ordering):
+            """This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`."""
+            auto = []
+            autohh = []
+            autovv = []
+            autohv = []
+            cross = []
+            crosshh = []
+            crossvv = []
+            crosshv = []
+            for ibls, bls in enumerate(bls_ordering):
+                if bls[0][:-1] == bls[1][:-1]:       # auto
+                    if bls[0][-1] == bls[1][-1]:     # autohh or autovv
+                        auto.append(ibls)
+                        if bls[0][-1] == 'h':
+                            autohh.append(ibls)
+                        else:
+                            autovv.append(ibls)
+                    else:                            # autohv or vh
+                        autohv.append(ibls)
+                else:                                # cross
+                    if bls[0][-1] == bls[1][-1]:     # crosshh or crossvv
+                        cross.append(ibls)
+                        if bls[0][-1] == 'h':
+                            crosshh.append(ibls)
+                        else:
+                            crossvv.append(ibls)
+                    else:                            # crosshv or vh
+                        crosshv.append(ibls)
+            return [auto, autohh, autovv, autohv, cross, crosshh, crossvv, crosshv]
+
+        if antenna_mask is not None:
+            antenna_mask = set(antenna_mask)
+        # Eliminate baselines not covered by antenna_mask
+        filtered = [x for x in enumerate(cbf_bls_ordering) if keep(x[1])]
+        # Sort what's left
+        reordered = sorted(filtered, key=key)
+        # reordered contains the mapping from new position to original
+        # position, but we need the inverse.
+        self.permutation = [-1] * len(cbf_bls_ordering)
+        for i in range(len(reordered)):
+            self.permutation[reordered[i][0]] = i
+        # Can now discard the indices from reordered
+        reordered = [x[1] for x in reordered]
+        # Construct input_auto_baseline and baseline_inputs
+        inputs = []
+        self.baseline_inputs = [[input_idx(x[0]), input_idx(x[1])] for x in reordered]
+        self.input_auto_baseline = [-1] * len(inputs)
+        for i, inputs in enumerate(self.baseline_inputs):
+            if inputs[0] == inputs[1]:
+                self.input_auto_baseline[inputs[0]] = i
+        if -1 in self.input_auto_baseline:
+            idx = self.input_auto_baseline.index(-1)
+            raise ValueError('No auto-correlation baseline found for ' + inputs[idx])
+        self.sdp_bls_ordering = np.array(reordered)
+
+        # Collect percentile ranges
+        collection_products = get_collection_products(self.sdp_bls_ordering)
+        self.percentile_ranges = []
+        for p in collection_products:
+            if p:
+                start = p[0]
+                end = p[-1] + 1
+                if not np.array_equal(np.arange(start, end), p):
+                    raise ValueError("percentile baselines are not contiguous: {}".format(p))
+                self.percentile_ranges.append((start, end))
+            else:
+                self.percentile_ranges.append((0, 0))
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -333,11 +444,8 @@ class CBFIngest(object):
 
     Attributes
     ----------
-    input_resource : :class:`katsdpsigproc.resource.Resource`
+    input_resource : :class:`_ResourceSet`
         Resource wrapping the device buffers that contain inputs
-    host_input_resource : :class:`katsdpsigproc.resource.Resource`
-        Resource wrapping the :class:`katsdpsigproc.accel.HostArray`s
-        used to stage the inputs
     output_resource : :class:`_ResourceSet`
         Wrapper of the L0 output device buffers, namely `spec_vis`,
         `spec_flags`, `spec_weights` and `spec_weights_channel`, and the
@@ -352,13 +460,20 @@ class CBFIngest(object):
         covered by other resources above.
     rx : :class:`katsdpingest.receiver.Receiver`
         Receiver that combines data from the SPEAD streams into frames
+    cbf_attr : dict
+        Input stream attributes, as returned by :func:`get_cbf_attr`
+    bls_ordering : :class:`BaselineOrdering`
+        Baseline ordering and related tables
     """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
     # configurations.
-    tune_antennas = [2, 4, 8, 16, 32]
     tune_channels = [4096, 8192, 9216, 32768]
+    tune_percentile_sizes = set()
+    for ants in [2, 4, 8, 16, 32]:
+        tune_percentile_sizes.update({ants, 2 * ants, ants * (ants - 1) // 2, ants * (ants - 1)})
+    tune_percentile_sizes = list(sorted(tune_percentile_sizes))
 
     @classmethod
     def _tune_next(cls, value, predef):
@@ -372,15 +487,7 @@ class CBFIngest(object):
             return value
 
     @classmethod
-    def _tune_next_antennas(cls, value):
-        """Round `value` up to the next power of 2 (excluding 1)."""
-        out = 2
-        while out < value:
-            out *= 2
-        return out
-
-    @classmethod
-    def create_proc_template(cls, context, antennas, max_channels):
+    def create_proc_template(cls, context, percentile_sizes, max_channels):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -388,13 +495,15 @@ class CBFIngest(object):
         ----------
         context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
             Context in which to compile device code
-        antennas : int
-            Number of antennas, *after* any masking
+        percentile_sizes : list of int
+            Sizes of baseline groupings, *after* any masking
         max_channels : int
             Maximum number of incoming channels to support
         """
         # Quantise to reduce number of options to autotune
-        max_antennas = cls._tune_next_antennas(antennas)
+        max_percentile_sizes = [cls._tune_next(s, cls.tune_percentile_sizes)
+                                for s in percentile_sizes]
+        max_percentile_sizes = list(sorted(set(max_percentile_sizes)))
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
         flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
@@ -405,42 +514,9 @@ class CBFIngest(object):
                 context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        n_cross = max_antennas * (max_antennas - 1) // 2
-        percentile_sizes = [
-                max_antennas, 2 * max_antennas,
-                n_cross, 2 * n_cross]
-        return sp.IngestTemplate(context, flagger_template, percentile_sizes=percentile_sizes)
+        return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes)
 
-    def __init__(self, opts, channel_ranges, proc_template,
-                 my_sensors, telstate, cbf_name):
-        self._sdisp_ips = {}
-        self._center_freq = None
-        self._run_future = None
-        # Signalled by stop to abort a wait for metadata
-        self._stop_future = concurrent.futures.Future()
-
-        # TODO: remove my_sensors and rather use the model to drive local sensor updates
-        self.spectral_spead_endpoints = opts.l0_spectral_spead
-        self.spectral_spead_ifaddr = katsdpservices.get_interface_address(opts.l0_spectral_interface)
-        self.continuum_spead_endpoints = opts.l0_continuum_spead
-        self.continuum_spead_ifaddr = katsdpservices.get_interface_address(opts.l0_continuum_interface)
-        self.rx_spead_endpoints = opts.cbf_spead
-        self.rx_spead_ifaddr = katsdpservices.get_interface_address(opts.cbf_interface)
-        self.rx_spead_ibv = opts.cbf_ibv
-        self.sd_spead_rate = opts.sd_spead_rate
-        self.output_int_time = opts.output_int_time
-        self.sd_int_time = opts.sd_int_time
-        self.channel_ranges = channel_ranges
-        if opts.antenna_mask is not None:
-            self.antenna_mask = set(opts.antenna_mask)
-        else:
-            self.antenna_mask = None
-        self.proc_template = proc_template
-        self.telstate = telstate
-        self.telstate_name = opts.name
-        self.cbf_name = cbf_name
-        self.cbf_attr = {}
-
+    def _init_sensors(self, my_sensors):
         self._my_sensors = my_sensors
         self.output_bytes = 0
         self.output_bytes_sensor = self._my_sensors['output-bytes-total']
@@ -453,24 +529,201 @@ class CBFIngest(object):
         self.output_dumps_sensor.set_value(0)
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
-        self.ig_sd = None
-        # Initialise processing blocks used
-        self.command_queue = proc_template.context.create_command_queue()
-        # Instantiation of the template delayed until data shape is known (TODO: can do it here)
-        self.proc = None
-        self.proc_resource = None
-        self.input_resource = None
-        self.output_resource = None
-        self.sd_input_resource = None
-        self.sd_output_resource = None
-        self.jobs = resource.JobQueue()
-        # Done with blocks
 
-        # Instantiation of input streams and output streams delayed until
-        # metadata is received.
+    def _init_baselines(self, antenna_mask):
+        # Configure the masking and reordering of baselines
+        self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
+        self._set_telstate_entry('sdp_l0_bls_ordering', self.bls_ordering.sdp_bls_ordering)
+        if not len(self.bls_ordering.sdp_bls_ordering):
+            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
+                self.cbf_attr['bls_ordering'], antenna_mask))
+
+    def _init_time_averaging(self, output_int_time, sd_int_time):
+        self._output_avg = _TimeAverage(self.cbf_attr, output_int_time)
+        self._output_avg.flush = self._flush_output
+        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time)
+        logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
+
+        self._sd_avg = _TimeAverage(self.cbf_attr, sd_int_time)
+        self._sd_avg.flush = self._flush_sd
+        logger.info("Averaging {0} input dumps per signal display dump".format(
+                    self._sd_avg.ratio))
+
+    def _init_proc(self, proc_template):
+        self.command_queue = proc_template.context.create_command_queue()
+        self.proc = proc_template.instantiate(
+                self.command_queue, len(self.channel_ranges.input),
+                self.channel_ranges.computed.relative_to(self.channel_ranges.input),
+                len(self.bls_ordering.input_auto_baseline),
+                len(self.cbf_attr['bls_ordering']),
+                len(self.bls_ordering.sdp_bls_ordering),
+                self.channel_ranges.cont_factor,
+                self.channel_ranges.sd_cont_factor,
+                self.bls_ordering.percentile_ranges,
+                threshold_args={'n_sigma': 11.0})
+        self.proc.n_accs = self.cbf_attr['n_accs']
+        self.proc.ensure_all_bound()
+        self.proc.buffer('permutation').set(
+            self.command_queue, np.asarray(self.bls_ordering.permutation, dtype=np.int16))
+        self.proc.buffer('input_auto_baseline').set(
+            self.command_queue, np.asarray(self.bls_ordering.input_auto_baseline, dtype=np.uint16))
+        self.proc.buffer('baseline_inputs').set(
+            self.command_queue, np.asarray(self.bls_ordering.baseline_inputs, dtype=np.uint16))
+        self.proc.start_sum()
+        self.proc.start_sd_sum()
+
+    def _init_resources(self):
+        self.jobs = resource.JobQueue()
+        self.proc_resource = resource.Resource(self.proc)
+        self.input_resource = _ResourceSet(
+            self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
+        self.output_resource = _ResourceSet(
+            self.proc, [prefix + suffix
+                        for prefix in ['spec_', 'cont_']
+                        for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
+        self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
+        sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
+                           'timeseries', 'timeseriesabs']
+        for i in range(len(self.proc.percentiles)):
+            base_name = 'percentile{}'.format(i)
+            sd_output_names.append(base_name)
+            sd_output_names.append(base_name + '_flags')
+        self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
+
+    def _init_tx(self, args):
+        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        thread_pool = spead2.ThreadPool(2)
+        spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
+        continuum_channels = utils.Range(spectral_channels.start // self.channel_ranges.cont_factor,
+                                         spectral_channels.stop // self.channel_ranges.cont_factor)
+        baselines = len(self.bls_ordering.sdp_bls_ordering)
+        self.tx_spectral = sender.VisSenderSet(
+            thread_pool,
+            args.l0_spectral_spead,
+            katsdpservices.get_interface_address(args.l0_spectral_interface),
+            l0_flavour,
+            self._output_avg.int_time,
+            spectral_channels,
+            self.channel_ranges.output.start,
+            baselines)
+        self.tx_continuum = sender.VisSenderSet(
+            thread_pool,
+            args.l0_continuum_spead,
+            katsdpservices.get_interface_address(args.l0_continuum_interface),
+            l0_flavour,
+            self._output_avg.int_time,
+            continuum_channels,
+            self.channel_ranges.output.start // self.channel_ranges.cont_factor,
+            baselines)
+
+    def _init_ig_sd(self):
+        """Create a item group for signal displays."""
+        sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        inline_format = [('u', sd_flavour.heap_address_bits)]
+        n_spec_channels = len(self.channel_ranges.sd_output)
+        n_cont_channels = n_spec_channels // self.channel_ranges.sd_cont_factor
+        n_baselines = len(self.bls_ordering.sdp_bls_ordering)
+        self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
+        self.ig_sd.add_item(
+            name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
+            format=[('f', 32)], shape=(n_spec_channels, None, 2))
+        self.ig_sd.add_item(
+            name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
+            format=[('u', 32)], shape=(None,))
+        self.ig_sd.add_item(
+            name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
+            shape=(n_cont_channels, n_baselines, 2),
+            dtype=np.float32)
+        self.ig_sd.add_item(
+            name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
+            format=[('u', 8)], shape=(n_spec_channels, None))
+        self.ig_sd.add_item(
+            name=('sd_blmxflags'), id=(0x3508),
+            description="Reduced data flags for baseline matrix.",
+            shape=(n_cont_channels, n_baselines), dtype=np.uint8)
+        self.ig_sd.add_item(
+            name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
+            shape=(n_baselines, 2), dtype=np.float32)
+        self.ig_sd.add_item(
+            name=('sd_timeseriesabs'), id=(0x3510), description="Computed timeseries magnitude.",
+            shape=(n_baselines, ), dtype=np.float32)
+        n_perc_signals = 0
+        perc_idx = 0
+        while True:
+            try:
+                n_perc_signals += self.proc.buffer('percentile{0}'.format(perc_idx)).shape[0]
+                perc_idx += 1
+            except KeyError:
+                break
+        self.ig_sd.add_item(
+            name=('sd_percspectrum'), id=(0x3505),
+            description="Percentiles of spectrum data.",
+            dtype=np.float32, shape=(n_spec_channels, n_perc_signals))
+        self.ig_sd.add_item(
+            name=('sd_percspectrumflags'), id=(0x3506),
+            description="Flags for percentiles of spectrum.",
+            dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
+        self.ig_sd.add_item(
+            name="center_freq", id=0x1011,
+            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
+            shape=(), dtype=None, format=[('f', 64)])
+        self.ig_sd.add_item(
+            name=('sd_timestamp'), id=0x3502,
+            description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
+            shape=(), dtype=None, format=inline_format)
+        bls_ordering = np.asarray(self.bls_ordering.sdp_bls_ordering)
+        self.ig_sd.add_item(
+            name=('bls_ordering'), id=0x100C,
+            description="Mapping of antenna/pol pairs to data output products.",
+            shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
+        # Determine bandwidth of the signal display product
+        sd_bandwidth = self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output) / len(self.channel_ranges.cbf)
+        self.ig_sd.add_item(
+            name="bandwidth", id=0x1013,
+            description="The analogue bandwidth of the digitally processed signal in Hz.",
+            shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
+        self.ig_sd.add_item(
+            name="n_chans", id=0x1009,
+            description="The total number of frequency channels present in any integration.",
+            shape=(), dtype=None, format=inline_format, value=n_spec_channels)
+        self.ig_sd.add_item(
+            name="frequency", id=0x4103,
+            description="The frequency channel of the data in this heap.",
+            shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
+
+    def __init__(self, args, cbf_attr, channel_ranges, proc_template,
+                 my_sensors, telstate):
+        self._sdisp_ips = {}
+        self._center_freq = None
+        self._run_future = None
+        # Set by stop to abort prior to creating the receiver
+        self._stopped = False
+
+        self.rx_spead_endpoints = args.cbf_spead
+        self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
+        self.rx_spead_ibv = args.cbf_ibv
+        self.sd_spead_rate = args.sd_spead_rate
+        self.channel_ranges = channel_ranges
+        self.telstate = telstate
+        self.cbf_attr = cbf_attr
+
+        self._init_sensors(my_sensors)
+        self._init_baselines(args.antenna_mask)
+        self._init_time_averaging(args.output_int_time, args.sd_int_time)
+        self._init_proc(proc_template)
+        self._init_resources()
+
+        # Instantiation of input streams is delayed until the asynchronous task
+        # is running, to avoid receiving data we're not yet ready for.
         self.rx = None
-        self.tx_spectral = None
-        self.tx_continuum = None
+        self._init_tx(args)  # Note: must be run after _init_time_averaging
+        self._init_ig_sd()
+
+        # Record information about the processing in telstate
+        if args.name is not None:
+            descriptions = list(self.proc.descriptions())
+            attribute_name = args.name.replace('.', '_') + '_process_log'
+            self._set_telstate_entry(attribute_name, descriptions)
 
     def enable_debug(self, debug):
         if debug:
@@ -493,86 +746,6 @@ class CBFIngest(object):
         """
         return trollius.gather(*(trollius.async(sender.async_send_heap(tx, data))
                                  for tx in self._sdisp_ips.itervalues()))
-
-    @classmethod
-    def baseline_permutation(cls, bls_ordering, antenna_mask=None, rotate=False):
-        """Construct a permutation to place the baselines into the desired
-        order for internal processing.
-
-        Parameters
-        ----------
-        bls_ordering : list of pairs of strings
-            Names of inputs in current ordering
-        antenna_mask : set of strings, optional
-            Antennas to retain in the permutation (without polarisation suffix)
-        rotate : bool, optional
-            Rotate received CBF baseline ordering up by 1 to account for CBF bustedness
-            (20 May 2016 - may be fixed shortly after...)
-
-        Returns
-        -------
-        permutation : list
-            The permutation specifying the reordering. Element *i* indicates
-            the position in the new order corresponding to element *i* of
-            the original order, or -1 if the baseline was masked out.
-        input_auto_baseline : list
-            The post-permutation baseline index for each autocorrelation
-        baseline_inputs : list
-            Inputs (indexed as for `input_auto_baseline`) for each baseline
-        new_ordering : ndarray
-            Replacement ordering, in the same format as `bls_ordering`
-        """
-        if rotate:
-            bls_ordering = bls_ordering[range(1, len(bls_ordering)) + [0]]
-
-        def keep(baseline):
-            ant1 = baseline[0][:-1]
-            ant2 = baseline[1][:-1]
-            # Eliminate baselines that have a lower-numbered antenna as the
-            # second input as these are almost certainly duplicates. This is only 
-            # a problem in single pol mode and could be removed in the future.
-            if ant2 < ant1:
-                return False
-            if antenna_mask:
-                return ant1 in antenna_mask and ant2 in antenna_mask
-            else:
-                return True
-
-        def key(item):
-            input1, input2 = item[1]
-            pol1 = input1[-1]
-            pol2 = input2[-1]
-            return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
-
-        def input_idx(input):
-            try:
-                return inputs.index(input)
-            except ValueError:
-                inputs.append(input)
-                return len(inputs) - 1
-
-        # Eliminate baselines not covered by antenna_mask
-        filtered = [x for x in enumerate(bls_ordering) if keep(x[1])]
-        # Sort what's left
-        reordered = sorted(filtered, key=key)
-        # reordered contains the mapping from new position to original
-        # position, but we need the inverse.
-        permutation = [-1] * len(bls_ordering)
-        for i in range(len(reordered)):
-            permutation[reordered[i][0]] = i
-        # Can now discard the indices from reordered
-        reordered = [x[1] for x in reordered]
-        # Construct input_auto_baseline and baseline_inputs
-        inputs = []
-        baseline_inputs = [ [input_idx(x[0]), input_idx(x[1])] for x in reordered]
-        input_auto_baseline = [-1] * len(inputs)
-        for i, inputs in enumerate(baseline_inputs):
-            if inputs[0] == inputs[1]:
-                input_auto_baseline[inputs[0]] = i
-        if -1 in input_auto_baseline:
-            idx = input_auto_baseline.index(-1)
-            raise ValueError('No auto-correlation baseline found for ' + inputs[idx])
-        return permutation, input_auto_baseline, baseline_inputs, np.array(reordered)
 
     @trollius.coroutine
     def _stop_stream(self, stream, ig):
@@ -629,204 +802,6 @@ class CBFIngest(object):
         """Change the center frequency reported to signal displays."""
         self._center_freq = center_freq
 
-    def _initialise_ig_sd(self):
-        """Create a item group for signal displays."""
-        sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        inline_format = [('u', sd_flavour.heap_address_bits)]
-        n_spec_channels = len(self.channel_ranges.sd_output)
-        n_cont_channels = n_spec_channels // self.channel_ranges.sd_cont_factor
-        n_baselines = len(self.cbf_attr['bls_ordering'])
-        self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
-        self.ig_sd.add_item(
-            name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
-            format=[('f', 32)], shape=(n_spec_channels, None, 2))
-        self.ig_sd.add_item(
-            name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
-            format=[('u', 32)], shape=(None,))
-        self.ig_sd.add_item(
-            name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
-            shape=(n_cont_channels, n_baselines, 2),
-            dtype=np.float32)
-        self.ig_sd.add_item(
-            name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
-            format=[('u', 8)], shape=(n_spec_channels, None))
-        self.ig_sd.add_item(
-            name=('sd_blmxflags'), id=(0x3508),
-            description="Reduced data flags for baseline matrix.",
-            shape=(n_cont_channels, n_baselines), dtype=np.uint8)
-        self.ig_sd.add_item(
-            name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
-            shape=(n_baselines, 2), dtype=np.float32)
-        self.ig_sd.add_item(
-            name=('sd_timeseriesabs'), id=(0x3510), description="Computed timeseries magnitude.",
-            shape=(n_baselines, ), dtype=np.float32)
-        n_perc_signals = 0
-        perc_idx = 0
-        while True:
-            try:
-                n_perc_signals += self.proc.buffer('percentile{0}'.format(perc_idx)).shape[0]
-                perc_idx += 1
-            except KeyError:
-                break
-        self.ig_sd.add_item(
-            name=('sd_percspectrum'), id=(0x3505),
-            description="Percentiles of spectrum data.",
-            dtype=np.float32, shape=(n_spec_channels, n_perc_signals))
-        self.ig_sd.add_item(
-            name=('sd_percspectrumflags'), id=(0x3506),
-            description="Flags for percentiles of spectrum.",
-            dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
-        self.ig_sd.add_item(
-            name="center_freq", id=0x1011,
-            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-            shape=(), dtype=None, format=[('f', 64)])
-        self.ig_sd.add_item(
-            name=('sd_timestamp'), id=0x3502,
-            description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
-            shape=(), dtype=None, format=inline_format)
-        bls_ordering = np.asarray(self.cbf_attr['bls_ordering'])
-        self.ig_sd.add_item(
-            name=('bls_ordering'), id=0x100C,
-            description="Mapping of antenna/pol pairs to data output products.",
-            shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
-        # Determine bandwidth of the signal display product
-        sd_bandwidth = self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output) / len(self.channel_ranges.cbf)
-        self.ig_sd.add_item(
-            name="bandwidth", id=0x1013,
-            description="The analogue bandwidth of the digitally processed signal in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
-        self.ig_sd.add_item(
-            name="n_chans", id=0x1009,
-            description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=n_spec_channels)
-        self.ig_sd.add_item(
-            name="frequency", id=0x4103,
-            description="The frequency channel of the data in this heap.",
-            shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
-
-    @trollius.coroutine
-    def _initialise(self):
-        """Initialise variables once metadata is available."""
-        cbf_baselines = len(self.cbf_attr['bls_ordering'])
-        # Configure the masking and reordering of baselines
-        orig_bls_ordering = self.cbf_attr['bls_ordering']
-        permutation, input_auto_baseline, baseline_inputs, self.cbf_attr['bls_ordering'] = \
-            self.baseline_permutation(self.cbf_attr['bls_ordering'], self.antenna_mask)
-        baselines = len(self.cbf_attr['bls_ordering'])
-        n_accs = self.cbf_attr['n_accs']
-        self._set_telstate_entry('sdp_l0_bls_ordering', self.cbf_attr['bls_ordering'])
-        if baselines <= 0:
-            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
-                orig_bls_ordering, self.antenna_mask))
-
-        # Configure time averaging
-        self._output_avg = _TimeAverage(self.cbf_attr, self.output_int_time)
-        self._output_avg.flush = self._flush_output
-        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time)
-        logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
-
-        self._sd_avg = _TimeAverage(self.cbf_attr, self.sd_int_time)
-        self._sd_avg.flush = self._flush_sd
-        logger.info("Averaging {0} input dumps per signal display dump".format(
-                    self._sd_avg.ratio))
-
-        # configure the signal processing blocks
-        collection_products = get_collection_products(self.cbf_attr['bls_ordering'])
-        percentile_ranges = []
-        for p in collection_products:
-            if p:
-                start = p[0]
-                end = p[-1] + 1
-                if not np.array_equal(np.arange(start, end), p):
-                    raise ValueError("percentile baselines are not contiguous: {}".format(p))
-                percentile_ranges.append((start, end))
-            else:
-                percentile_ranges.append((0, 0))
-
-        self.proc = self.proc_template.instantiate(
-                self.command_queue, len(self.channel_ranges.input),
-                self.channel_ranges.computed.relative_to(self.channel_ranges.input),
-                len(input_auto_baseline),
-                cbf_baselines, baselines,
-                self.channel_ranges.cont_factor,
-                self.channel_ranges.sd_cont_factor,
-                percentile_ranges,
-                threshold_args={'n_sigma': 11.0})
-        self.proc.n_accs = n_accs
-        self.proc.ensure_all_bound()
-        self.proc.buffer('permutation').set(
-            self.command_queue, np.asarray(permutation, dtype=np.int16))
-        self.proc.buffer('input_auto_baseline').set(
-            self.command_queue, np.asarray(input_auto_baseline, dtype=np.uint16))
-        self.proc.buffer('baseline_inputs').set(
-            self.command_queue, np.asarray(baseline_inputs, dtype=np.uint16))
-        self.proc.start_sum()
-        self.proc.start_sd_sum()
-        # Set up resources
-        self.proc_resource = resource.Resource(self.proc)
-
-        self.input_resource = _ResourceSet(
-            self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
-        self.output_resource = _ResourceSet(
-            self.proc, [prefix + suffix
-                        for prefix in ['spec_', 'cont_']
-                        for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
-        self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
-        sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
-                           'timeseries', 'timeseriesabs']
-        for i in range(len(self.proc.percentiles)):
-            base_name = 'percentile{}'.format(i)
-            sd_output_names.append(base_name)
-            sd_output_names.append(base_name + '_flags')
-        self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
-
-        # Record information about the processing in telstate
-        if self.telstate_name is not None:
-            descriptions = list(self.proc.descriptions())
-            attribute_name = self.telstate_name.replace('.', '_') + '_process_log'
-            self._set_telstate_entry(attribute_name, descriptions)
-
-        # initialise the signal display metadata
-        self._initialise_ig_sd()
-        yield From(self._send_sd_data(self.ig_sd.get_start()))
-
-        # Initialise the output streams
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        thread_pool = spead2.ThreadPool(2)
-        spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
-        continuum_channels = utils.Range(spectral_channels.start // self.channel_ranges.cont_factor,
-                                         spectral_channels.stop // self.channel_ranges.cont_factor)
-        self.tx_spectral = sender.VisSenderSet(
-            thread_pool,
-            self.spectral_spead_endpoints,
-            self.spectral_spead_ifaddr,
-            l0_flavour,
-            self._output_avg.int_time,
-            spectral_channels,
-            self.channel_ranges.output.start,
-            baselines)
-        self.tx_continuum = sender.VisSenderSet(
-            thread_pool,
-            self.continuum_spead_endpoints,
-            self.continuum_spead_ifaddr,
-            l0_flavour,
-            self._output_avg.int_time,
-            continuum_channels,
-            self.channel_ranges.output.start // self.channel_ranges.cont_factor,
-            baselines)
-        yield From(self.tx_spectral.start())
-        yield From(self.tx_continuum.start())
-        self.rx = receiver.Receiver(
-            self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
-            self.channel_ranges.subscribed,
-            len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
-        # At this point we transition from using _stop_future to abort to relying
-        # on stop() calling rx.stop(). There is a race condition if stop() is
-        # called after receiving metadata but before self.rx is created, which
-        # is handled by this check.
-        if self._stop_future.done():
-            self.rx.stop()
-
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
@@ -843,7 +818,6 @@ class CBFIngest(object):
 
             # Compute
             proc.end_sum()
-            end_done = self.command_queue.enqueue_marker()
             self.command_queue.flush()
 
             # Wait for the host output buffers to be available
@@ -1035,7 +1009,7 @@ class CBFIngest(object):
             baseline_flags.fill(0)
             return
         cache = {}
-        baselines = self.cbf_attr['bls_ordering']  # actually sdp_l0_bls_ordering
+        baselines = self.bls_ordering.sdp_bls_ordering
         cam_flag = 1 << sp.IngestTemplate.flag_names.index('cam')
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
@@ -1140,9 +1114,7 @@ class CBFIngest(object):
         will wait for the shutdown to complete.
         """
         if self._run_future:
-            if not self._stop_future.done():
-                # Aborts the metadata thread if stuck in wait_key
-                self._stop_future.set_result(None)
+            self._stopped = True
             if self.rx is not None:
                 logger.info('Stopping receiver...')
                 self.rx.stop()
@@ -1155,14 +1127,13 @@ class CBFIngest(object):
     @trollius.coroutine
     def run(self):
         """Thin wrapper than runs the real code and handles some cleanup."""
-
         try:
             # PyCUDA has a bug/limitation regarding cleanup
             # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
             # to cause device objects and `HostArray`s to leak. To prevent it,
             # we need to ensure that references are dropped (and hence objects
             # are deleted) with the context being current.
-            with self.proc_template.context:
+            with self.command_queue.context:
                 try:
                     yield From(self._run())
                 finally:
@@ -1175,30 +1146,10 @@ class CBFIngest(object):
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
 
-    def _get_metadata(self):
-        """Wait for then retrieve metadata from telstate.
-
-        This is a blocking function that is run on a separate thread.
-        """
-        self.status_sensor.set_value("wait-metadata")
-        logger.info('Waiting for cam2telstate')
-        self.telstate.wait_key('sdp_cam2telstate_status', lambda value: value == 'ready',
-                               cancel_future=self._stop_future)
-        for attr in CBF_CRITICAL_ATTRS:
-            telstate_name = '{}_{}'.format(self.cbf_name, attr)
-            try:
-                self.cbf_attr[attr] = self.telstate[telstate_name]
-                logger.info('Setting cbf_attr %s to %r', attr, self.cbf_attr[attr])
-            except KeyError:
-                # Telstate's KeyError does not have a useful description
-                raise KeyError('Telstate key {} not found'.format(telstate_name))
-        logger.info('All metadata received')
-
     @trollius.coroutine
     def _get_data(self):
         """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
-        rate_timer = 0
         self.status_sensor.set_value("wait-data")
         while True:
             try:
@@ -1242,20 +1193,22 @@ class CBFIngest(object):
     @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
-        self._output_avg = None
-        self._sd_avg = None
-        # TelescopeState.wait_key is blocking, so we have to use a separate
-        # thread to wait for metadata if we still want to remain responsive to
-        # ?capture-done.
-        try:
-            with concurrent.futures.ThreadPoolExecutor(1) as executor:
-                loop = trollius.get_event_loop()
-                yield From(loop.run_in_executor(executor, self._get_metadata))
-        except katsdptelstate.CancelledError:
-            logger.warn('Stopped before metadata was received')
-        else:
-            yield From(self._initialise())
-            yield From(self._get_data())
+        # Send metadata and start-of-stream packets
+        yield From(self._send_sd_data(self.ig_sd.get_start()))
+        yield From(self.tx_spectral.start())
+        yield From(self.tx_continuum.start())
+        # Initialise the input stream
+        self.rx = receiver.Receiver(
+            self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
+            self.channel_ranges.subscribed,
+            len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
+        # If stop() was set before we create self.rx, it won't have been able
+        # to call self.rx.stop(), but it will have set _stopped.
+        if self._stopped:
+            self.rx.stop()
+
+        # The main loop
+        yield From(self._get_data())
 
         logger.info('Joined with receiver. Flushing final groups...')
         if self.proc_resource is not None:    # Could be None if no heaps arrived

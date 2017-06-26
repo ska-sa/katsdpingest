@@ -3,10 +3,8 @@ from setuptools import setup, find_packages, Extension
 from distutils.command.build_ext import build_ext
 import glob
 import importlib
-import sys
 import subprocess
 import os.path
-import ctypes.util
 try:
     import pkgconfig
     hdf5 = pkgconfig.parse('hdf5')
@@ -93,7 +91,6 @@ setup(
         'h5py',
         'futures',
         'manhole',
-        'netifaces',
         'numpy',
         'spead2>=1.3.1',   # Need fix for add_udp_ibv_reader with multiple endpoints
         'ipaddress',

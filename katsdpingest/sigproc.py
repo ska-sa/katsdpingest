@@ -605,7 +605,7 @@ class Accum(accel.Operation):
         # the kept-channels part that needs to be aligned to be a multiple of
         # tilex.
         channel_flags_size = max(channels, accel.roundup(kept_channels, tilex) +
-                                           channel_range.start)
+                                 channel_range.start)
         self.slots['channel_flags'] = accel.IOSlot(
                 (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot(
@@ -888,7 +888,6 @@ class CompressWeights(accel.Operation):
         self.channels = channels
         self.baselines = baselines
         padded_channels = accel.Dimension(channels, template.wgsy)
-        dims = (padded_channels, baselines)
         self.slots['weights_in'] = accel.IOSlot(
             (accel.Dimension(channels, template.wgsy), baselines), np.float32)
         self.slots['weights_channel'] = accel.IOSlot(
