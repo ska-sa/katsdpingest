@@ -9,7 +9,7 @@ import pprint
 import six
 import signal
 import re
-import time
+import json
 
 import tornado
 import tornado.ioloop
@@ -124,7 +124,7 @@ SENSORS = [
     Sensor('{cbf}_input_labels', immutable=True, convert=comma_split),
     Sensor('{cbf}_loaded_delay_correction'),
     Sensor('{cbf}_delay_centre_frequency'),
-    Sensor('{cbf}_delay_adjustments'),
+    Sensor('{cbf}_delay_adjustments', convert=json.loads),
     Sensor('{cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
     Sensor('{sdp}_spmc_version_list', immutable=True),
@@ -490,6 +490,7 @@ def main():
     client.parse_streams()
     loop.add_callback(client.start)
     loop.start()
+
 
 if __name__ == '__main__':
     main()
