@@ -16,7 +16,9 @@ def autotune_device(device):
     tune_channels = ingest_session.CBFIngest.tune_channels
     tune_percentile_sizes = ingest_session.CBFIngest.tune_percentile_sizes
     for channels in tune_channels:
-        ingest_session.CBFIngest.create_proc_template(context, tune_percentile_sizes, channels)
+        for excise in [False, True]:
+            ingest_session.CBFIngest.create_proc_template(
+                context, tune_percentile_sizes, channels, excise)
 
 
 def main():
