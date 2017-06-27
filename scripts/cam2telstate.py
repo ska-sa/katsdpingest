@@ -105,6 +105,8 @@ SENSORS = [
     Sensor('{receptor}_pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{receptor}_pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
     Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('{receptor}_pos_adjust_pointm_azim'),
+    Sensor('{receptor}_pos_adjust_pointm_elev'),
     Sensor('{receptor}_dig_noise_diode'),
     Sensor('{receptor}_ap_indexer_position'),
     Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
@@ -114,12 +116,15 @@ SENSORS = [
     Sensor('{receptor}_rsc_rxs_serial_number'),
     Sensor('{receptor}_rsc_rxu_serial_number'),
     Sensor('{receptor}_rsc_rxx_serial_number'),
+    Sensor('{receptor}_data_suspect'),
     Sensor('{receptor}_ap_version_list', immutable=True),
     # CBF proxy sensors
     Sensor('{cbf}_target'),
     Sensor('{cbf}_auto_delay_enabled'),
     Sensor('{cbf}_input_labels', immutable=True, convert=comma_split),
     Sensor('{cbf}_loaded_delay_correction'),
+    Sensor('{cbf}_delay_centre_frequency'),
+    Sensor('{cbf}_delay_adjustments'),
     Sensor('{cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
     Sensor('{sdp}_spmc_version_list', immutable=True),
@@ -163,6 +168,7 @@ SENSORS = [
     Sensor('anc_air_temperature'),
     Sensor('anc_wind_direction'),
     Sensor('anc_mean_wind_speed'),
+    Sensor('anc_siggen_ku_frequency'),
     Sensor('mcp_dmc_version_list', immutable=True)
 ]
 
