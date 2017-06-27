@@ -61,10 +61,12 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
         float weight = local_weights.arr[${lr}][${lc}];
         unsigned int flag = local_flags.arr[${lr}][${lc}];
         flag |= channel_flags[${r}];
+% if excise:
         if (flag != 0)
             weight *= 5.42101086e-20f;  // 2^-64
         else
             flag = ${unflagged_bit};
+% endif
         int addr = ${r} * out_stride + ${c};
 % for i in range(outputs):
         accum_vis(&out_vis${i}[addr], vis, weight);

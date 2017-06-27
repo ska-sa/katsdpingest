@@ -35,10 +35,12 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         cw += w;
         cf |= f;
         float scale = 1.0f / w;
+% if excise:
         if (!(f & ${unflagged_bit}))
             *wptr = 1.8446744e19f * w;  // scale by 2^64, to compensate for previous 2^-64
         else
             *fptr = 0;
+% endif
         v.x *= scale;
         v.y *= scale;
         *vptr = v;
@@ -47,10 +49,12 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     float scale = 1.0 / cw;
     cv.x *= scale;
     cv.y *= scale;
+% if excise:
     if (!(cf & ${unflagged_bit}))
         cw *= 1.8446744e19;     // scale by 2^64, to compensate for previous 2^-64
     else
         cf = 0;
+% endif
     int cont_addr = cont_channel * stride + baseline;
     cont_vis[cont_addr] = cv;
     cont_weights[cont_addr] = cw;

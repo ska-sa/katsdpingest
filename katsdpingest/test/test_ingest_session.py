@@ -81,7 +81,7 @@ class TestCBFIngest(unittest.TestCase):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
-        template = ingest_session.CBFIngest.create_proc_template(context, [4, 12], 4096)
+        template = ingest_session.CBFIngest.create_proc_template(context, [4, 12], 4096, True)
         template.instantiate(
             queue, 1024, Range(96, 1024 - 96), 16, 544, 512,
             8, 16, [(0, 4), (500, 512)],

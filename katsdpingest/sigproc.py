@@ -460,7 +460,10 @@ class AccumTemplate(object):
     outputs : int
         Number of outputs in which to accumulate
     unflagged_bit : int
-        Flag value used to indicate that at least one sample was not flagged
+        Flag value used to indicate that at least one sample was not flagged.
+        This is only used when `excise` is true.
+    excise : bool
+        Excise flagged data by downweighting it massively.
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
@@ -468,17 +471,18 @@ class AccumTemplate(object):
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
-    autotune_version = 1
+    autotune_version = 2
 
-    def __init__(self, context, outputs, unflagged_bit, tuning=None):
+    def __init__(self, context, outputs, unflagged_bit, excise, tuning=None):
         if tuning is None:
-            tuning = self.autotune(context, outputs)
+            tuning = self.autotune(context, outputs, excise)
         self.context = context
         self.block = tuning['block']
         self.vtx = tuning['vtx']
         self.vty = tuning['vty']
         self.outputs = outputs
         self.unflagged_bit = unflagged_bit
+        self.excise = excise
         program = accel.build(
             context, 'ingest_kernels/accum.mako',
             {
@@ -486,13 +490,14 @@ class AccumTemplate(object):
                 'vtx': self.vtx,
                 'vty': self.vty,
                 'unflagged_bit': self.unflagged_bit,
+                'excise': self.excise,
                 'outputs': self.outputs},
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('accum')
 
     @classmethod
     @tune.autotuner(test={'block': 8, 'vtx': 2, 'vty': 3})
-    def autotune(cls, context, outputs):
+    def autotune(cls, context, outputs, excise):
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
@@ -523,7 +528,7 @@ class AccumTemplate(object):
             if local_mem > 32768:
                 # Skip configurations using lots of lmem
                 raise RuntimeError('too much local memory')
-            fn = cls(context, outputs, 1, {
+            fn = cls(context, outputs, 1, excise, {
                 'block': block,
                 'vtx': vtx,
                 'vty': vty}).instantiate(queue, channels, channel_range, baselines)
@@ -649,6 +654,7 @@ class Accum(accel.Operation):
         return {
             'outputs': self.template.outputs,
             'unflagged_bit': self.template.unflagged_bit,
+            'excise': self.template.excise,
             'channels': self.channels,
             'channel_range': (self.channel_range.start, self.channel_range.stop),
             'baselines': self.baselines
@@ -668,34 +674,39 @@ class PostprocTemplate(object):
         Context for which kernels will be compiled
     unflagged_bit : int
         Flag value used to indicate that at least one sample was not flagged
+    excise : bool
+        Flagged data is being excised (must match the argument to
+        :class:`AccumTemplate`).
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
         - wgsx, wgsy: number of workitems per workgroup in each dimension
     """
-    autotune_version = 2
+    autotune_version = 3
 
-    def __init__(self, context, unflagged_bit, tuning=None):
+    def __init__(self, context, unflagged_bit, excise, tuning=None):
         if tuning is None:
-            tuning = self.autotune(context)
+            tuning = self.autotune(context, excise)
         self.context = context
         self.wgsx = tuning['wgsx']
         self.wgsy = tuning['wgsy']
         self.unflagged_bit = unflagged_bit
+        self.excise = excise
         program = accel.build(
             context, 'ingest_kernels/postproc.mako',
             {
                 'wgsx': self.wgsx,
                 'wgsy': self.wgsy,
                 'unflagged_bit': self.unflagged_bit,
+                'excise': self.excise
             },
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('postproc')
 
     @classmethod
     @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
-    def autotune(cls, context):
+    def autotune(cls, context, excise):
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
@@ -715,7 +726,7 @@ class PostprocTemplate(object):
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
 
         def generate(**tuning):
-            fn = cls(context, 128, tuning=tuning).instantiate(
+            fn = cls(context, 128, excise, tuning=tuning).instantiate(
                     queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
@@ -805,6 +816,7 @@ class Postproc(accel.Operation):
     def parameters(self):
         return {
             'unflagged_bit': self.template.unflagged_bit,
+            'excise': self.template.excise,
             'cont_factor': self.cont_factor,
             'channels': self.channels,
             'baselines': self.baselines
@@ -931,9 +943,12 @@ class FinaliseTemplate(object):
         Context for which kernels will be compiled
     unflagged_bit : int
         Flag value used to indicate that at least one sample was not flagged
+    excise : bool
+        Flagged data is being excised (must match the argument to
+        :class:`AccumTemplate`).
     """
-    def __init__(self, context, unflagged_bit):
-        self.postproc = PostprocTemplate(context, unflagged_bit)
+    def __init__(self, context, unflagged_bit, excise):
+        self.postproc = PostprocTemplate(context, unflagged_bit, excise)
         self.compress_weights = CompressWeightsTemplate(context)
 
     def instantiate(self, *args, **kwargs):
@@ -1028,12 +1043,14 @@ class IngestTemplate(object):
         match the actual sizes of the ranges passed to the instance. The smallest template
         that is big enough will be used, so an exact match is best for good performance,
         and there must be at least one that is big enough.
+    excise : bool
+        Excise flagged data by downweighting it massively.
     """
 
     flag_names = ['reserved0', 'static', 'cam', 'data_lost', 'ingest_rfi',
                   'predicted_rfi', 'cal_rfi', 'reserved7']
 
-    def __init__(self, context, flagger, percentile_sizes):
+    def __init__(self, context, flagger, percentile_sizes, excise):
         self.context = context
         self.prepare = PrepareTemplate(context)
         self.auto_weights = AutoWeightsTemplate(context)
@@ -1046,8 +1063,8 @@ class IngestTemplate(object):
         # safe to use (unlike reserved flags, which might have new meanings
         # defined in future).
         unflagged_bit = 1 << self.flag_names.index('cal_rfi')
-        self.accum = AccumTemplate(context, 2, unflagged_bit)
-        self.finalise = FinaliseTemplate(context, unflagged_bit)
+        self.accum = AccumTemplate(context, 2, unflagged_bit, excise)
+        self.finalise = FinaliseTemplate(context, unflagged_bit, excise)
         self.compress_weights = CompressWeightsTemplate(context)
         self.timeseries = maskedsum.MaskedSumTemplate(context)
         self.timeseriesabs = maskedsum.MaskedSumTemplate(context, use_amplitudes=True)
