@@ -41,6 +41,11 @@ def main():
     parser.add_argument('--ibv', action='store_true', help='Use libibverbs when possible')
     parser.add_argument('--port', '-p', type=int, default=2050, help='katcp host port')
     parser.add_argument('--host', '-a', type=str, default='', help='katcp host address')
+    parser.add_argument('--channels', type=int, help='CBF total channels in spectrum')
+    parser.add_argument('--ticks-between-spectra', dest='ticks_between_spectra', type=long, help='CBF Ticks between spectra')
+    parser.add_argument('--channels-per-heap', dest='channels_per_heap', type=int, help='CBF Channels per heap')
+    parser.add_argument('--spectra-per-heap', dest='spectra_per_heap', type=int, help='CBF Spectra per heap')
+
     args = parser.parse_args()
     if args.affinity and len(args.affinity) < 2:
         parser.error('At least 2 CPUs must be specified for --affinity')

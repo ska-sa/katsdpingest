@@ -94,6 +94,10 @@ class _CaptureSession(object):
         if args.direct_io:
             config.direct = True
         config.spead_metadata = args.spead_metadata
+        config.ticks_between_spectra = args.ticks_between_spectra
+        config.channels = args.channels
+        config.channels_per_heap = args.channels_per_heap
+        config.spectra_per_heap = args.spectra_per_heap
         if args.telstate is not None and args.stream_name is not None:
             _logger.info('Waiting for cam2telstate to be ready')
             args.telstate.wait_key('sdp_cam2telstate_status', lambda value: value == 'ready')
