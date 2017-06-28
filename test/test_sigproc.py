@@ -51,7 +51,7 @@ def create_percentile_ranges(antennas):
 def create_template(context, args):
     percentile_ranges = create_percentile_ranges(args.mask_antennas)
     percentile_sizes = list(set([x[1] - x[0] for x in percentile_ranges]))
-    return sp.IngestTemplate(context, create_flagger(context, args), percentile_sizes)
+    return sp.IngestTemplate(context, create_flagger(context, args), percentile_sizes, args.excise)
 
 
 def main():
@@ -70,6 +70,7 @@ def main():
     parser.add_argument('--sd-freq-avg', type=int, default=128, help='number of input channels for signal display channel')
     parser.add_argument('--width', '-w', type=int, help='median filter kernel size (must be odd)', default=13)
     parser.add_argument('--sigmas', type=float, help='threshold for detecting RFI', default=11.0)
+    parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data')
     parser.add_argument('--repeat', '-r', type=int, default=8, help='number of dumps to process')
     parser.add_argument('--no-transfer', '-N', action='store_true', help='skip data transfers')
 

@@ -88,6 +88,7 @@ def parse_args():
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
+    parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
     parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
@@ -136,7 +137,7 @@ class IngestDeviceServer(DeviceServer):
         percentile_sizes = set(r[1] - r[0] for r in baselines.percentile_ranges)
         context = accel.create_some_context(interactive=False)
         self.proc_template = CBFIngest.create_proc_template(
-            context, percentile_sizes, len(channel_ranges.input))
+            context, percentile_sizes, len(channel_ranges.input), user_args.excise)
 
         sensors = [
             Sensor(

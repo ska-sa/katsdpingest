@@ -487,7 +487,7 @@ class CBFIngest(object):
             return value
 
     @classmethod
-    def create_proc_template(cls, context, percentile_sizes, max_channels):
+    def create_proc_template(cls, context, percentile_sizes, max_channels, excise):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -499,6 +499,8 @@ class CBFIngest(object):
             Sizes of baseline groupings, *after* any masking
         max_channels : int
             Maximum number of incoming channels to support
+        excise : bool
+            Excise flagged data by downweighting it massively.
         """
         # Quantise to reduce number of options to autotune
         max_percentile_sizes = [cls._tune_next(s, cls.tune_percentile_sizes)
@@ -514,7 +516,8 @@ class CBFIngest(object):
                 context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes)
+        return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
+                                 excise=excise)
 
     def _init_sensors(self, my_sensors):
         self._my_sensors = my_sensors
