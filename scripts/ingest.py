@@ -109,8 +109,6 @@ def main():
         len(args.cbf_spead), 64, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
     server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
-    server.set_concurrency_options(thread_safe=False, handler_thread=False)
-    server.set_ioloop(ioloop)
     # allow remote debug connections and expose server and args
     manhole.install(oneshot_on='USR1', locals={'server': server, 'args': args})
 
