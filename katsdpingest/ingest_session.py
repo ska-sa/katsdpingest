@@ -1146,9 +1146,16 @@ class CBFIngest(object):
                 logger.info('Stopping receiver...')
                 self.rx.stop()
             logger.info('Waiting for run to stop...')
-            yield From(self._run_future)
+            future = self._run_future
+            yield From(future)
             logger.info('Run stopped')
-            if self.capturing:
+            # If multiple callers arrive here, we want only the first to
+            # return True and clean up. We also need to protect against a prior
+            # task having cleaned up and immediately started a new capture
+            # session. In this case _run_future will be non-None (and hence
+            # capturing will be True), but the object identity of _run_future
+            # will no longer match future.
+            if self._run_future is future:
                 ret = True
                 self._run_future = None
                 self.rx = None
