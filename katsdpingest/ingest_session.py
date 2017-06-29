@@ -16,7 +16,7 @@ from katcp import Sensor
 import katsdpservices
 import logging
 import trollius
-from trollius import From
+from trollius import From, Return
 from . import utils, receiver, sender
 
 
@@ -84,9 +84,9 @@ class _TimeAverage(object):
     def flush(self, timestamps):
         raise NotImplementedError
 
-    def finish(self):
-        """Flush if not empty, and reset to initial state"""
-        if self._ts:
+    def finish(self, flush=True):
+        """Flush if not empty and `flush` is true, and reset to initial state"""
+        if self._ts and flush:
             self.flush(self._ts)
         self._start_ts = None
         self._ts = []
@@ -491,6 +491,9 @@ class CBFIngest(object):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
+        Callers won't normally call this, since it is done by the constructor.
+        It is provided for the pre-tuner.
+
         Parameters
         ----------
         context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
@@ -519,19 +522,22 @@ class CBFIngest(object):
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
                                  excise=excise)
 
-    def _init_sensors(self, my_sensors):
-        self._my_sensors = my_sensors
+    def _zero_counters(self):
         self.output_bytes = 0
-        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
         self.output_bytes_sensor.set_value(0)
         self.output_heaps = 0
-        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
         self.output_heaps_sensor.set_value(0)
         self.output_dumps = 0
-        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
         self.output_dumps_sensor.set_value(0)
+
+    def _init_sensors(self, my_sensors):
+        self._my_sensors = my_sensors
+        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
+        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
+        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
+        self._zero_counters()
 
     def _init_baselines(self, antenna_mask):
         # Configure the masking and reordering of baselines
@@ -552,7 +558,10 @@ class CBFIngest(object):
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
 
-    def _init_proc(self, proc_template):
+    def _init_proc(self, context, excise):
+        percentile_sizes = list(set(r[1] - r[0] for r in self.bls_ordering.percentile_ranges))
+        proc_template = self.create_proc_template(
+            context, percentile_sizes, len(self.channel_ranges.input), excise)
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = proc_template.instantiate(
                 self.command_queue, len(self.channel_ranges.input),
@@ -574,6 +583,9 @@ class CBFIngest(object):
             self.command_queue, np.asarray(self.bls_ordering.baseline_inputs, dtype=np.uint16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
+        logger.debug("\nProcessing Blocks\n=================\n")
+        for description in self.proc.descriptions():
+            logger.debug("\t".join([str(x) for x in description]))
 
     def _init_resources(self):
         self.jobs = resource.JobQueue()
@@ -680,7 +692,8 @@ class CBFIngest(object):
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         # Determine bandwidth of the signal display product
-        sd_bandwidth = self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output) / len(self.channel_ranges.cbf)
+        sd_bandwidth = (self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output)
+                        / len(self.channel_ranges.cbf))
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the digitally processed signal in Hz.",
@@ -694,13 +707,12 @@ class CBFIngest(object):
             description="The frequency channel of the data in this heap.",
             shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
 
-    def __init__(self, args, cbf_attr, channel_ranges, proc_template,
-                 my_sensors, telstate):
+    def __init__(self, args, cbf_attr, channel_ranges, context, my_sensors, telstate):
         self._sdisp_ips = {}
         self._center_freq = None
         self._run_future = None
         # Set by stop to abort prior to creating the receiver
-        self._stopped = False
+        self._stopped = True
 
         self.rx_spead_endpoints = args.cbf_spead
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
@@ -713,7 +725,7 @@ class CBFIngest(object):
         self._init_sensors(my_sensors)
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
-        self._init_proc(proc_template)
+        self._init_proc(context, args.excise)
         self._init_resources()
 
         # Instantiation of input streams is delayed until the asynchronous task
@@ -755,9 +767,8 @@ class CBFIngest(object):
         """Send a stop packet to a stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
-        if stream is not None:
-            yield From(stream.async_flush())
-            yield From(stream.async_send_heap(ig.get_end()))
+        yield From(stream.async_flush())
+        yield From(stream.async_send_heap(ig.get_end()))
 
     @trollius.coroutine
     def drop_sdisp_ip(self, ip):
@@ -768,38 +779,36 @@ class CBFIngest(object):
         KeyError
             if `ip` is not currently in the list
         """
-        logger.info("Removing ip %s from the signal display list." % (ip))
+        logger.info("Removing ip %s from the signal display list.", ip)
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
-        if self.ig_sd is not None:
-            yield From(self._stop_stream(stream, self.ig_sd))
+        yield From(self._stop_stream(stream, self.ig_sd))
 
-    def add_sdisp_ip(self, ip, port):
+    def add_sdisp_ip(self, endpoint):
         """Add a new server to the signal display list.
 
         Parameters
         ----------
-        ip : str
-            Hostname or IP address
-        port : int
-            UDP port number
+        endpoint : :class:`katsdptelstate.endpoint.Endpoint`
+            Destination host and port
 
         Raises
         ------
         KeyError
             if `ip` is already in the list (even if on a different port)
         """
-        if ip in self._sdisp_ips:
-            raise ValueError('{0} is already in the active list of recipients'.format(ip))
+        if endpoint.host in self._sdisp_ips:
+            raise ValueError('{0} is already in the active list of recipients'.format(endpoint))
         config = spead2.send.StreamConfig(max_packet_size=8972, rate=self.sd_spead_rate / 8)
-        logger.info("Adding %s:%s to signal display list. Starting stream..." % (ip, port))
-        stream = spead2.send.trollius.UdpStream(spead2.ThreadPool(), ip, port, config)
+        logger.info("Adding %s to signal display list. Starting stream...", endpoint)
+        stream = spead2.send.trollius.UdpStream(
+            spead2.ThreadPool(), endpoint.host, endpoint.port, config)
         # Ensure that signal display streams that form the full band between
         # them always have unique heap cnts. The first output channel is used
         # as a unique key.
         stream.set_cnt_sequence(self.channel_ranges.sd_output.start,
                                 len(self.channel_ranges.cbf))
-        self._sdisp_ips[ip] = stream
+        self._sdisp_ips[endpoint.host] = stream
 
     def set_center_freq(self, center_freq):
         """Change the center frequency reported to signal displays."""
@@ -1107,16 +1116,31 @@ class CBFIngest(object):
     def _set_telstate_entry(self, name, value, attribute=True):
         utils.set_telstate_entry(self.telstate, name, value, None, attribute)
 
+    @property
+    def capturing(self):
+        return self._run_future is not None
+
     def start(self):
         assert self._run_future is None
+        assert self.rx is None
+        assert self._stopped
+        self._stopped = False
         self._run_future = trollius.async(self.run())
 
     @trollius.coroutine
     def stop(self):
         """Shut down the session. It is safe to make reentrant calls: each
-        will wait for the shutdown to complete.
+        will wait for the shutdown to complete. It is safe to call
+        :meth:`start` again once one of the callers returns.
+
+        Returns
+        -------
+        stopped : bool
+            True if we were running. If multiple callers call concurrently
+            when running, exactly one of them will return true.
         """
-        if self._run_future:
+        ret = False
+        if self.capturing:
             self._stopped = True
             if self.rx is not None:
                 logger.info('Stopping receiver...')
@@ -1124,30 +1148,38 @@ class CBFIngest(object):
             logger.info('Waiting for run to stop...')
             yield From(self._run_future)
             logger.info('Run stopped')
-            self._run_future = None
-            self.rx = None
+            if self.capturing:
+                ret = True
+                self._run_future = None
+                self.rx = None
+        raise Return(ret)
 
     @trollius.coroutine
     def run(self):
-        """Thin wrapper than runs the real code and handles some cleanup."""
+        """Thin wrapper than runs the real code and handles exceptions."""
         try:
-            # PyCUDA has a bug/limitation regarding cleanup
-            # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
-            # to cause device objects and `HostArray`s to leak. To prevent it,
-            # we need to ensure that references are dropped (and hence objects
-            # are deleted) with the context being current.
-            with self.command_queue.context:
-                try:
-                    yield From(self._run())
-                finally:
-                    # These have references to self, causing circular references
-                    self._output_avg = None
-                    self._sd_avg = None
-                    # Drop last references to all the objects
-                    self.proc = None
+            yield From(self._run())
         except Exception:
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
+
+    def close(self):
+        # PyCUDA has a bug/limitation regarding cleanup
+        # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
+        # to cause device objects and `HostArray`s to leak. To prevent it,
+        # we need to ensure that references are dropped (and hence objects
+        # are deleted) with the context being current.
+        with self.command_queue.context:
+            # These have references to self, causing circular references
+            del self._output_avg
+            del self._sd_avg
+            # Drop last references to all the objects
+            del self.proc
+            del self.proc_resource
+            del self.input_resource
+            del self.output_resource
+            del self.sd_input_resource
+            del self.sd_output_resource
 
     @trollius.coroutine
     def _get_data(self):
@@ -1166,7 +1198,6 @@ class CBFIngest(object):
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
                 self.status_sensor.set_value("capturing")
-                rate_timer = time.time()
 
             # Generate timestamps
             current_ts_rel = frame.timestamp / self.cbf_attr['scale_factor_timestamp']
@@ -1196,7 +1227,13 @@ class CBFIngest(object):
     @trollius.coroutine
     def _run(self):
         """Real implementation of `run`."""
-        # Send metadata and start-of-stream packets
+        # Ensure we have clean state. Some of this is unnecessary in normal
+        # use, but important if the previous session crashed.
+        self._zero_counters()
+        self._output_avg.finish(flush=False)
+        self._sd_avg.finish(flush=False)
+        self._init_ig_sd()
+        # Send start-of-stream packets.
         yield From(self._send_sd_data(self.ig_sd.get_start()))
         yield From(self.tx_spectral.start())
         yield From(self.tx_continuum.start())
@@ -1205,7 +1242,7 @@ class CBFIngest(object):
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.channel_ranges.subscribed,
             len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
-        # If stop() was set before we create self.rx, it won't have been able
+        # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
             self.rx.stop()
@@ -1214,28 +1251,17 @@ class CBFIngest(object):
         yield From(self._get_data())
 
         logger.info('Joined with receiver. Flushing final groups...')
-        if self.proc_resource is not None:    # Could be None if no heaps arrived
-            if self._output_avg is not None:
-                self._output_avg.finish()
-            self._sd_avg.finish()
+        self._output_avg.finish()
+        self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
         yield From(self.jobs.finish())
         logger.info('Jobs complete')
-        if self.tx_spectral is not None:
-            logger.info('Stopping tx_spectral stream...')
-            yield From(self.tx_spectral.stop())
-            self.tx_spectral = None
-        if self.tx_continuum is not None:
-            logger.info('Stopping tx_continuum stream...')
-            yield From(self.tx_continuum.stop())
-            self.tx_continuum = None
-        if self.ig_sd is not None:
-            for tx in self._sdisp_ips.itervalues():
-                logger.info('Stopping signal display stream...')
-                yield From(self._stop_stream(tx, self.ig_sd))
-        if self.proc is not None:   # Could be None if no heaps arrived
-            logger.debug("\nProcessing Blocks\n=================\n")
-            for description in self.proc.descriptions():
-                logger.debug("\t".join([str(x) for x in description]))
+        logger.info('Stopping tx_spectral stream...')
+        yield From(self.tx_spectral.stop())
+        logger.info('Stopping tx_continuum stream...')
+        yield From(self.tx_continuum.stop())
+        for tx in self._sdisp_ips.itervalues():
+            logger.info('Stopping signal display stream...')
+            yield From(self._stop_stream(tx, self.ig_sd))
         logger.info("CBF ingest complete")
         self.status_sensor.set_value("complete")
