@@ -7,6 +7,7 @@ import threading
 import time
 import sys
 import katsdpservices
+from katsdptelstate.endpoint import endpoint_parser
 
 
 # This must be as early as possible to intercept all logger registrations
@@ -26,6 +27,7 @@ class Logger(logging.getLoggerClass()):
         with cls._lock:
             # Make a copy, which is safe to use outside the lock
             return dict(cls._loggers)
+
 
 logging.setLoggerClass(Logger)
 
@@ -123,21 +125,6 @@ class IngestDeviceServer(DeviceServer):
 
     def __init__(self, user_args, channel_ranges, cbf_attr, *args, **kwargs):
         self._stopping = False
-        # reference to the CBF ingest session
-        self.cbf_session = None
-        self.sdisp_ips = {}
-        self.channel_ranges = channel_ranges
-        self.cbf_attr = cbf_attr
-        self.user_args = user_args
-        # add default or user specified endpoints
-        for sdisp_endpoint in user_args.sdisp_spead:
-            self.sdisp_ips[sdisp_endpoint.host] = sdisp_endpoint.port
-        # compile the device code
-        baselines = BaselineOrdering(cbf_attr['bls_ordering'], user_args.antenna_mask)
-        percentile_sizes = set(r[1] - r[0] for r in baselines.percentile_ranges)
-        context = accel.create_some_context(interactive=False)
-        self.proc_template = CBFIngest.create_proc_template(
-            context, percentile_sizes, len(channel_ranges.input), user_args.excise)
 
         sensors = [
             Sensor(
@@ -177,6 +164,15 @@ class IngestDeviceServer(DeviceServer):
         ]
         self._my_sensors = {sensor.name: sensor for sensor in sensors}
 
+        # create the device resources
+        context = accel.create_some_context(interactive=False)
+        self.cbf_ingest = CBFIngest(
+            user_args, cbf_attr, channel_ranges, context,
+            self._my_sensors, user_args.telstate)
+        # add default or user specified endpoints
+        for sdisp_endpoint in user_args.sdisp_spead:
+            self.cbf_ingest.add_sdisp_ip(sdisp_endpoint)
+
         super(IngestDeviceServer, self).__init__(*args, **kwargs)
 
     def setup_sensors(self):
@@ -193,18 +189,14 @@ class IngestDeviceServer(DeviceServer):
     @return_reply(Str())
     def request_enable_debug(self, req, msg):
         """Enable debugging of the ingest process."""
-        self._enable_debug(True)
+        self.cbf_ingest.enable_debug(True)
         return("ok", "Debug logging enabled.")
 
     @return_reply(Str())
     def request_disable_debug(self, req, msg):
         """Disable debugging of the ingest process."""
-        self._enable_debug(False)
+        self.cbf_ingest.enable_debug(False)
         return ("ok", "Debug logging disabled.")
-
-    def _enable_debug(self, debug):
-        if self.cbf_session is not None:
-            self.cbf_session.enable_debug(debug)
 
     @request(Str(optional=True), Str(optional=True))
     @return_reply(Str())
@@ -242,20 +234,14 @@ class IngestDeviceServer(DeviceServer):
     def request_capture_init(self, req, msg):
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
-        if self.cbf_session is not None:
+        if self.cbf_ingest.capturing:
             raise tornado.gen.Return((
-                "fail", "Existing capture session found. If you really want to init, stop the current capture using capture_stop."))
+                "fail", "Existing capture session found. If you really want to init, stop the current capture using capture-done."))
         if self._stopping:
             raise tornado.gen.Return((
                 "fail", "Cannot start a capture session while ingest is shutting down"))
 
-        self.cbf_session = CBFIngest(
-                self.user_args, self.cbf_attr, self.channel_ranges, self.proc_template,
-                self._my_sensors, self.user_args.telstate)
-        # add in existing signal display recipients...
-        for (ip, port) in self.sdisp_ips.iteritems():
-            self.cbf_session.add_sdisp_ip(ip, port)
-        self.cbf_session.start()
+        self.cbf_ingest.start()
 
         self._my_sensors["capture-active"].set_value(1)
         smsg = "Capture initialised at %s" % time.ctime()
@@ -272,9 +258,7 @@ class IngestDeviceServer(DeviceServer):
         center_freq_hz : int
             The current system center frequency in hz
         """
-        if self.cbf_session is None:
-            return ("fail", "No active capture session. Please start one using capture_init")
-        self.cbf_session.set_center_freq(center_freq_hz)
+        self.cbf_ingest.set_center_freq(center_freq_hz)
         logger.info("Center frequency set to %f Hz", center_freq_hz)
         return ("ok", "set")
 
@@ -284,16 +268,13 @@ class IngestDeviceServer(DeviceServer):
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
         try:
-            del self.sdisp_ips[ip]
+            yield to_tornado_future(trollius.async(self.cbf_ingest.drop_sdisp_ip(ip)))
         except KeyError:
             raise tornado.gen.Return(
                     ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip)))
-        if self.cbf_session is not None:
-            # drop_sdisp_ip can in theory raise KeyError, but the check against
-            # our own list prevents that.
-            yield to_tornado_future(trollius.async(self.cbf_session.drop_sdisp_ip(ip)))
-        raise tornado.gen.Return(
-                ("ok", "The IP address has been dropped as a signal display recipient"))
+        else:
+            raise tornado.gen.Return(
+                    ("ok", "The IP address has been dropped as a signal display recipient"))
 
     @request(Str())
     @return_reply(Str())
@@ -301,45 +282,36 @@ class IngestDeviceServer(DeviceServer):
         """Add the supplied ip and port (ip[:port]) to the list of signal
         display data recipients.If not port is supplied default of 7149 is
         used."""
-        ipp = ip.split(":")
-        ip = ipp[0]
-        if len(ipp) > 1:
-            port = int(ipp[1])
-        else:
-            port = 7149
-        if ip in self.sdisp_ips:
+        endpoint = endpoint_parser(7149)(ip)
+        try:
+            self.cbf_ingest.add_sdisp_ip(endpoint)
+        except ValueError:
             return ("ok", "The supplied IP is already in the active list of recipients.")
-        self.sdisp_ips[ip] = port
-        if self.cbf_session is not None:
-            # add_sdisp_ip can in theory raise KeyError, but the check against
-            # our own list prevents that.
-            self.cbf_session.add_sdisp_ip(ip, port)
-        return ("ok", "Added IP address %s (port: %i) to list of signal display data recipients." % (ip, port))
+        else:
+            return ("ok", "Added {} to list of signal display data recipients.".format(endpoint))
 
     @tornado.gen.coroutine
     def handle_interrupt(self):
         """Used to attempt a graceful resolution to external
         interrupts. Basically calls capture done."""
         self._stopping = True   # Prevent a capture-init during shutdown
-        if self.cbf_session is not None:
+        if self.cbf_ingest.capturing:
             yield self.request_capture_done("", "")
+        self.cbf_ingest.close()
 
     @return_reply(Str())
     @tornado.gen.coroutine
     def request_capture_done(self, req, msg):
         """Stops the current capture."""
-        session = self.cbf_session
-        if session is None:
+        if not self.cbf_ingest.capturing:
             raise tornado.gen.Return(("fail", "No existing capture session."))
 
-        yield to_tornado_future(trollius.async(session.stop()))
+        stopped = yield to_tornado_future(trollius.async(self.cbf_ingest.stop()))
 
-        # We need to check that cbf_session hasn't changed, because while
-        # yielding, another connection may have manipulated it. This check
-        # ensures that any particular session is only reported shut down
-        # once.
-        if self.cbf_session is session:
-            self.cbf_session = None
+        # In the case of concurrent connections, we need to ensure that we
+        # were the one that actually did the stop, as another connection may
+        # have raced us to stop and then started a new session.
+        if stopped:
             self._my_sensors["capture-active"].set_value(0)
             # Error states were associated with the session, which is now dead.
             self._my_sensors["device-status"].set_value("ok")
