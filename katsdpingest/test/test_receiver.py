@@ -9,6 +9,7 @@ import trollius
 from trollius import From, Return
 from katsdpingest.receiver import Receiver
 from katsdpingest.sigproc import Range
+from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
 from katsdpsigproc.test.test_resource import async_test
 from nose.tools import *
@@ -108,37 +109,12 @@ class TestReceiver(object):
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)('239.0.0.1+1')
         self.n_streams = 2
         self.n_xengs = 4
-        self.n_chans = 4096
         sensors = mock.MagicMock()
-        self.adc_sample_rate = 1712000000
-        self.n_accs = 256000
-        self.n_ants = 4
-        self.n_bls = self.n_ants * (self.n_ants + 1) * 2
-        baselines = []
-        for i in range(self.n_ants):
-            for j in range(i, self.n_ants):
-                for pol1 in ('v', 'h'):
-                    for pol2 in ('v', 'h'):
-                        name1 = 'm{:03}{}'.format(i, pol1)
-                        name2 = 'm{:03}{}'.format(j, pol2)
-                        baselines.append([name1, name2])
-        baselines = np.array(baselines)
-        cbf_attr = {
-            'adc_sample_rate': self.adc_sample_rate,
-            'bandwidth': self.adc_sample_rate / 2,
-            'n_accs': self.n_accs,
-            'n_ants': self.n_ants,
-            'n_bls': self.n_bls,
-            'n_chans': self.n_chans,
-            'n_chans_per_substream': self.n_chans // self.n_xengs,
-            'int_time': self.n_accs * self.n_chans * 2 / self.adc_sample_rate,
-            'sync_time': 14000000.0,
-            'scale_factor_timestamp': self.adc_sample_rate,
-            'ticks_between_spectra': 2 * self.n_chans,
-            'bls_ordering': baselines
-        }
+        self.cbf_attr = fake_cbf_attr(4, self.n_xengs)
+        self.n_chans = self.cbf_attr['n_chans']
+        self.n_bls = len(self.cbf_attr['bls_ordering'])
         self.rx = Receiver(endpoints, '127.0.0.1', False, Range(0, self.n_chans), self.n_chans,
-                           sensors, cbf_attr, active_frames=3, loop=self.loop)
+                           sensors, self.cbf_attr, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
@@ -188,7 +164,7 @@ class TestReceiver(object):
             -1000, 1000,
             size=(n_frames, self.n_xengs, self.n_chans // self.n_xengs, self.n_bls, 2))
         xeng_raw = xeng_raw.astype(np.int32)
-        interval = 2 * self.n_accs * self.n_chans
+        interval = self.cbf_attr['ticks_between_spectra'] * self.cbf_attr['n_accs']
         timestamps = np.arange(n_frames, dtype=np.uint64) * interval + 1234567890123
         return xeng_raw, timestamps
 
