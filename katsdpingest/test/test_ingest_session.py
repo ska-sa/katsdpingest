@@ -4,23 +4,43 @@ import numpy as np
 from katsdpingest import ingest_session
 from katsdpingest.utils import Range
 from katsdpsigproc.test.test_accel import device_test
-import unittest
 import mock
 from nose.tools import *
 
 
+def fake_cbf_attr(n_antennas, n_xengs=4):
+    cbf_attr=dict(
+        adc_sample_rate=1712000000.0,
+        n_chans=4096,
+        n_chans_per_substream=1024,
+        n_accs=408 * 256,
+        sync_time=1400000000.0
+    )
+    cbf_attr['bandwidth'] = cbf_attr['adc_sample_rate'] / 2
+    cbf_attr['center_freq'] = cbf_attr['bandwidth'] / 2
+    cbf_attr['scale_factor_timestamp'] = cbf_attr['adc_sample_rate']
+    cbf_attr['ticks_between_spectra'] = 2 * cbf_attr['n_chans']
+    cbf_attr['n_chans_per_substream'] = cbf_attr['n_chans'] // n_xengs
+    cbf_attr['int_time'] = (cbf_attr['n_accs'] * cbf_attr['ticks_between_spectra']
+                            / cbf_attr['adc_sample_rate'])
+    bls_ordering = []
+    antennas = ['m{:03}'.format(90 + i) for i in range(n_antennas)]
+    # This ordering matches what's currently produced by CBF
+    for ib, b in enumerate(antennas):
+        for a in antennas[:ib+1]:
+            bls_ordering.append((a + 'h', b + 'h'))
+            bls_ordering.append((a + 'v', b + 'v'))
+            bls_ordering.append((a + 'h', b + 'v'))
+            bls_ordering.append((a + 'v', b + 'h'))
+    cbf_attr['bls_ordering'] = np.array(bls_ordering)
+    return cbf_attr
+
+
 class TestTimeAverage(object):
     def setup(self):
-        self.cbf_attr = {
-            'scale_factor_timestamp': 1712000000.0,
-            'adc_sample_rate': 1712000000,
-            'bandwidth': 856000000,
-            'n_accs': 123456,
-            'n_chans': 4096,
-            'int_time': 0.75,
-            'ticks_between_spectra': 8192
-        }
-        self.input_interval = 123456 * 4096 * 2
+        self.cbf_attr = fake_cbf_attr(1)
+        self.cbf_attr['int_time'] = 0.75  # Change to a round number for sake of the test
+        self.input_interval = self.cbf_attr['n_accs'] * self.cbf_attr['ticks_between_spectra']
 
     def test_constructor(self):
         avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
@@ -77,7 +97,7 @@ def test_split_array():
     np.testing.assert_equal(actual, expected)
 
 
-class TestCBFIngest(unittest.TestCase):
+class TestCBFIngest(object):
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""
