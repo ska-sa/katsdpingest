@@ -3,6 +3,7 @@
 from __future__ import print_function, absolute_import, division
 import argparse
 import functools
+import logging
 import mock
 import copy
 import numpy as np
@@ -30,7 +31,8 @@ from katsdpingest.sender import Data
 class MockReceiver(object):
     """Replacement for :class:`katsdpignest.receiver.Receiver`.
 
-    It has a predefined list of frames and yields them with no delay.
+    It has a predefined list of frames and yields them with no delay. However,
+    one can request a pause prior to a particular frame.
 
     Parameters
     ----------
@@ -42,7 +44,7 @@ class MockReceiver(object):
     """
     def __init__(self, data, timestamps,
                  endpoints, interface_address, ibv, channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=2, loop=None):
+                 cbf_attr, active_frames=2, loop=None, pauses=None):
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
         self._data = data
@@ -50,6 +52,8 @@ class MockReceiver(object):
         self._stop_event = trollius.Event()
         self._channel_range = channel_range
         self._substreams = len(channel_range) // cbf_attr['n_chans_per_substream']
+        self._pauses = {} if pauses is None else pauses
+        self._loop = loop
 
     def stop(self):
         self._stop_event.set()
@@ -60,6 +64,10 @@ class MockReceiver(object):
 
     @trollius.coroutine
     def get(self):
+        event = self._pauses.get(self._next_frame)
+        if event is None:
+            event = trollius.sleep(0, loop=self._loop)
+        yield From(event)
         if self._next_frame >= len(self._data):
             raise spead2.Stopped('end of frame list')
         frame = Frame(self._timestamps[self._next_frame], self._substreams)
@@ -73,7 +81,7 @@ class MockReceiver(object):
 
 
 class DeepCopyMock(mock.MagicMock):
-    """Mock that takes deep copies of its arguments."""
+    """Mock that takes deep copies of its arguments when called."""
     def __call__(self, *args, **kwargs):
         return super(DeepCopyMock, self).__call__(*copy.deepcopy(args), **copy.deepcopy(kwargs))
 
@@ -102,6 +110,24 @@ def decode_heap(heap):
         heap = None
     in_stream.stop()
     return heap
+
+
+def decode_heap_ig(heap):
+    ig = spead2.ItemGroup()
+    heap = decode_heap(heap)
+    assert_is_not_none(heap)
+    ig.update(heap)
+    return ig
+
+
+def is_start(heap):
+    heap = decode_heap(heap)
+    return heap.is_start_of_stream()
+
+
+def is_stop(heap):
+    heap = decode_heap(heap)
+    return heap is None
 
 
 class TestIngestDeviceServer(object):
@@ -190,10 +216,11 @@ class TestIngestDeviceServer(object):
             user_args.output_channels, user_args.sd_output_channels)
 
         self._data, self._timestamps = self._create_data()
+        self._pauses = None
         self._Receiver = self._patch(
             'katsdpingest.receiver.Receiver',
             side_effect=lambda *args, **kwargs:
-                MockReceiver(self._data, self._timestamps, *args, **kwargs))
+                MockReceiver(self._data, self._timestamps, *args, pauses=self._pauses, **kwargs))
         self._tx = {'continuum': mock.MagicMock(), 'spectral': mock.MagicMock()}
         for tx in self._tx.values():
             tx.start.return_value = done_future
@@ -310,9 +337,6 @@ class TestIngestDeviceServer(object):
     def test_capture(self):
         """Test the core data capture process."""
         yield self.make_request('capture-init')
-        # Give everything time to happen
-        for i in range(100):
-            yield tornado.gen.moment
         yield self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         l0_int_time = 8 * self.cbf_attr['int_time']
@@ -341,16 +365,87 @@ class TestIngestDeviceServer(object):
             self.user_args.sd_continuum_factor)
         calls = sd_tx.async_send_heap.mock_calls
         # First heap should be start-of-stream marker
-        heap = decode_heap(calls[0][1][0])
-        assert_true(heap.is_start_of_stream())
+        assert_true(is_start(calls[0][1][0]))
         # Following heaps should contain averaged visibility data
         assert_equal(len(expected_sd), len(calls) - 2)
         for i, call in enumerate(calls[1:-1]):
-            ig = spead2.ItemGroup()
-            ig.update(decode_heap(call[1][0]))
+            ig = decode_heap_ig(call[1][0])
             vis = ig['sd_blmxdata'].value
             # Signal displays take complex values as pairs of floats; reconstitute them.
             vis = vis[..., 0] + 1j * vis[..., 1]
             np.testing.assert_allclose(expected_sd[i], vis, rtol=1e-5, atol=1e-6)
         # Final call must send a stop
-        assert_is_none(decode_heap(calls[-1][1][0]))
+        assert_true(is_stop(calls[-1][1][0]))
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_done_when_not_capturing(self):
+        """Calling capture-stop when not capturing fails"""
+        yield self.assert_request_fails(r'No existing capture session', 'capture-done')
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_init_when_capturing(self):
+        """Calling capture-init when capturing fails"""
+        yield self.make_request('capture-init')
+        yield self.assert_request_fails(r'Existing capture session found', 'capture-init')
+        yield self.make_request('capture-done')
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_enable_disable_debug(self):
+        """?enable-debug and ?disable-debug change the log level of session logger"""
+        assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
+        yield self.make_request('enable-debug')
+        assert_equal(logging.DEBUG, logging.getLogger('katsdpingest.ingest_session').level)
+        yield self.make_request('disable-debug')
+        assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_set_center_freq(self):
+        """A center frequency set by ?set-center-freq is reflected in signal display output."""
+        cbf_center_freq = 2e9
+        channel_width = self.cbf_attr['bandwidth'] / self.cbf_attr['n_chans']
+        sd_output_channels = self.user_args.sd_output_channels
+        sd_center_channel = (sd_output_channels.start + sd_output_channels.stop) / 2
+        sd_center_freq = (cbf_center_freq
+                          + (sd_center_channel - self.cbf_attr['n_chans'] / 2) * channel_width)
+        yield self.make_request('set-center-freq', cbf_center_freq)
+        yield self.make_request('capture-init')
+        yield self.make_request('capture-done')
+
+        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        call = sd_tx.async_send_heap.mock_calls[1]
+        ig = decode_heap_ig(call[1][0])
+        assert_equal(sd_center_freq, ig['center_freq'].value)
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_drop_sdisp_ip_not_capturing(self):
+        """Dropping a sdisp IP when not capturing sends no data at all."""
+        yield self.make_request('drop-sdisp-ip', '127.0.0.2')
+        yield self.make_request('capture-init')
+        yield self.make_request('capture-done')
+        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        sd_tx.async_send_heap.assert_not_called()
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_drop_sdisp_ip_capturing(self):
+        """Dropping a sdisp IP when capturing sends a stop heap."""
+        self._pauses = {10: trollius.Future()}
+        yield self.make_request('capture-init')
+        # Ensure the pause point gets reached
+        for i in range(100):
+            yield tornado.gen.moment
+        yield self.make_request('drop-sdisp-ip', '127.0.0.2')
+        self._pauses[10].set_result(None)
+        yield self.make_request('capture-done')
+        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        calls = sd_tx.async_send_heap.mock_calls
+        assert_equal(3, len(calls))     # start, one data, and stop heaps
+        assert_true(is_start(calls[0][1][0]))
+        ig = decode_heap_ig(calls[1][1][0])
+        assert_in('sd_blmxdata', ig)
+        assert_true(is_stop(calls[2][1][0]))
