@@ -449,3 +449,46 @@ class TestIngestDeviceServer(object):
         ig = decode_heap_ig(calls[1][1][0])
         assert_in('sd_blmxdata', ig)
         assert_true(is_stop(calls[2][1][0]))
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_drop_sdisp_ip_missing(self):
+        """Dropping an unregistered IP address fails"""
+        yield self.assert_request_fails('does not exist', 'drop-sdisp-ip', '127.0.0.3')
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_internal_log_level_query_all(self):
+        """Test internal-log-level query with no parameters"""
+        informs = yield self.make_request('internal-log-level')
+        levels = {}
+        for inform in informs:
+            levels[inform.arguments[0]] = inform.arguments[1]
+        # Check that some known logger appears in the list
+        assert_in('katcp.server', levels)
+        assert_equal('NOTSET', levels['katcp.server'])
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_internal_log_level_query_one(self):
+        """Test internal-log-level query with one parameter"""
+        informs = yield self.make_request('internal-log-level', 'katcp.server')
+        assert_equal(1, len(informs))
+        assert_equal(katcp.Message.inform('internal-log-level', 'katcp.server', 'NOTSET',
+                                          mid=informs[0].mid),
+                     informs[0])
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_internal_log_level_query_one_missing(self):
+        """Querying internal-log-level with a non-existent logger fails"""
+        self.assert_request_fails('Unknown logger', 'internal-log-level', 'notalogger')
+
+    @async_test
+    @tornado.gen.coroutine
+    def test_internal_log_level_set(self):
+        """Set a logger level via internal-log-level"""
+        yield self.make_request('internal-log-level', 'katcp.server', 'INFO')
+        assert_equal(logging.INFO, logging.getLogger('katcp.server').level)
+        yield self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
+        assert_equal(logging.NOTSET, logging.getLogger('katcp.server').level)
