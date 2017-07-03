@@ -744,7 +744,7 @@ class CBFIngest(object):
         if debug:
             logger.setLevel(logging.DEBUG)
         else:
-            logger.setLevel(logging.INFO)
+            logger.setLevel(logging.NOTSET)
 
     def _send_sd_data(self, data):
         """Send a heap to all signal display servers, asynchronously.
@@ -782,7 +782,8 @@ class CBFIngest(object):
         logger.info("Removing ip %s from the signal display list.", ip)
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
-        yield From(self._stop_stream(stream, self.ig_sd))
+        if self.capturing:
+            yield From(self._stop_stream(stream, self.ig_sd))
 
     def add_sdisp_ip(self, endpoint):
         """Add a new server to the signal display list.
