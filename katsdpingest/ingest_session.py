@@ -114,37 +114,6 @@ def _split_array(x, dtype):
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
-def _slot_shape(x, split_dtype=None):
-    """Return the dtype and shape of an array as a dict of keys that can be
-    passed to :func:`spead2.ItemGroup.add_item`.
-
-    Parameters
-    ----------
-    x : object
-        Array or array-like object with `shape` and `dtype` attributes
-    split_dtype : numpy dtype, optional
-        If `split_dtype` is specified, it considers the result of passing an array
-        shaped like `x` to :func:`_split_array`.
-
-    Returns
-    -------
-    dtype : numpy dtype
-        Data type
-    shape : tuple
-        Data shape
-    """
-    dtype = np.dtype(x.dtype)
-    shape = tuple(x.shape)
-    if split_dtype is not None:
-        new_dtype = np.dtype(split_dtype)
-        if dtype.itemsize % new_dtype.itemsize != 0:
-            raise ValueError('item size does not evenly divide')
-        ratio = dtype.itemsize // new_dtype.itemsize
-        shape = shape + (ratio,)
-        dtype = new_dtype
-    return {'dtype': dtype, 'shape': shape}
-
-
 class ChannelRanges(object):
     """
     Tracks the various channel ranges involved in ingest. Each channel range
