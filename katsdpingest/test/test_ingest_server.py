@@ -422,6 +422,23 @@ class TestIngestDeviceServer(object):
 
     @async_test
     @tornado.gen.coroutine
+    def test_add_sdisp_ip(self):
+        """Add additional addresses with add-sdisp-ip."""
+        yield self.make_request('add-sdisp-ip', '127.0.0.3:8000')
+        yield self.make_request('add-sdisp-ip', '127.0.0.4')
+        # A duplicate
+        yield self.make_request('add-sdisp-ip', '127.0.0.3:8001')
+        yield self.make_request('capture-init')
+        yield self.make_request('capture-done')
+        assert_equal([('127.0.0.2', 7149), ('127.0.0.3', 8000), ('127.0.0.4', 7149)],
+                     list(sorted(self._sd_tx.keys())))
+        # We won't check the contents, since that is tested elsewhere. Just
+        # check that all the streams got the expected number of heaps.
+        for tx in self._sd_tx.values():
+            assert_equal(5, len(tx.async_send_heap.mock_calls))
+
+    @async_test
+    @tornado.gen.coroutine
     def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
         yield self.make_request('drop-sdisp-ip', '127.0.0.2')
@@ -492,3 +509,5 @@ class TestIngestDeviceServer(object):
         assert_equal(logging.INFO, logging.getLogger('katcp.server').level)
         yield self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
         assert_equal(logging.NOTSET, logging.getLogger('katcp.server').level)
+        yield self.assert_request_fails(
+            'Unknown log level', 'internal-log-level', 'katcp.server', 'DUMMY')
