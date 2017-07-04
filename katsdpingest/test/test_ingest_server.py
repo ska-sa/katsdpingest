@@ -453,13 +453,19 @@ class TestIngestDeviceServer(object):
         """Dropping a sdisp IP when capturing sends a stop heap."""
         self._pauses = {10: trollius.Future()}
         yield self.make_request('capture-init')
-        # Ensure the pause point gets reached
-        for i in range(100):
-            yield tornado.gen.moment
+        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        # Ensure the pause point gets reached, and wait for
+        # the signal display data to be sent.
+        for i in range(1000):
+            if len(sd_tx.async_send_heap.mock_calls) >= 2:
+                break
+            yield tornado.gen.sleep(0.01)
+        else:
+            raise tornado.gen.TimeoutError(
+                'Timed out waiting for signal display tx call to be made')
         yield self.make_request('drop-sdisp-ip', '127.0.0.2')
         self._pauses[10].set_result(None)
         yield self.make_request('capture-done')
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         calls = sd_tx.async_send_heap.mock_calls
         assert_equal(3, len(calls))     # start, one data, and stop heaps
         assert_true(is_start(calls[0][1][0]))
