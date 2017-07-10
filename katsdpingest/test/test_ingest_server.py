@@ -29,7 +29,7 @@ from katsdpingest.sender import Data
 
 
 class MockReceiver(object):
-    """Replacement for :class:`katsdpignest.receiver.Receiver`.
+    """Replacement for :class:`katsdpingest.receiver.Receiver`.
 
     It has a predefined list of frames and yields them with no delay. However,
     one can request a pause prior to a particular frame.
