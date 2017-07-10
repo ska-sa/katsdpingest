@@ -20,12 +20,16 @@ import katcp
 import katsdptelstate
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
+import katsdpingest.sigproc
 from katsdpingest.utils import Range
 from katsdpingest.ingest_server import IngestDeviceServer
 from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
+
+
+CAM_FLAG = 1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('cam')
 
 
 class MockReceiver(object):
@@ -177,12 +181,20 @@ class TestIngestDeviceServer(object):
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
 
+    def fake_channel_flags(self):
+        channel_flags = np.zeros(self.cbf_attr['n_chans'], np.uint8)
+        channel_flags[464] = CAM_FLAG
+        channel_flags[700:800] = CAM_FLAG
+        channel_flags[900] = CAM_FLAG
+        return channel_flags
+
     @device_test
     def setup(self, context, command_queue):
         done_future = trollius.Future()
         done_future.set_result(None)
         self._patchers = []
         self._telstate = katsdptelstate.TelescopeState()
+        self._telstate.clear()   # Prevent state leaks from other tests
         self._ioloop = AsyncIOMainLoop()
         self._ioloop.install()
         n_xengs = 16
@@ -210,6 +222,11 @@ class TestIngestDeviceServer(object):
             name='sdp.ingest.1'
         )
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
+        self.channel_flags = self.fake_channel_flags()
+        # Put them in at the beginning of time, to ensure they apply to every dump
+        self._telstate.add('x_channel_flags', self.channel_flags, ts=0)
+        self._telstate.add('m090_data_suspect', False, ts=0)
+        self._telstate.add('m091_data_suspect', True, ts=0)
         self.channel_ranges = ChannelRanges(
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
             len(user_args.cbf_spead), 64,
@@ -285,7 +302,7 @@ class TestIngestDeviceServer(object):
         assert_regexp_matches(reply.arguments[1], msg_re)
 
     def _get_expected(self):
-        """Return expected visibilities and timestamps.
+        """Return expected visibilities, flags and timestamps.
 
         The timestamps are in seconds since the sync time. The full CBF channel
         range is returned.
@@ -315,21 +332,31 @@ class TestIngestDeviceServer(object):
         np.testing.assert_array_equal(
             self._telstate['sdp_l0_bls_ordering'],
             self.cbf_attr['bls_ordering'][inv_permutation])
-        return vis, timestamps
+        flags = np.empty(vis.shape, np.uint8)
+        flags[:] = self.channel_flags[np.newaxis, :, np.newaxis]
+        for i, (a, b) in enumerate(bls.sdp_bls_ordering):
+            if a.startswith('m091') or b.startswith('m091'):
+                # data suspect sensor is True
+                flags[:, :, i] |= CAM_FLAG
+        return vis, flags, timestamps
 
     def _channel_average(self, vis, factor):
         return np.add.reduceat(vis, np.arange(0, vis.shape[1], factor), axis=1) / factor
 
-    def _check_output(self, tx, expected_vis, expected_ts, send_slice):
+    def _channel_average_flags(self, flags, factor):
+        return np.bitwise_or.reduceat(flags, np.arange(0, flags.shape[1], factor), axis=1)
+
+    def _check_output(self, tx, expected_vis, expected_flags, expected_ts, send_slice):
         """Checks that the visibilities and timestamps are correct."""
         tx.start.assert_called_once_with()
         tx.stop.assert_called_once_with()
         calls = tx.send.mock_calls
         assert_equal(len(expected_vis), len(calls))
-        for vis, ts, call in zip(expected_vis, expected_ts, calls):
+        for vis, flags, ts, call in zip(expected_vis, expected_flags, expected_ts, calls):
             data, ts_rel = call[1]
             assert_is_instance(data, Data)
             np.testing.assert_allclose(vis, data.vis[send_slice], rtol=1e-5, atol=1e-6)
+            np.testing.assert_array_equal(flags, data.flags[send_slice])
             assert_almost_equal(ts, ts_rel)
 
     @async_test
@@ -340,40 +367,49 @@ class TestIngestDeviceServer(object):
         yield self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         l0_int_time = 8 * self.cbf_attr['int_time']
-        expected_vis, expected_ts = self._get_expected()
-        expected_output = expected_vis[:, self.channel_ranges.output.asslice(), :]
+        expected_vis, expected_flags, expected_ts = self._get_expected()
+        expected_output_vis = expected_vis[:, self.channel_ranges.output.asslice(), :]
+        expected_output_flags = expected_flags[:, self.channel_ranges.output.asslice(), :]
 
         send_range = Range(80, 736)
         self._VisSenderSet.assert_any_call(
             mock.ANY, self.user_args.l0_spectral_spead, '127.0.0.2',
             l0_flavour, l0_int_time, send_range, 464, 24)
-        self._check_output(self._tx['spectral'], expected_output, expected_ts, send_range.asslice())
+        self._check_output(self._tx['spectral'], expected_output_vis, expected_output_flags,
+                           expected_ts, send_range.asslice())
         self._tx['spectral'].stop.assert_called_once_with()
 
         send_range = Range(5, 46)
         self._VisSenderSet.assert_any_call(
             mock.ANY, self.user_args.l0_continuum_spead, '127.0.0.3',
             l0_flavour, l0_int_time, send_range, 29, 24)
-        self._check_output(self._tx['continuum'],
-                           self._channel_average(expected_output, self.user_args.continuum_factor),
-                           expected_ts, send_range.asslice())
+        self._check_output(
+            self._tx['continuum'],
+            self._channel_average(expected_output_vis, self.user_args.continuum_factor),
+            self._channel_average_flags(expected_output_flags, self.user_args.continuum_factor),
+            expected_ts, send_range.asslice())
 
         assert_equal([('127.0.0.2', 7149)], self._sd_tx.keys())
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
-        expected_sd = self._channel_average(
+        expected_sd_vis = self._channel_average(
             expected_vis[:, self.channel_ranges.sd_output.asslice(), :],
+            self.user_args.sd_continuum_factor)
+        expected_sd_flags = self._channel_average_flags(
+            expected_flags[:, self.channel_ranges.sd_output.asslice(), :],
             self.user_args.sd_continuum_factor)
         calls = sd_tx.async_send_heap.mock_calls
         # First heap should be start-of-stream marker
         assert_true(is_start(calls[0][1][0]))
         # Following heaps should contain averaged visibility data
-        assert_equal(len(expected_sd), len(calls) - 2)
+        assert_equal(len(expected_sd_vis), len(calls) - 2)
         for i, call in enumerate(calls[1:-1]):
             ig = decode_heap_ig(call[1][0])
             vis = ig['sd_blmxdata'].value
             # Signal displays take complex values as pairs of floats; reconstitute them.
             vis = vis[..., 0] + 1j * vis[..., 1]
-            np.testing.assert_allclose(expected_sd[i], vis, rtol=1e-5, atol=1e-6)
+            flags = ig['sd_blmxflags'].value
+            np.testing.assert_allclose(expected_sd_vis[i], vis, rtol=1e-5, atol=1e-6)
+            np.testing.assert_array_equal(expected_sd_flags[i], flags)
         # Final call must send a stop
         assert_true(is_stop(calls[-1][1][0]))
 
