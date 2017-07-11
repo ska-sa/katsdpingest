@@ -4,8 +4,8 @@ import time
 import logging
 
 import trollius
-from tornado.platform.asyncio import to_tornado_future
 import tornado.gen
+from katsdpservices.asyncio import to_tornado_future
 from katcp import AsyncDeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str, Float
 from katsdptelstate.endpoint import endpoint_parser
