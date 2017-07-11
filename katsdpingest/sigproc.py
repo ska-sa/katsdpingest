@@ -557,7 +557,7 @@ class Accum(accel.Operation):
         Input weights
     **flags_in** : baselines × channels, uint8
         Input flags: non-zero values cause downweighting by 2^-64
-    **channel_flags** : full-channels, uint8
+    **channel_flags** : channels, uint8
         Predetermined flags per channel
     **baseline_flags** : baselines, uint8
         Predetermined flags per baseline
@@ -1087,7 +1087,7 @@ class IngestOperation(accel.OperationSequence):
 
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
-    **channel_flags** : kept-channels, uint8
+    **channel_flags** : channels, uint8
         Predefined per-channel flags
     **baseline_flags** : baselines, uint8
         Predefined per-baseline flags, in the post-permutation ordering

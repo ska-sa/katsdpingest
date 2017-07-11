@@ -1037,31 +1037,28 @@ class CBFIngest(object):
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            channel_flags = channel_flags_buffer.empty_like()
             try:
-                channel_flags[:] = self.telstate['x_channel_flags']  # Name for testing only
+                # Name for testing only
+                channel_flags_in = self.telstate['x_channel_flags']
+                channel_flags[:] = channel_flags_in[self.channel_ranges.input.asslice()]
             except KeyError:
                 channel_flags.fill(0)
             except ValueError:
                 # Could happen if the telstate key has the wrong shape
                 logger.warn('Error loading channel flags from telstate', exc_info=True)
                 channel_flags.fill(0)
-            baseline_flags = baseline_flags_buffer.empty_like()
             self._set_baseline_flags(baseline_flags, frame.timestamp)
             data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
-                channel_flags_range = item_range.intersection(self.channel_ranges.computed)
-                channel_flags_range = channel_flags_range.relative_to(self.channel_ranges.input)
-                if item is None:
-                    channel_flags[channel_flags_range.asslice()] = data_lost_flag
                 use_range = item_range.intersection(self.channel_ranges.input)
                 if not use_range:
                     continue
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
                 if item is None:
+                    channel_flags[dest_range.asslice()] = data_lost_flag
                     vis_in[dest_range.asslice()] = 0
                 else:
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]
