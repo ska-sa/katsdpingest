@@ -107,15 +107,16 @@ SENSORS = [
     Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{receptor}_pos_adjust_pointm_azim'),
     Sensor('{receptor}_pos_adjust_pointm_elev'),
-    Sensor('{receptor}_dig_noise_diode'),
+    # Rename old-style digitiser sensors to avoid clashes with new-style remaps
+    # XXX This should be removed once we are fully switched to new-style
+    Sensor('{receptor}_dig_noise_diode',
+           sp_name='{receptor}_olddig_noise_diode'),
+    Sensor('{receptor}_{digitiser}_noise_diode'),
     Sensor('{receptor}_ap_indexer_position'),
     Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
     Sensor('{receptor}_ap_tilt_corr_azim'),
     Sensor('{receptor}_ap_tilt_corr_elev'),
-    Sensor('{receptor}_rsc_rxl_serial_number'),
-    Sensor('{receptor}_rsc_rxs_serial_number'),
-    Sensor('{receptor}_rsc_rxu_serial_number'),
-    Sensor('{receptor}_rsc_rxx_serial_number'),
+    Sensor('{receptor}_{receiver}_serial_number'),
     Sensor('{receptor}_data_suspect'),
     Sensor('{receptor}_ap_version_list', immutable=True),
     # CBF proxy sensors
@@ -227,6 +228,7 @@ class Client(object):
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
+        self._band = tornado.concurrent.Future()
         self._cbf_name = None     #: Set once _pool_resources result is set
         self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
@@ -261,12 +263,15 @@ class Client(object):
         -------
         sensors : list of `Sensor`
         """
+        band = self._band.result()
         # Build table of names for expanding sensor templates
         # Using a defaultdict removes the need to hardcode the list of stream
         # types.
         substitutions = collections.defaultdict(
             list,
             receptor=[(name, name) for name in self._receptors],
+            receiver=[('rsc_rx{}'.format(band), 'rx')],
+            digitiser=[('dig_{}_band'.format(band), 'dig')],
             subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
             cbf=[(self._cbf_name, 'data')],
             sdp=[(self._sdp_name, 'data')]
@@ -335,6 +340,11 @@ class Client(object):
         sensor = '{}_input_labels'.format(self._cbf_name)
         yield self.subscribe_one(sensor)
         yield self._input_labels
+        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        # Finally we need the band
+        sensor = 'subarray_{}_band'.format(self._args.subarray_numeric_id)
+        yield self.subscribe_one(sensor)
+        yield self._band
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
     def set_status(self, status):
@@ -437,6 +447,9 @@ class Client(object):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
                 self._input_labels.set_result(labels)
+        elif name == 'subarray_{}_band'.format(self._args.subarray_numeric_id):
+            if not self._band.done() and status == 'nominal':
+                self._band.set_result(value)
 
         if self._sensors is None:
             return
