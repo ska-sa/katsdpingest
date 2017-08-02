@@ -126,6 +126,8 @@ SENSORS = [
     Sensor('{cbf}_loaded_delay_correction'),
     Sensor('{cbf}_delay_centre_frequency'),
     Sensor('{cbf}_delay_adjustments', convert=json.loads),
+    Sensor('{cbf}_pos_request_offset_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('{cbf}_pos_request_offset_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
     Sensor('{sdp}_spmc_version_list', immutable=True),
