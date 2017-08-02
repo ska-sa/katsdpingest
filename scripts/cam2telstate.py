@@ -229,6 +229,7 @@ class Client(object):
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._band = tornado.concurrent.Future()
+        self._sub_name = 'subarray_{}'.format(args.subarray_numeric_id)
         self._cbf_name = None     #: Set once _pool_resources result is set
         self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
@@ -272,7 +273,7 @@ class Client(object):
             receptor=[(name, name) for name in self._receptors],
             receiver=[('rsc_rx{}'.format(band), 'rx')],
             digitiser=[('dig_{}_band'.format(band), 'dig')],
-            subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
+            subarray=[(self._sub_name, 'sub')],
             cbf=[(self._cbf_name, 'data')],
             sdp=[(self._sdp_name, 'data')]
         )
@@ -331,7 +332,7 @@ class Client(object):
         which receptors are assigned to the subarray, followed by
         data_N_input_labels to find the input labels.
         """
-        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
+        sensor = '{}_pool_resources'.format(self._sub_name)
         yield self.subscribe_one(sensor)
         # Wait until we get a callback with the value
         yield self._pool_resources
@@ -342,7 +343,7 @@ class Client(object):
         yield self._input_labels
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
         # Finally we need the band
-        sensor = 'subarray_{}_band'.format(self._args.subarray_numeric_id)
+        sensor = '{}_band'.format(self._sub_name)
         yield self.subscribe_one(sensor)
         yield self._band
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
@@ -424,7 +425,7 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
+        if name == '{}_pool_resources'.format(self._sub_name):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
                 self._receptors = []
@@ -440,14 +441,14 @@ class Client(object):
                 if not self._cbf_name or not self._sdp_name:
                     self._pool_resources.set_exception(RuntimeError(
                         'No data_* or cbf_* / sdp_* resource found for '
-                        'subarray {}'.format(self._args.subarray_numeric_id)))
+                        '{}'.format(self._sub_name)))
                 else:
                     self._pool_resources.set_result(resources)
         elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
                 self._input_labels.set_result(labels)
-        elif name == 'subarray_{}_band'.format(self._args.subarray_numeric_id):
+        elif name == '{}_band'.format(self._sub_name):
             if not self._band.done() and status == 'nominal':
                 self._band.set_result(value)
 
