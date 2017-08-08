@@ -107,10 +107,9 @@ SENSORS = [
     Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{receptor}_pos_adjust_pointm_azim'),
     Sensor('{receptor}_pos_adjust_pointm_elev'),
-    # Rename old-style digitiser sensors to avoid clashes with new-style remaps
     # XXX This should be removed once we are fully switched to new-style
-    Sensor('{receptor}_dig_noise_diode',
-           sp_name='{receptor}_olddig_noise_diode'),
+    # digitiser sensor names
+    Sensor('{receptor}_dig_noise_diode'),
     Sensor('{receptor}_{digitiser}_noise_diode'),
     Sensor('{receptor}_ap_indexer_position'),
     Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
@@ -267,14 +266,16 @@ class Client(object):
         sensors : list of `Sensor`
         """
         band = self._band.result()
+        rx_name = 'rsc_rx{}'.format(band)
+        dig_name = 'dig_{}_band'.format(band)
         # Build table of names for expanding sensor templates
         # Using a defaultdict removes the need to hardcode the list of stream
         # types.
         substitutions = collections.defaultdict(
             list,
             receptor=[(name, name) for name in self._receptors],
-            receiver=[('rsc_rx{}'.format(band), 'rx')],
-            digitiser=[('dig_{}_band'.format(band), 'dig')],
+            receiver=[(rx_name, rx_name)],
+            digitiser=[(dig_name, dig_name)],
             subarray=[(self._sub_name, 'sub')],
             cbf=[(self._cbf_name, 'data')],
             sdp=[(self._sdp_name, 'data')]
