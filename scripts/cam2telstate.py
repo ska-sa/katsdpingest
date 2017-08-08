@@ -107,15 +107,15 @@ SENSORS = [
     Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{receptor}_pos_adjust_pointm_azim'),
     Sensor('{receptor}_pos_adjust_pointm_elev'),
+    # XXX This should be removed once we are fully switched to new-style
+    # digitiser sensor names
     Sensor('{receptor}_dig_noise_diode'),
+    Sensor('{receptor}_{digitiser}_noise_diode'),
     Sensor('{receptor}_ap_indexer_position'),
     Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
     Sensor('{receptor}_ap_tilt_corr_azim'),
     Sensor('{receptor}_ap_tilt_corr_elev'),
-    Sensor('{receptor}_rsc_rxl_serial_number'),
-    Sensor('{receptor}_rsc_rxs_serial_number'),
-    Sensor('{receptor}_rsc_rxu_serial_number'),
-    Sensor('{receptor}_rsc_rxx_serial_number'),
+    Sensor('{receptor}_{receiver}_serial_number'),
     Sensor('{receptor}_data_suspect'),
     Sensor('{receptor}_ap_version_list', immutable=True),
     # CBF proxy sensors
@@ -125,6 +125,8 @@ SENSORS = [
     Sensor('{cbf}_loaded_delay_correction'),
     Sensor('{cbf}_delay_centre_frequency'),
     Sensor('{cbf}_delay_adjustments', convert=json.loads),
+    Sensor('{cbf}_pos_request_offset_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('{cbf}_pos_request_offset_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('{cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
     Sensor('{sdp}_spmc_version_list', immutable=True),
@@ -227,6 +229,8 @@ class Client(object):
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
+        self._band = tornado.concurrent.Future()
+        self._sub_name = 'subarray_{}'.format(args.subarray_numeric_id)
         self._cbf_name = None     #: Set once _pool_resources result is set
         self._sdp_name = None     #: Set once _pool_resources result is set
         self._receptors = []      #: Set once _pool_resources result is set
@@ -261,13 +265,18 @@ class Client(object):
         -------
         sensors : list of `Sensor`
         """
+        band = self._band.result()
+        rx_name = 'rsc_rx{}'.format(band)
+        dig_name = 'dig_{}_band'.format(band)
         # Build table of names for expanding sensor templates
         # Using a defaultdict removes the need to hardcode the list of stream
         # types.
         substitutions = collections.defaultdict(
             list,
             receptor=[(name, name) for name in self._receptors],
-            subarray=[('subarray_{}'.format(self._args.subarray_numeric_id), 'sub')],
+            receiver=[(rx_name, rx_name)],
+            digitiser=[(dig_name, dig_name)],
+            subarray=[(self._sub_name, 'sub')],
             cbf=[(self._cbf_name, 'data')],
             sdp=[(self._sdp_name, 'data')]
         )
@@ -326,7 +335,7 @@ class Client(object):
         which receptors are assigned to the subarray, followed by
         data_N_input_labels to find the input labels.
         """
-        sensor = 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id)
+        sensor = '{}_pool_resources'.format(self._sub_name)
         yield self.subscribe_one(sensor)
         # Wait until we get a callback with the value
         yield self._pool_resources
@@ -335,6 +344,11 @@ class Client(object):
         sensor = '{}_input_labels'.format(self._cbf_name)
         yield self.subscribe_one(sensor)
         yield self._input_labels
+        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        # Finally we need the band
+        sensor = '{}_band'.format(self._sub_name)
+        yield self.subscribe_one(sensor)
+        yield self._band
         yield self._portal_client.unsubscribe(self._args.namespace, sensor)
 
     def set_status(self, status):
@@ -414,7 +428,7 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == 'subarray_{}_pool_resources'.format(self._args.subarray_numeric_id):
+        if name == '{}_pool_resources'.format(self._sub_name):
             if not self._pool_resources.done() and status == 'nominal':
                 resources = value.split(',')
                 self._receptors = []
@@ -430,13 +444,16 @@ class Client(object):
                 if not self._cbf_name or not self._sdp_name:
                     self._pool_resources.set_exception(RuntimeError(
                         'No data_* or cbf_* / sdp_* resource found for '
-                        'subarray {}'.format(self._args.subarray_numeric_id)))
+                        '{}'.format(self._sub_name)))
                 else:
                     self._pool_resources.set_result(resources)
         elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
                 self._input_labels.set_result(labels)
+        elif name == '{}_band'.format(self._sub_name):
+            if not self._band.done() and status == 'nominal':
+                self._band.set_result(value)
 
         if self._sensors is None:
             return
