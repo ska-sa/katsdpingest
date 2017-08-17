@@ -104,7 +104,7 @@ class _CaptureSession(object):
             if 'digifits' in backend and backend_args and '-p 4' in backend_args and bandwidth >= 428:
                 _logger.info("Bandwidth set to 428 as this is the max bandwidth digifits can handle with p=4") 
                 bandwidth = 428
-            elif 'digifits' in backend or (backend_args and '-p 1' in backend_args) and bandwidth >= 642:
+            elif 'digifits' in backend and bandwidth >= 642:
                 _logger.info("Bandwidth set to 642 as this is the max bandwidth digifits can handle with p=1")
                 bandwidth = 642
             if self.backend in "dada_dbdisk": #Make massive RAM buffer, but first we need to increase RAM provided by Mesos
@@ -210,10 +210,10 @@ class _CaptureSession(object):
         self.save_dir = "/data/%.0fsf"%time.time()
         if '-p' in passed_args:
             self.n_pol= passed_args[passed_args.index('-p')+1]
-        if "profile" in self.backend:
-            cmd =["nvprof","--analysis-metrics","--export-profile","%s.writing/digifits.nvprof"%self.save_dir,"numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
-        else:
-            cmd =["numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
+        #if "profile" in self.backend:
+        #    cmd =["nvprof","--analysis-metrics","--export-profile","%s.writing/digifits.nvprof"%self.save_dir,"numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
+        #else:
+        cmd =["numactl", "-C", "%i"%core, "digifits"] + passed_args + ["-v","-D","0","-c","-b","8","-v","-nsblk","256","-cuda","0","/home/kat/dada.info"]
         os.mkdir("%s.writing"%self.save_dir)
         _logger.info("Starting digifits with args:")
         _logger.info(cmd)
@@ -289,10 +289,10 @@ class _CaptureSession(object):
 
         self.save_dir = "/data/%.0far"%time.time()
         os.mkdir("%s.writing"%self.save_dir)
-        if "profile" in self.backend:
-            cmd = ["nvprof","--analysis-metrics","--export-profile","%s.writing/dspsr.nvprof"%self.save_dir,"numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
-        else:
-            cmd = ["numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+        #if "profile" in self.backend:
+        #    cmd = ["nvprof","--analysis-metrics","--export-profile","%s.writing/dspsr.nvprof"%self.save_dir,"numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
+        #else:
+        cmd = ["numactl","-C",str(core),"/usr/local/kat/pulsar/linux_64/bin/dspsr", "-D", "0", "-Q", "-minram", "512", "-L", "10", "-b", "1024", "-cuda", "0", "/home/kat/dada.info"]
         with open("%s.writing/dspsr.log"%self.save_dir,"a") as logfile:
             _logger.info("Starting dspsr with args:")
             _logger.info(cmd)
