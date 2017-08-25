@@ -29,6 +29,14 @@ def comma_split(value):
     return value.split(',')
 
 
+def convert_bitmask(value):
+    """Converts a string of 1's and 0's to a numpy array of bools"""
+    if not isinstance(value, six.string_types) or not re.match('^[01]*$', value):
+        return None
+    else:
+        return np.array([c == '1' for c in value])
+
+
 class Sensor(object):
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
@@ -163,6 +171,8 @@ SENSORS = [
     Sensor('{subarray}_sub_nr', immutable=True),
     Sensor('{subarray}_dump_rate', immutable=True),
     Sensor('{subarray}_pool_resources', immutable=True),
+    Sensor('{subarray}_streams_{stream_base_fengine}_channel_mask',
+           sp_name='{stream_base_fengine}_channel_mask', convert=convert_bitmask),
     Sensor('{subarray}_state'),
     # Misc other sensors
     Sensor('anc_air_pressure'),
@@ -297,6 +307,8 @@ class Client(object):
                     sp_stream = "cbf_" + full_stream_name
                 substitutions['stream'].append((cam_stream, sp_stream))
                 substitutions['stream_' + stream_type].append((cam_stream, sp_stream))
+                substitutions['stream_base'].append((full_stream_name, sp_stream))
+                substitutions['stream_base_' + stream_type].append((full_stream_name, sp_stream))
 
         sensors = []
         for template in SENSORS:
