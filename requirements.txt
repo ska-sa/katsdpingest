@@ -4,6 +4,7 @@ backports.ssl-match-hostname
 certifi
 Cython
 decorator
+enum34
 fakeredis
 funcsigs
 future
@@ -14,12 +15,14 @@ katcp
 katversion
 hiredis
 linecache2
+llvmlite
 Mako
 manhole
 MarkupSafe
 mock
 netifaces
 nose
+numba
 numpy
 omnijson==0.1.2
 pandas
