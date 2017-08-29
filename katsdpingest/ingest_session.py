@@ -1038,7 +1038,6 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             try:
-                # Name for testing only
                 channel_mask = self.telstate['cbf_channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
                 static_flag = 1 << sp.IngestTemplate.flag_names.index('static')
