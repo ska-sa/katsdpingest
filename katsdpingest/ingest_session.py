@@ -1038,13 +1038,14 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             try:
-                # Name for testing only
-                channel_flags_in = self.telstate['x_channel_flags']
-                channel_flags[:] = channel_flags_in[self.channel_ranges.input.asslice()]
+                channel_mask = self.telstate['cbf_channel_mask']
+                channel_mask = channel_mask[self.channel_ranges.input.asslice()]
+                static_flag = 1 << sp.IngestTemplate.flag_names.index('static')
+                channel_flags[:] = channel_mask * np.uint8(static_flag)
             except KeyError:
                 channel_flags.fill(0)
-            except ValueError:
-                # Could happen if the telstate key has the wrong shape
+            except (ValueError, TypeError):
+                # Could happen if the telstate key has the wrong shape or type
                 logger.warn('Error loading channel flags from telstate', exc_info=True)
                 channel_flags.fill(0)
             self._set_baseline_flags(baseline_flags, frame.timestamp)
