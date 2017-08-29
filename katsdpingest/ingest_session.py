@@ -62,7 +62,8 @@ class _TimeAverage(object):
         self.ratio = max(1, int(round(int_time / cbf_attr['int_time'])))
         self.int_time = self.ratio * cbf_attr['int_time']
         # Integration time in timestamp ticks
-        self.interval = self.ratio * cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
+        self._sub_interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
+        self.interval = self.ratio * self._sub_interval
         self._start_ts = None
         self._ts = []
 
@@ -71,8 +72,14 @@ class _TimeAverage(object):
         be processed. This may call :func:`flush`."""
 
         if self._start_ts is None:
-            # First time: special case
-            self._start_ts = timestamp
+            # First time: special case. We need to choose _start_ts in a way
+            # that will have the same phase as other ingest processes, even if
+            # they see a different timestamp first. We do this by choosing the
+            # largest _start_ts such that:
+            # 1. _start_ts <= timestamp.
+            # 2. _start_ts % interval < sub_interval
+            si = self._sub_interval
+            self._start_ts = timestamp - (timestamp % self.interval) // si * si
 
         if timestamp >= self._start_ts + self.interval:
             self.flush(self._ts)
