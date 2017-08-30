@@ -86,15 +86,15 @@ class _CaptureSession(object):
 
         config = args.telstate.get('config')
         ant_mask = config['antenna_mask']
-        an_ant = config['antenna_mask'].split(',')[0]
+        ants = config['antenna_mask'].split(',')
 
         self.script_args = args.telstate.get('obs_script_arguments')
         self.driftscan = self.script_args['drift_scan']
         
-        #script_args is only populated for beamformer observervations.
-        if self.script_args:
+        #script_args is only populated for beamformer observations.
+        if self.script_args and self.script_args['backend'] != '':
             _logger.info ("Running with script args of %s"%str(self.script_args))
-            pubsub_thread = PubSubThread(1,eval(config['stream_sources'])['cam.http']['camdata'],_logger,self,an_ant)
+            pubsub_thread = PubSubThread(1,eval(config['stream_sources'])['cam.http']['camdata'],_logger,self,ants)
             pubsub_thread.start()
             backend = self.script_args['backend']
             bandwidth = self.script_args['beam_bandwidth']
@@ -107,10 +107,20 @@ class _CaptureSession(object):
             elif 'digifits' in backend and bandwidth >= 642:
                 _logger.info("Bandwidth set to 642 as this is the max bandwidth digifits can handle with p=1")
                 bandwidth = 642
+
+            _logger.info("ben_y")
+            beam_y_multicast = eval(config['stream_sources'])["cbf.tied_array_channelised_voltage"]['i0.tied-array-channelised-voltage.0y'].split(":")[1][2:]
+            _logger.info("after")
+            total_parts=int(beam_y_multicast.split('+')[-1])+1
+            part_bandwidth=856.0/total_parts
+            n_parts = bandwidth/part_bandwidth
+            resolution = 4194304 * n_parts / total_parts
+            _logger.info("BEFORE BUFFER")
             if self.backend in "dada_dbdisk": #Make massive RAM buffer, but first we need to increase RAM provided by Mesos
-                self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=64)
-            else:# Ring buffer of 32 TB divided into 256 MB chunks
-                self._create_dada_buffer(4194304*bandwidth/856*16*4, nBuffers=64)
+                self._create_dada_buffer(resolution*bandwidth/856*16*4, nBuffers=64)
+            else:
+                _logger.info("CREATING BUFFER")
+                self._create_dada_buffer(resolution*bandwidth/856*16*4, nBuffers=64)
             _logger.info("Created dada_buffer")
             self._create_dada_header()
             if ("digifits" in self.backend):
@@ -360,7 +370,7 @@ class _CaptureSession(object):
         cap_env["VMA_RX_POLL_YIELD"] = "1"
         cap_env["VMA_RX_UDP_POLL_OS_RATIO"] = "0"
         self.capture_log = open("%s.writing/capture.log"%self.save_dir,"a")
-        _logger.info("Capturing in /scratch/%s.writing"%self.save_dir[6:])
+        _logger.info("Capturing in /scratch/data/%s.writing"%self.save_dir[6:])
         
     def capture_start (self):
 
@@ -414,12 +424,12 @@ class _CaptureSession(object):
         if self._dspsr_process is not None and self._dspsr_process.poll() is None:
             self._dspsr_process.send_signal(signal.SIGTERM)
             _logger.info("dspsr did not stop")
-        
-        comm = self._dada_header_process.communicate()
-        try:
-            dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
-        except:
-            _logger.info("Could not parse dada header:\n%s"%str(comm))
+        if self._dada_header_process: 
+            comm = self._dada_header_process.communicate()
+            try:
+                dada_header = dict([d.split() for d in comm[0].split('\n')][:-1])
+            except:
+                _logger.info("Could not parse dada header:\n%s"%str(comm))
 
         if self.backend and (self.backend == 'digifits' or self.backend == 'dspsr'):
             try: 
@@ -659,12 +669,12 @@ import time
 
 class PubSubThread (threading.Thread):
 
-  def __init__ (self, id, server, _logger, ingest,ant):
+  def __init__ (self, id, server, _logger, ingest,ants):
 
     _logger.info("CAM server = %s"%server)
     threading.Thread.__init__(self)
     self.ingest = ingest
-    self.ant = ant
+    self.ants = dict(zip(ants,[0]*len(ants)))
 
     self.metadata_server = server
     self.logger = _logger
@@ -715,23 +725,31 @@ class PubSubThread (threading.Thread):
     yield self.ws_client.connect()
     result = yield self.ws_client.subscribe(self.title)
 
-    list = ['%s.activity'%self.ant]
+    list = ['%s.activity'%ant for ant in self.ants.keys()]
+    self.logger.info(list)
     results = yield self.ws_client.set_sampling_strategies(
         self.title, list, self.policy)
 
   def on_update_callback (self, msg):
-    if msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and self.tracks == 1 and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan:
+    self.logger.info(msg)
+    self.logger.info(self.ants)
+    if msg['msg_data']['value'] == 'track':
+      self.logger.info(msg['msg_data']['name'][:4])
+      self.logger.info(self.ants[msg['msg_data']['name'][:4]])
+      self.ants[msg['msg_data']['name'][:4]] +=1
+      self.logger.info(self.ants[msg['msg_data']['name'][:4]])
+      self.tracks=sum(self.ants.values())/len(self.ants)
+
+    if msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and self.tracks == 2 and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan:
       self.logger.info("STARTING CAPTURE")
       self.ingest.capture_start()
       self.join() 
-    elif msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan == False:
+    elif msg['msg_data']['value'] == 'track' and self.ingest._capture_process is None and self.tracks == 1 and hasattr(self.ingest, 'driftscan') and self.ingest.driftscan == False:
       self.logger.info("STARTING CAPTURE")
       self.ingest.capture_start()
       self.join()
-    elif msg['msg_data']['value'] == 'track' and self.tracks >= 2:
+    elif msg['msg_data']['value'] == 'track' and self.tracks > 2:
       self.logger.info("Terminate")
       self.join()
-    elif msg['msg_data']['value'] == 'track':
-      self.tracks+=1
 
 __all__ = ['CaptureServer', 'KatcpCaptureServer']
