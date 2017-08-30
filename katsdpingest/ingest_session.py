@@ -649,7 +649,7 @@ class CBFIngest(object):
             dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
             name="center_freq", id=0x1011,
-            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
+            description="The center frequency of the signal display data in Hz, 64-bit IEEE floating-point number.",
             shape=(), dtype=None, format=[('f', 64)])
         self.ig_sd.add_item(
             name=('sd_timestamp'), id=0x3502,
@@ -678,7 +678,6 @@ class CBFIngest(object):
 
     def __init__(self, args, cbf_attr, channel_ranges, context, my_sensors, telstate):
         self._sdisp_ips = {}
-        self._center_freq = None
         self._run_future = None
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
@@ -779,10 +778,6 @@ class CBFIngest(object):
         stream.set_cnt_sequence(self.channel_ranges.sd_output.start,
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
-
-    def set_center_freq(self, center_freq):
-        """Change the center frequency reported to signal displays."""
-        self._center_freq = center_freq
 
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
@@ -966,9 +961,7 @@ class CBFIngest(object):
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
             # Translate CBF-width center_freq to the center_freq for the
             # signal display product.
-            cbf_center_freq = self._center_freq
-            if cbf_center_freq is None:
-                cbf_center_freq = self.cbf_attr.get('center_freq')
+            cbf_center_freq = self.cbf_attr.get('center_freq')
             if cbf_center_freq is not None:
                 channel_width = self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf)
                 cbf_mid = (self.channel_ranges.cbf.start + self.channel_ranges.cbf.stop) / 2

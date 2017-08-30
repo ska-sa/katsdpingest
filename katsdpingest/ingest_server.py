@@ -37,7 +37,7 @@ class IngestDeviceServer(AsyncDeviceServer):
         Passed to :class:`katcp.DeviceServer`
     """
 
-    VERSION_INFO = ("sdp-ingest", 0, 1)
+    VERSION_INFO = ("sdp-ingest", 0, 2)
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
     def __init__(self, user_args, channel_ranges, cbf_attr, context, *args, **kwargs):
@@ -166,20 +166,6 @@ class IngestDeviceServer(AsyncDeviceServer):
         smsg = "Capture initialised at %s" % time.ctime()
         logger.info(smsg)
         raise tornado.gen.Return(("ok", smsg))
-
-    @request(Float())
-    @return_reply(Str())
-    def request_set_center_freq(self, req, center_freq_hz):
-        """Set the center freq for use in the signal displays.
-
-        Parameters
-        ----------
-        center_freq_hz : int
-            The current system center frequency in hz
-        """
-        self.cbf_ingest.set_center_freq(center_freq_hz)
-        logger.info("Center frequency set to %f Hz", center_freq_hz)
-        return ("ok", "set")
 
     @request(Str())
     @return_reply(Str())

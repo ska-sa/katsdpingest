@@ -440,25 +440,6 @@ class TestIngestDeviceServer(object):
 
     @async_test
     @tornado.gen.coroutine
-    def test_set_center_freq(self):
-        """A center frequency set by ?set-center-freq is reflected in signal display output."""
-        cbf_center_freq = 2e9
-        channel_width = self.cbf_attr['bandwidth'] / self.cbf_attr['n_chans']
-        sd_output_channels = self.user_args.sd_output_channels
-        sd_center_channel = (sd_output_channels.start + sd_output_channels.stop) / 2
-        sd_center_freq = (cbf_center_freq
-                          + (sd_center_channel - self.cbf_attr['n_chans'] / 2) * channel_width)
-        yield self.make_request('set-center-freq', cbf_center_freq)
-        yield self.make_request('capture-init')
-        yield self.make_request('capture-done')
-
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
-        call = sd_tx.async_send_heap.mock_calls[1]
-        ig = decode_heap_ig(call[1][0])
-        assert_equal(sd_center_freq, ig['center_freq'].value)
-
-    @async_test
-    @tornado.gen.coroutine
     def test_add_sdisp_ip(self):
         """Add additional addresses with add-sdisp-ip."""
         yield self.make_request('add-sdisp-ip', '127.0.0.3:8000')
