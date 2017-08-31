@@ -54,7 +54,7 @@ class TestTimeAverage(object):
         if isinstance(idx, list):
             return [self.make_ts(x) for x in idx]
         else:
-            return 1000000000 + idx * self.input_interval
+            return 100000000 + idx * self.input_interval
 
     def test_add_timestamp(self):
         avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
@@ -80,6 +80,18 @@ class TestTimeAverage(object):
         avg.flush.assert_called_once_with(self.make_ts([12]))
         assert_is(None, avg._start_ts)
         assert_equal([], avg._ts)
+
+    def test_alignment(self):
+        """Phase must be independent of first timestamp seen"""
+        for i in range(5):
+            avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
+            ts = self.make_ts(i)
+            avg.add_timestamp(ts)
+            start_ts = avg._start_ts
+            interval = avg.ratio * self.input_interval
+            assert_less_equal(start_ts, ts)
+            assert_less(ts - interval, start_ts)
+            assert_equal(0, (self.make_ts(0) - start_ts) % interval)
 
 
 def test_split_array():
