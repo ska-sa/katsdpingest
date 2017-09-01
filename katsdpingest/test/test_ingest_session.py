@@ -17,7 +17,7 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
         sync_time=1400000000.0
     )
     cbf_attr['bandwidth'] = cbf_attr['adc_sample_rate'] / 2
-    cbf_attr['center_freq'] = cbf_attr['bandwidth'] / 2
+    cbf_attr['center_freq'] = cbf_attr['bandwidth'] * 3 / 2   # Reasonable for L band
     cbf_attr['scale_factor_timestamp'] = cbf_attr['adc_sample_rate']
     cbf_attr['ticks_between_spectra'] = 2 * cbf_attr['n_chans']
     cbf_attr['n_chans_per_substream'] = cbf_attr['n_chans'] // n_xengs

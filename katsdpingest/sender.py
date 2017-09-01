@@ -135,6 +135,7 @@ class VisSenderSet(object):
         if channels % n != 0:
             raise ValueError('Number of channels not evenly divisible by number of endpoints')
         sub_channels = channels // n
+        self.sub_channels = sub_channels
         self._senders = []
         for i in range(n):
             a = channel_range.start + i * sub_channels

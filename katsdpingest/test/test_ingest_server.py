@@ -206,8 +206,10 @@ class TestIngestDeviceServer(object):
             cbf_ibv=False,
             l0_spectral_spead=[Endpoint('239.102.255.2', 7148)],
             l0_spectral_interface='dummyif2',
+            l0_spectral_name='sdp_l0',
             l0_continuum_spead=[Endpoint('239.102.255.3', 7148)],
             l0_continuum_interface='dummyif3',
+            l0_continuum_name='sdp_l0_continuum',
             output_int_time=4.0,
             sd_int_time=4.0,
             antenna_mask=['m090', 'm091', 'm092'],
@@ -245,6 +247,8 @@ class TestIngestDeviceServer(object):
             tx.stop.return_value = done_future
             tx.send = DeepCopyMock()
             tx.send.return_value = done_future
+            tx.sub_channels = len(self.channel_ranges.output)
+        self._tx['continuum'].sub_channels //= self.channel_ranges.cont_factor
         self._VisSenderSet = self._patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
         self._sd_tx = {}
@@ -359,6 +363,31 @@ class TestIngestDeviceServer(object):
             np.testing.assert_allclose(vis, data.vis[send_slice], rtol=1e-5, atol=1e-6)
             np.testing.assert_array_equal(flags, data.flags[send_slice])
             assert_almost_equal(ts, ts_rel)
+
+    def test_init_telstate(self):
+        """Test the output metadata in telstate"""
+        def get_ts(key):
+            return self._telstate[prefix + '_' + key]
+
+        bls_ordering = []
+        for a in self.user_args.antenna_mask:
+            for b in self.user_args.antenna_mask:
+                if a <= b:
+                    for ap in 'hv':
+                        for bp in 'hv':
+                            bls_ordering.append([a + ap, b + bp])
+        bls_ordering.sort()
+        for prefix in ['sdp_l0', 'sdp_l0_continuum']:
+            factor = 1 if prefix == 'sdp_l0' else self.user_args.continuum_factor
+            assert_equal(656 // factor, get_ts('n_chans'))
+            assert_equal(get_ts('n_chans'), get_ts('n_chans_per_substream'))
+            assert_equal(len(bls_ordering), get_ts('n_bls'))
+            assert_equal(bls_ordering, sorted(get_ts('bls_ordering').tolist()))
+            assert_equal(self.cbf_attr['sync_time'], get_ts('sync_time'))
+            assert_equal(137093750.0, get_ts('bandwidth'))
+            assert_equal(1021515625.0, get_ts('center_freq'))
+            assert_equal(8 * self.cbf_attr['int_time'], get_ts('int_time'))
+            assert_equal((464, 1120), get_ts('channel_range'))
 
     @async_test
     @tornado.gen.coroutine

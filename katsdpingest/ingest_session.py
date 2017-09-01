@@ -281,6 +281,18 @@ def get_cbf_attr(telstate, cbf_name):
     return cbf_attr
 
 
+def _convert_center_freq(old_channels, old_center_freq, old_bandwidth, new_channels):
+    """Compute the center frequency of a channel range, given the center
+    frequency and bandwidth of a different set of channels.
+
+    The implementation is careful to avoid introducing rounding errors where the answer
+    is an exactly representable value.
+    """
+    old_mid = (old_channels.start + old_channels.stop) / 2
+    new_mid = (new_channels.start + new_channels.stop) / 2
+    return old_center_freq + (new_mid - old_mid) * old_bandwidth / len(old_channels)
+
+
 class BaselineOrdering(object):
     """Encapsulates lookup tables related to baseline ordering.
 
@@ -511,7 +523,6 @@ class CBFIngest(object):
     def _init_baselines(self, antenna_mask):
         # Configure the masking and reordering of baselines
         self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
-        self._set_telstate_entry('sdp_l0_bls_ordering', self.bls_ordering.sdp_bls_ordering)
         if not len(self.bls_ordering.sdp_bls_ordering):
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 self.cbf_attr['bls_ordering'], antenna_mask))
@@ -519,7 +530,6 @@ class CBFIngest(object):
     def _init_time_averaging(self, output_int_time, sd_int_time):
         self._output_avg = _TimeAverage(self.cbf_attr, output_int_time)
         self._output_avg.flush = self._flush_output
-        self._set_telstate_entry('sdp_l0_int_time', self._output_avg.int_time)
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         self._sd_avg = _TimeAverage(self.cbf_attr, sd_int_time)
@@ -574,31 +584,44 @@ class CBFIngest(object):
             sd_output_names.append(base_name + '_flags')
         self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
 
-    def _init_tx(self, args):
+    def _init_tx_one(self, args, tx_type, cont_factor):
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
-        thread_pool = spead2.ThreadPool(2)
         spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
-        continuum_channels = utils.Range(spectral_channels.start // self.channel_ranges.cont_factor,
-                                         spectral_channels.stop // self.channel_ranges.cont_factor)
+        channels = utils.Range(spectral_channels.start // cont_factor,
+                               spectral_channels.stop // cont_factor)
         baselines = len(self.bls_ordering.sdp_bls_ordering)
-        self.tx_spectral = sender.VisSenderSet(
-            thread_pool,
-            args.l0_spectral_spead,
-            katsdpservices.get_interface_address(args.l0_spectral_interface),
+        tx = sender.VisSenderSet(
+            spead2.ThreadPool(),
+            getattr(args, 'l0_{}_spead'.format(tx_type)),
+            katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(tx_type))),
             l0_flavour,
             self._output_avg.int_time,
-            spectral_channels,
-            self.channel_ranges.output.start,
+            channels,
+            self.channel_ranges.output.start // cont_factor,
             baselines)
-        self.tx_continuum = sender.VisSenderSet(
-            thread_pool,
-            args.l0_continuum_spead,
-            katsdpservices.get_interface_address(args.l0_continuum_interface),
-            l0_flavour,
-            self._output_avg.int_time,
-            continuum_channels,
-            self.channel_ranges.output.start // self.channel_ranges.cont_factor,
-            baselines)
+
+        # Put attributes into telstate
+        prefix = getattr(args, 'l0_{}_name'.format(tx_type))
+        self._set_telstate_entry('n_chans', len(channels), prefix)
+        self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
+        self._set_telstate_entry('n_bls', baselines, prefix)
+        self._set_telstate_entry('bls_ordering', self.bls_ordering.sdp_bls_ordering, prefix)
+        self._set_telstate_entry('sync_time', self.cbf_attr['sync_time'], prefix)
+        bandwidth = self.cbf_attr['bandwidth'] * len(spectral_channels) \
+                / len(self.channel_ranges.cbf)
+        center_freq = _convert_center_freq(self.channel_ranges.cbf,
+                                           self.cbf_attr['center_freq'],
+                                           self.cbf_attr['bandwidth'],
+                                           self.channel_ranges.output)
+        self._set_telstate_entry('bandwidth', bandwidth, prefix)
+        self._set_telstate_entry('center_freq', center_freq, prefix)
+        self._set_telstate_entry('channel_range', self.channel_ranges.output.astuple(), prefix)
+        self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
+        return tx
+
+    def _init_tx(self, args):
+        self.tx_spectral = self._init_tx_one(args, 'spectral', 1)
+        self.tx_continuum = self._init_tx_one(args, 'continuum', self.channel_ranges.cont_factor)
 
     def _init_ig_sd(self):
         """Create a item group for signal displays."""
@@ -1081,8 +1104,8 @@ class CBFIngest(object):
             input_a.ready([done_event])
             proc_a.ready([done_event])
 
-    def _set_telstate_entry(self, name, value, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, None, attribute)
+    def _set_telstate_entry(self, name, value, prefix=None, attribute=True):
+        utils.set_telstate_entry(self.telstate, name, value, prefix, attribute)
 
     @property
     def capturing(self):
