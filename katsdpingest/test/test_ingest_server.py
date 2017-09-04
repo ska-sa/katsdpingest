@@ -166,7 +166,7 @@ class TestIngestDeviceServer(object):
         return tx
 
     def _create_data(self):
-        start_ts = 1234567890
+        start_ts = 100000000
         interval = self.cbf_attr['n_accs'] * self.cbf_attr['ticks_between_spectra']
         n_dumps = 19
         shape = (n_dumps, self.cbf_attr['n_chans'], len(self.cbf_attr['bls_ordering']), 2)

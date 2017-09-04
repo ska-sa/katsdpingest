@@ -157,7 +157,8 @@ SENSORS = [
     Sensor('{stream_fengine}_n_samples_between_spectra',
            sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
-    Sensor('{stream_fengine}_center_freq', immutable=True),
+    Sensor('{subarray}_streams_{stream_base_fengine}_centre_frequency',
+           sp_name='{stream_base_fengine}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
     Sensor('{stream_fengine}_{inputn}_fft0_shift',
            sp_name='{stream_fengine}_fft_shift'),

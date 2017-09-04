@@ -37,7 +37,7 @@ class IngestDeviceServer(AsyncDeviceServer):
         Passed to :class:`katcp.DeviceServer`
     """
 
-    VERSION_INFO = ("sdp-ingest", 0, 1)
+    VERSION_INFO = ("sdp-ingest", 0, 2)
     BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
 
     def __init__(self, user_args, channel_ranges, cbf_attr, context, *args, **kwargs):
