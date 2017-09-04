@@ -63,6 +63,8 @@ def parse_args():
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
+    parser.add_argument('--servers', type=int, default=1, help='number of parallel servers producing the output [default=%(default)s]')
+    parser.add_argument('--server-id', type=int, default=1, help='index of this server amongst parallel servers [default=%(default)s]')
     parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
@@ -72,6 +74,8 @@ def parse_args():
         parser.error('argument --telstate is required')
     if args.cbf_ibv and args.cbf_interface is None:
         parser.error('--cbf-ibv requires --cbf-interface')
+    if not 1 <= args.server_id <= args.servers:
+        parser.error('--server-id is out of range')
     return args
 
 
@@ -107,6 +111,7 @@ def main():
         args.sd_output_channels = Range(0, cbf_channels)
     # TODO: determine an appropriate value for guard
     channel_ranges = ChannelRanges(
+        args.servers, args.server_id - 1,
         cbf_channels, args.continuum_factor, args.sd_continuum_factor,
         len(args.cbf_spead), 64, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)

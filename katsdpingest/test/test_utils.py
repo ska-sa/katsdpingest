@@ -87,3 +87,10 @@ class TestRange(object):
     def test_relative_to(self):
         assert_equal(Range(3, 5), Range(8, 10).relative_to(Range(5, 10)))
         assert_raises(ValueError, Range(8, 10).relative_to, Range(5, 9))
+
+    def test_split(self):
+        assert_equal(Range(14, 16), Range(10, 20).split(5, 2))
+        assert_equal(Range(0, 0), Range(10, 10).split(5, 2))
+        assert_raises(ValueError, Range(10, 20).split, 6, 3)
+        assert_raises(ValueError, Range(10, 20).split, 5, -2)
+        assert_raises(ValueError, Range(10, 20).split, 5, 5)

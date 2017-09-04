@@ -122,6 +122,10 @@ class ChannelRanges(object):
 
     Parameters
     ----------
+    servers : int
+        Number of servers jointly producing the output
+    server_id : int
+        Zero-based index of this server amongst `servers`
     channels : int
         Number of input channels from CBF
     cont_factor : int
@@ -133,9 +137,9 @@ class ChannelRanges(object):
     guard : int
         Minimum number of channels to keep on either side of the output for RFI
         flagging.
-    output : :class:`katsdpingest.utils.Range`
+    all_output : :class:`katsdpingest.utils.Range`
         Output spectral channel range
-    sd_output : :class:`katsdpingest.utils.Range`
+    all_sd_output : :class:`katsdpingest.utils.Range`
         Signal display channel range
 
     Raises
@@ -144,11 +148,14 @@ class ChannelRanges(object):
         if `channels` is not a multiple of `cont_factor`, `sd_cont_factor` and
         `streams`
     ValueError
-        if `output` is not aligned to `cont_factor`
+        if the length of `all_output` or `all_sd_output` is not a multiple of
+        `servers`.
     ValueError
-        if `sd_output` is not aligned to `sd_cont_factor`
+        if the per-server `output` is not aligned to `cont_factor`
     ValueError
-        if `output` or `sd_output` overflows the whole channel range
+        if the per-server `sd_output` is not aligned to `sd_cont_factor`
+    ValueError
+        if `all_output` or `all_sd_output` overflows the whole channel range
 
     Attributes
     ----------
@@ -178,17 +185,25 @@ class ChannelRanges(object):
         range is guaranteed to be a multiple of both the signal display and
         output continuum factors.
     output : :class:`katsdpingest.utils.Range`
-        The set of channels contained in the L0 spectral output (subset of
-        `computed`). This range is guaranteed to be a multiple of the output
-        continuum factor.
+        The set of channels placed in the L0 spectral output by this server
+        (subset of `computed`). This range is guaranteed to be a multiple of
+        the output continuum factor.
+    all_output : :class:`katsdpingest.utils.Range`
+        L0 spectral output channels produced by all the servers. This range is
+        guaranteed to be a multiple of the output continuum factor.
     sd_output : :class:`katsdpingest.utils.Range`
-        The set of channels contained in the signal display output (subset of
-        `computed`). This range is guaranteed to be a multiple of the signal
-        display continuum factor.
+        The set of channels placed in the signal display output by this server
+        (subset of `computed`). This range is guaranteed to be a multiple of
+        the signal display continuum factor.
+    all_sd_output : :class:`katsdpingest.utils.Range`
+        Signal display output channels produced by all the servers. This range
+        is guaranteed to be a multiple of the signal display continuum
+        factor.
     """
 
-    def __init__(self, channels, cont_factor, sd_cont_factor, streams, guard,
-                 output, sd_output):
+    def __init__(self, servers, server_id,
+                 channels, cont_factor, sd_cont_factor, streams, guard,
+                 all_output, all_sd_output):
         self.cont_factor = cont_factor
         self.sd_cont_factor = sd_cont_factor
         self.guard = guard
@@ -199,19 +214,21 @@ class ChannelRanges(object):
             raise ValueError('channel count is not a multiple of the continuum factor')
         if not self.cbf.isaligned(sd_cont_factor):
             raise ValueError('channel count is not a multiple of the sd continuum factor')
-        if not output.issubset(self.cbf):
+        if not all_output.issubset(self.cbf):
             raise ValueError('output range overflows full channel range')
-        if not sd_output.issubset(self.cbf):
+        if not all_sd_output.issubset(self.cbf):
             raise ValueError('sd output range overflows full channel range')
-        if not output.isaligned(cont_factor):
+        self.all_output = all_output
+        self.all_sd_output = all_sd_output
+        self.output = all_output.split(servers, server_id)
+        self.sd_output = all_sd_output.split(servers, server_id)
+        if not self.output.isaligned(cont_factor):
             raise ValueError('output range is not aligned to continuum factor')
-        if not sd_output.isaligned(sd_cont_factor):
+        if not self.sd_output.isaligned(sd_cont_factor):
             raise ValueError('sd output range is not aligned to continuum factor')
-        self.output = output
-        self.sd_output = sd_output
         # Compute least common multiple
         alignment = cont_factor * sd_cont_factor // fractions.gcd(cont_factor, sd_cont_factor)
-        self.computed = output.union(sd_output).alignto(alignment)
+        self.computed = self.output.union(self.sd_output).alignto(alignment)
         self.input = utils.Range(self.computed.start - guard, self.computed.stop + guard)
         self.input = self.input.intersection(self.cbf)
         stream_channels = channels // streams
@@ -586,36 +603,44 @@ class CBFIngest(object):
 
     def _init_tx_one(self, args, tx_type, cont_factor):
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        all_output = self.channel_ranges.all_output
+        # Compute channel ranges relative to those computed
         spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
         channels = utils.Range(spectral_channels.start // cont_factor,
                                spectral_channels.stop // cont_factor)
         baselines = len(self.bls_ordering.sdp_bls_ordering)
+        endpoints = getattr(args, 'l0_{}_spead'.format(tx_type))
+        if len(endpoints) % args.servers:
+            raise ValueError('Number of endpoints ({}) not divisible by number of servers ({})'
+                .format(len(endpoints), args.servers))
+        endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
+        endpoint_hi = args.server_id * len(endpoints) // args.servers
+        endpoints = endpoints[endpoint_lo:endpoint_hi]
         tx = sender.VisSenderSet(
             spead2.ThreadPool(),
-            getattr(args, 'l0_{}_spead'.format(tx_type)),
+            endpoints,
             katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(tx_type))),
             l0_flavour,
             self._output_avg.int_time,
             channels,
-            self.channel_ranges.output.start // cont_factor,
+            (self.channel_ranges.output.start - all_output.start) // cont_factor,
             baselines)
 
         # Put attributes into telstate
         prefix = getattr(args, 'l0_{}_name'.format(tx_type))
-        self._set_telstate_entry('n_chans', len(channels), prefix)
+        self._set_telstate_entry('n_chans', len(all_output) // cont_factor, prefix)
         self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
         self._set_telstate_entry('n_bls', baselines, prefix)
         self._set_telstate_entry('bls_ordering', self.bls_ordering.sdp_bls_ordering, prefix)
         self._set_telstate_entry('sync_time', self.cbf_attr['sync_time'], prefix)
-        bandwidth = self.cbf_attr['bandwidth'] * len(spectral_channels) \
-                / len(self.channel_ranges.cbf)
+        bandwidth = self.cbf_attr['bandwidth'] * len(all_output) / len(self.channel_ranges.cbf)
         center_freq = _convert_center_freq(self.channel_ranges.cbf,
                                            self.cbf_attr['center_freq'],
                                            self.cbf_attr['bandwidth'],
-                                           self.channel_ranges.output)
+                                           all_output)
         self._set_telstate_entry('bandwidth', bandwidth, prefix)
         self._set_telstate_entry('center_freq', center_freq, prefix)
-        self._set_telstate_entry('channel_range', self.channel_ranges.output.astuple(), prefix)
+        self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
         self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
         return tx
 
@@ -671,10 +696,6 @@ class CBFIngest(object):
             description="Flags for percentiles of spectrum.",
             dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
-            name="center_freq", id=0x1011,
-            description="The center frequency of the DBE in Hz, 64-bit IEEE floating-point number.",
-            shape=(), dtype=None, format=[('f', 64)])
-        self.ig_sd.add_item(
             name=('sd_timestamp'), id=0x3502,
             description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
             shape=(), dtype=None, format=inline_format)
@@ -683,25 +704,33 @@ class CBFIngest(object):
             name=('bls_ordering'), id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
-        # Determine bandwidth of the signal display product
-        sd_bandwidth = (self.cbf_attr['bandwidth'] * len(self.channel_ranges.sd_output)
+        # Determine bandwidth and centre frequency of the signal display product
+        sd_bandwidth = (self.cbf_attr['bandwidth'] * len(self.channel_ranges.all_sd_output)
                         / len(self.channel_ranges.cbf))
+        sd_center_freq = _convert_center_freq(
+            self.channel_ranges.cbf, self.cbf_attr['center_freq'], self.cbf_attr['bandwidth'],
+            self.channel_ranges.all_sd_output)
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
-            description="The analogue bandwidth of the digitally processed signal in Hz.",
+            description="The analogue bandwidth of the signal display product in Hz.",
             shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
         self.ig_sd.add_item(
+            name="center_freq", id=0x1011,
+            description="The center frequency of the signal display product in Hz.",
+            shape=(), dtype=None, format=[('f', 64)], value=sd_center_freq)
+        self.ig_sd.add_item(
             name="n_chans", id=0x1009,
-            description="The total number of frequency channels present in any integration.",
-            shape=(), dtype=None, format=inline_format, value=n_spec_channels)
+            description="The total number of frequency channels in the signal display product.",
+            shape=(), dtype=None, format=inline_format,
+            value=len(self.channel_ranges.all_sd_output))
         self.ig_sd.add_item(
             name="frequency", id=0x4103,
             description="The frequency channel of the data in this heap.",
-            shape=(), dtype=None, format=inline_format, value=self.channel_ranges.sd_output.start)
+            shape=(), dtype=None, format=inline_format,
+            value=self.channel_ranges.sd_output.start - self.channel_ranges.all_sd_output.start)
 
     def __init__(self, args, cbf_attr, channel_ranges, context, my_sensors, telstate):
         self._sdisp_ips = {}
-        self._center_freq = None
         self._run_future = None
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
@@ -803,10 +832,6 @@ class CBFIngest(object):
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
 
-    def set_center_freq(self, center_freq):
-        """Change the center frequency reported to signal displays."""
-        self._center_freq = center_freq
-
     def _flush_output(self, timestamps):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
@@ -885,13 +910,14 @@ class CBFIngest(object):
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
         if full_mask is None:
-            n_channels = len(self.channel_ranges.cbf)
+            n_channels = len(self.channel_ranges.all_sd_output)
             full_mask = np.ones(n_channels, np.float32) / n_channels
         # Create mask from full_mask. mask contains a weight for each channel
         # in computed, but those outside of sd_output are zero.
         mask = np.zeros(len(self.channel_ranges.computed), np.float32)
         used = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed)
-        mask[used.asslice()] = full_mask[self.channel_ranges.sd_output.asslice()]
+        sd_rel = self.channel_ranges.sd_output.relative_to(self.channel_ranges.all_sd_output)
+        mask[used.asslice()] = full_mask[sd_rel.asslice()]
 
         proc_a = self.proc_resource.acquire()
         sd_input_a, host_sd_input_a = self.sd_input_resource.acquire()
@@ -987,17 +1013,6 @@ class CBFIngest(object):
             self.ig_sd['sd_timeseriesabs'].value = timeseriesabs
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-            # Translate CBF-width center_freq to the center_freq for the
-            # signal display product.
-            cbf_center_freq = self._center_freq
-            if cbf_center_freq is None:
-                cbf_center_freq = self.cbf_attr.get('center_freq')
-            if cbf_center_freq is not None:
-                channel_width = self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf)
-                cbf_mid = (self.channel_ranges.cbf.start + self.channel_ranges.cbf.stop) / 2
-                sd_mid = (self.channel_ranges.sd_output.start + self.channel_ranges.sd_output.stop) / 2
-                sd_center_freq = cbf_center_freq + (sd_mid - cbf_mid) * channel_width
-                self.ig_sd['center_freq'].value = sd_center_freq
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()

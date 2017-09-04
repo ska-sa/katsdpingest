@@ -167,20 +167,6 @@ class IngestDeviceServer(AsyncDeviceServer):
         logger.info(smsg)
         raise tornado.gen.Return(("ok", smsg))
 
-    @request(Float())
-    @return_reply(Str())
-    def request_set_center_freq(self, req, center_freq_hz):
-        """Set the center freq for use in the signal displays.
-
-        Parameters
-        ----------
-        center_freq_hz : int
-            The current system center frequency in hz
-        """
-        self.cbf_ingest.set_center_freq(center_freq_hz)
-        logger.info("Center frequency set to %f Hz", center_freq_hz)
-        return ("ok", "set")
-
     @request(Str())
     @return_reply(Str())
     @tornado.gen.coroutine

@@ -149,9 +149,9 @@ class TestIngestDeviceServer(object):
 
     def _get_tx(self, thread_pool, endpoints, interface_address, flavour,
                 int_time, channel_range, channel0, baselines):
-        if endpoints == self.user_args.l0_spectral_spead:
+        if endpoints == self.user_args.l0_spectral_spead[1:2]:
             return self._tx['spectral']
-        elif endpoints == self.user_args.l0_continuum_spead:
+        elif endpoints == self.user_args.l0_continuum_spead[1:2]:
             return self._tx['continuum']
         else:
             raise KeyError('VisSenderSet created with unrecognised endpoints')
@@ -201,24 +201,26 @@ class TestIngestDeviceServer(object):
         n_xengs = 16
         self.user_args = user_args = argparse.Namespace(
             sdisp_spead=[Endpoint('127.0.0.2', 7149)],
-            cbf_spead=[Endpoint('239.102.255.{}'.format(i), 7148) for i in range(n_xengs)],
+            cbf_spead=[Endpoint('239.102.250.{}'.format(i), 7148) for i in range(n_xengs)],
             cbf_interface='dummyif1',
             cbf_ibv=False,
-            l0_spectral_spead=[Endpoint('239.102.255.2', 7148)],
+            l0_spectral_spead=[Endpoint('239.102.251.{}'.format(i), 7148) for i in range(4)],
             l0_spectral_interface='dummyif2',
             l0_spectral_name='sdp_l0',
-            l0_continuum_spead=[Endpoint('239.102.255.3', 7148)],
+            l0_continuum_spead=[Endpoint('239.102.252.{}'.format(i), 7148) for i in range(4)],
             l0_continuum_interface='dummyif3',
             l0_continuum_name='sdp_l0_continuum',
             output_int_time=4.0,
             sd_int_time=4.0,
             antenna_mask=['m090', 'm091', 'm092'],
-            output_channels=Range(464, 1120),
-            sd_output_channels=Range(640, 1280),
+            output_channels=Range(464, 1744),
+            sd_output_channels=Range(640, 1664),
             continuum_factor=16,
             sd_continuum_factor=128,
             sd_spead_rate=1000000000.0,
             excise=False,
+            servers=4,
+            server_id=2,
             host='localhost',
             port=7147,
             telstate=self._telstate,
@@ -231,6 +233,7 @@ class TestIngestDeviceServer(object):
         self._telstate.add('m090_data_suspect', False, ts=0)
         self._telstate.add('m091_data_suspect', True, ts=0)
         self.channel_ranges = ChannelRanges(
+            user_args.servers, user_args.server_id - 1,
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
             len(user_args.cbf_spead), 64,
             user_args.output_channels, user_args.sd_output_channels)
@@ -379,15 +382,15 @@ class TestIngestDeviceServer(object):
         bls_ordering.sort()
         for prefix in ['sdp_l0', 'sdp_l0_continuum']:
             factor = 1 if prefix == 'sdp_l0' else self.user_args.continuum_factor
-            assert_equal(656 // factor, get_ts('n_chans'))
-            assert_equal(get_ts('n_chans'), get_ts('n_chans_per_substream'))
+            assert_equal(1280 // factor, get_ts('n_chans'))
+            assert_equal(get_ts('n_chans') // 4, get_ts('n_chans_per_substream'))
             assert_equal(len(bls_ordering), get_ts('n_bls'))
             assert_equal(bls_ordering, sorted(get_ts('bls_ordering').tolist()))
             assert_equal(self.cbf_attr['sync_time'], get_ts('sync_time'))
-            assert_equal(137093750.0, get_ts('bandwidth'))
-            assert_equal(1021515625.0, get_ts('center_freq'))
+            assert_equal(267500000.0, get_ts('bandwidth'))
+            assert_equal(1086718750.0, get_ts('center_freq'))
             assert_equal(8 * self.cbf_attr['int_time'], get_ts('int_time'))
-            assert_equal((464, 1120), get_ts('channel_range'))
+            assert_equal((464, 1744), get_ts('channel_range'))
 
     @async_test
     @tornado.gen.coroutine
@@ -401,18 +404,22 @@ class TestIngestDeviceServer(object):
         expected_output_vis = expected_vis[:, self.channel_ranges.output.asslice(), :]
         expected_output_flags = expected_flags[:, self.channel_ranges.output.asslice(), :]
 
-        send_range = Range(80, 736)
+        # This server sends channels 784:1104 to L0 and 896:1152 to sdisp.
+        # Aligning to the sd_continuum_factor (128) gives computed = 768:1152.
+        assert_equal(Range(784, 1104), self.channel_ranges.output)
+        assert_equal(Range(896, 1152), self.channel_ranges.sd_output)
+        send_range = Range(16, 336)
         self._VisSenderSet.assert_any_call(
-            mock.ANY, self.user_args.l0_spectral_spead, '127.0.0.2',
-            l0_flavour, l0_int_time, send_range, 464, 24)
+            mock.ANY, self.user_args.l0_spectral_spead[1:2], '127.0.0.2',
+            l0_flavour, l0_int_time, send_range, 320, 24)
         self._check_output(self._tx['spectral'], expected_output_vis, expected_output_flags,
                            expected_ts, send_range.asslice())
         self._tx['spectral'].stop.assert_called_once_with()
 
-        send_range = Range(5, 46)
+        send_range = Range(1, 21)
         self._VisSenderSet.assert_any_call(
-            mock.ANY, self.user_args.l0_continuum_spead, '127.0.0.3',
-            l0_flavour, l0_int_time, send_range, 29, 24)
+            mock.ANY, self.user_args.l0_continuum_spead[1:2], '127.0.0.3',
+            l0_flavour, l0_int_time, send_range, 20, 24)
         self._check_output(
             self._tx['continuum'],
             self._channel_average(expected_output_vis, self.user_args.continuum_factor),
@@ -466,25 +473,6 @@ class TestIngestDeviceServer(object):
         assert_equal(logging.DEBUG, logging.getLogger('katsdpingest.ingest_session').level)
         yield self.make_request('disable-debug')
         assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
-
-    @async_test
-    @tornado.gen.coroutine
-    def test_set_center_freq(self):
-        """A center frequency set by ?set-center-freq is reflected in signal display output."""
-        cbf_center_freq = 2e9
-        channel_width = self.cbf_attr['bandwidth'] / self.cbf_attr['n_chans']
-        sd_output_channels = self.user_args.sd_output_channels
-        sd_center_channel = (sd_output_channels.start + sd_output_channels.stop) / 2
-        sd_center_freq = (cbf_center_freq
-                          + (sd_center_channel - self.cbf_attr['n_chans'] / 2) * channel_width)
-        yield self.make_request('set-center-freq', cbf_center_freq)
-        yield self.make_request('capture-init')
-        yield self.make_request('capture-done')
-
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
-        call = sd_tx.async_send_heap.mock_calls[1]
-        ig = decode_heap_ig(call[1][0])
-        assert_equal(sd_center_freq, ig['center_freq'].value)
 
     @async_test
     @tornado.gen.coroutine
