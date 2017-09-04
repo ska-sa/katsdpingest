@@ -148,7 +148,7 @@ class TestIngestDeviceServer(object):
         return mock_obj
 
     def _get_tx(self, thread_pool, endpoints, interface_address, flavour,
-                int_time, channel_range, channel0, baselines):
+                int_time, channel_range, channel0, all_channels, baselines):
         if endpoints == self.user_args.l0_spectral_spead[1:2]:
             return self._tx['spectral']
         elif endpoints == self.user_args.l0_continuum_spead[1:2]:
@@ -411,7 +411,7 @@ class TestIngestDeviceServer(object):
         send_range = Range(16, 336)
         self._VisSenderSet.assert_any_call(
             mock.ANY, self.user_args.l0_spectral_spead[1:2], '127.0.0.2',
-            l0_flavour, l0_int_time, send_range, 320, 24)
+            l0_flavour, l0_int_time, send_range, 320, 1280, 24)
         self._check_output(self._tx['spectral'], expected_output_vis, expected_output_flags,
                            expected_ts, send_range.asslice())
         self._tx['spectral'].stop.assert_called_once_with()
@@ -419,7 +419,7 @@ class TestIngestDeviceServer(object):
         send_range = Range(1, 21)
         self._VisSenderSet.assert_any_call(
             mock.ANY, self.user_args.l0_continuum_spead[1:2], '127.0.0.3',
-            l0_flavour, l0_int_time, send_range, 20, 24)
+            l0_flavour, l0_int_time, send_range, 20, 80, 24)
         self._check_output(
             self._tx['continuum'],
             self._channel_average(expected_output_vis, self.user_args.continuum_factor),

@@ -59,11 +59,13 @@ class VisSender(object):
     channel_range : :class:`katsdpingest.utils.Range`
         Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
     channel0 : int
-        Index of first channel, within the full bandwidth of the CBF output
+        Index of first channel, within the full bandwidth of the L0 output
+    all_channels : int
+        Number of channels in the full L0 output
     baselines : number of baselines in output
     """
     def __init__(self, thread_pool, endpoint, interface_address,
-                 flavour, int_time, channel_range, channel0, baselines):
+                 flavour, int_time, channel_range, channel0, all_channels, baselines):
         channels = len(channel_range)
         dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
         dump_size += channels * np.dtype(np.float32).itemsize
@@ -81,6 +83,7 @@ class VisSender(object):
         self._stream = spead2.send.trollius.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
             spead2.send.StreamConfig(max_packet_size=8972, rate=rate), **kwargs)
+        self._stream.set_cnt_sequence(channel0, all_channels)
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
         self._channel0 = channel0
@@ -129,7 +132,7 @@ class VisSenderSet(object):
     functions that work collectively on all the streams.
     """
     def __init__(self, thread_pool, endpoints, interface_address,
-                 flavour, int_time, channel_range, channel0, baselines):
+                 flavour, int_time, channel_range, channel0, all_channels, baselines):
         channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
@@ -142,7 +145,7 @@ class VisSenderSet(object):
             b = a + sub_channels
             self._senders.append(
                 VisSender(thread_pool, endpoints[i], interface_address, flavour, int_time,
-                          Range(a, b), channel0 + i * sub_channels, baselines))
+                          Range(a, b), channel0 + i * sub_channels, all_channels, baselines))
 
     @property
     def size(self):

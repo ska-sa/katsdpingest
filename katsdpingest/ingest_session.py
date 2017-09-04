@@ -631,6 +631,7 @@ class CBFIngest(object):
             self._output_avg.int_time,
             channels,
             (self.channel_ranges.output.start - all_output.start) // cont_factor,
+            len(all_output) // cont_factor,
             baselines)
 
         # Put attributes into telstate
