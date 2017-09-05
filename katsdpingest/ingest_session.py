@@ -623,6 +623,7 @@ class CBFIngest(object):
         endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
         endpoint_hi = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
+        logger.info('Sending %s output to %s', tx_type, endpoints)
         tx = sender.VisSenderSet(
             spead2.ThreadPool(),
             endpoints,
@@ -634,7 +635,8 @@ class CBFIngest(object):
             len(all_output) // cont_factor,
             baselines)
 
-        # Put attributes into telstate
+        # Put attributes into telstate. This will be done by all the ingest
+        # nodes, with the same values.
         prefix = getattr(args, 'l0_{}_name'.format(tx_type))
         self._set_telstate_entry('n_chans', len(all_output) // cont_factor, prefix)
         self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
