@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
     parser.add_argument('--servers', type=int, default=1, help='number of parallel servers producing the output [default=%(default)s]')
-    parser.add_argument('--server-id', type=int, default=1, help='index of this server amongst parallel servers [default=%(default)s]')
+    parser.add_argument('--server-id', type=int, default=1, help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
     parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
