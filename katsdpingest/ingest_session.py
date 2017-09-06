@@ -55,8 +55,6 @@ class _TimeAverage(object):
         quantised integration time
     _start_ts : int or NoneType
         Timestamp of first dump in the current group, or `None` if no dumps have been seen
-    _ts : list of int
-        All timestamps in the current group. Empty only if no dumps have ever been seen
     """
     def __init__(self, cbf_attr, int_time):
         self.ratio = max(1, int(round(int_time / cbf_attr['int_time'])))
@@ -65,7 +63,6 @@ class _TimeAverage(object):
         self._sub_interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.interval = self.ratio * self._sub_interval
         self._start_ts = None
-        self._ts = []
 
     def add_timestamp(self, timestamp):
         """Record that a dump with a given timestamp has arrived and is about to
@@ -82,21 +79,18 @@ class _TimeAverage(object):
             self._start_ts = timestamp - (timestamp % self.interval) // si * si
 
         if timestamp >= self._start_ts + self.interval:
-            self.flush(self._ts)
+            self.flush(self._start_ts + 0.5 * self.interval)
             skip_groups = (timestamp - self._start_ts) // self.interval
-            self._ts = []
             self._start_ts += skip_groups * self.interval
-        self._ts.append(timestamp)
 
     def flush(self, timestamps):
         raise NotImplementedError
 
     def finish(self, flush=True):
         """Flush if not empty and `flush` is true, and reset to initial state"""
-        if self._ts and flush:
-            self.flush(self._ts)
+        if self._start_ts is not None and flush:
+            self.flush(self._start_ts + 0.5 * self.interval)
         self._start_ts = None
-        self._ts = []
 
 
 def _split_array(x, dtype):
@@ -842,14 +836,14 @@ class CBFIngest(object):
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
 
-    def _flush_output(self, timestamps):
+    def _flush_output(self, mid_timestamp):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
         output_a, host_output_a = self.output_resource.acquire()
-        self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, timestamps))
+        self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, mid_timestamp))
 
     @trollius.coroutine
-    def _flush_output_job(self, proc_a, output_a, host_output_a, timestamps):
+    def _flush_output_job(self, proc_a, output_a, host_output_a, mid_timestamp):
         with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
             events = yield From(proc_a.wait())
@@ -879,9 +873,7 @@ class CBFIngest(object):
             proc_a.ready([proc_done])
             output_a.ready([proc_done])
 
-            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
-            # Shift to the centre of the dump
-            ts_rel += 0.5 * self.cbf_attr['int_time']
+            ts_rel = mid_timestamp / self.cbf_attr['scale_factor_timestamp']
             yield From(resource.async_wait_for_events([transfer_done]))
             spec = data['spec']
             cont = data['cont']
@@ -895,10 +887,9 @@ class CBFIngest(object):
             self.output_dumps += 2
             self.output_dumps_sensor.set_value(self.output_dumps)
             host_output_a.ready()
-            logger.info("Finished dump group with raw timestamps {0}".format(
-                        timestamps))
+            logger.info("Finished dump group with raw timestamp %s", mid_timestamp)
 
-    def _flush_sd(self, timestamps):
+    def _flush_sd(self, mid_timestamp):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
         custom_signals_indices = None
@@ -935,12 +926,12 @@ class CBFIngest(object):
         self.jobs.add(self._flush_sd_job(
                 proc_a, sd_input_a, host_sd_input_a,
                 sd_output_a, host_sd_output_a,
-                timestamps, custom_signals_indices, mask))
+                mid_timestamp, custom_signals_indices, mask))
 
     @trollius.coroutine
     def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
                       sd_output_a, host_sd_output_a,
-                      timestamps, custom_signals_indices, mask):
+                      mid_timestamp, custom_signals_indices, mask):
         with proc_a as proc, \
                 sd_input_a as sd_input_buffers, \
                 host_sd_input_a as host_sd_input, \
@@ -986,7 +977,7 @@ class CBFIngest(object):
 
             # Mangle and transmit the retrieved values
             yield From(resource.async_wait_for_events([transfer_out_done]))
-            ts_rel = np.mean(timestamps) / self.cbf_attr['scale_factor_timestamp']
+            ts_rel = mid_timestamp / self.cbf_attr['scale_factor_timestamp']
             ts = self.cbf_attr['sync_time'] + ts_rel
             cont_vis = host_sd_output['sd_cont_vis']
             cont_flags = host_sd_output['sd_cont_flags']
@@ -1026,8 +1017,7 @@ class CBFIngest(object):
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()
-            logger.info("Finished SD group with raw timestamps {0}".format(
-                        timestamps))
+            logger.info("Finished SD group with raw timestamp %s", mid_timestamp)
 
     def _set_baseline_flags(self, baseline_flags, timestamp):
         """Query telstate for per-baseline flags to set.
