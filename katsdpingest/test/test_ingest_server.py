@@ -315,8 +315,6 @@ class TestIngestDeviceServer(object):
         The timestamps are in seconds since the sync time. The full CBF channel
         range is returned.
         """
-        timestamps = (self._timestamps / self.cbf_attr['scale_factor_timestamp']
-                      + 0.5 * self.cbf_attr['int_time'])
         # Convert to complex64 from pairs of real and imag int
         vis = (self._data[..., 0] + self._data[..., 1] * 1j).astype(np.complex64)
         # Scaling
@@ -326,9 +324,9 @@ class TestIngestDeviceServer(object):
         batch_edges = np.arange(0, vis.shape[0], time_ratio)
         batch_sizes = np.minimum(batch_edges + time_ratio, vis.shape[0]) - batch_edges
         vis = np.add.reduceat(vis, batch_edges, axis=0)
-        timestamps = np.add.reduceat(timestamps, batch_edges, axis=0)
         vis /= batch_sizes[:, np.newaxis, np.newaxis]
-        timestamps /= batch_sizes
+        timestamps = self._timestamps[::time_ratio] / self.cbf_attr['scale_factor_timestamp'] \
+                + 0.5 * self._telstate['sdp_l0_int_time']
         # Baseline permutation
         bls = BaselineOrdering(self.cbf_attr['bls_ordering'], self.user_args.antenna_mask)
         inv_permutation = np.empty(len(bls.sdp_bls_ordering), np.int)

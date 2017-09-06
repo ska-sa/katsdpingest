@@ -48,7 +48,6 @@ class TestTimeAverage(object):
         assert_equal(3, avg.ratio)
         assert_equal(avg.ratio * self.input_interval, avg.interval)
         assert_is(None, avg._start_ts)
-        assert_equal([], avg._ts)
 
     def make_ts(self, idx):
         if isinstance(idx, list):
@@ -65,21 +64,18 @@ class TestTimeAverage(object):
         assert not avg.flush.called
 
         avg.add_timestamp(self.make_ts(4))  # Skip first packet in the group
-        avg.flush.assert_called_once_with(self.make_ts([0, 2, 1]))
+        avg.flush.assert_called_once_with(self.make_ts(1.5))
         avg.flush.reset_mock()
         assert_equal(self.make_ts(3), avg._start_ts)
-        assert_equal([self.make_ts(4)], avg._ts)
 
         avg.add_timestamp(self.make_ts(12))  # Skip some whole groups
-        avg.flush.assert_called_once_with(self.make_ts([4]))
+        avg.flush.assert_called_once_with(self.make_ts(4.5))
         avg.flush.reset_mock()
         assert_equal(self.make_ts(12), avg._start_ts)
-        assert_equal([self.make_ts(12)], avg._ts)
 
         avg.finish()
-        avg.flush.assert_called_once_with(self.make_ts([12]))
+        avg.flush.assert_called_once_with(self.make_ts(13.5))
         assert_is(None, avg._start_ts)
-        assert_equal([], avg._ts)
 
     def test_alignment(self):
         """Phase must be independent of first timestamp seen"""
