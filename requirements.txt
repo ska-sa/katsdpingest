@@ -12,6 +12,8 @@ futures
 h5py
 ipaddress==1.0.16
 katcp
+katdal==0.8
+katpoint==0.7
 katversion
 hiredis
 linecache2
@@ -34,6 +36,7 @@ psutil==4.1.0
 py
 pybind11==2.1.1
 pycuda
+pyephem
 pytest
 python-dateutil
 pytools
