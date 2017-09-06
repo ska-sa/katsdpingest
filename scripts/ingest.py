@@ -50,8 +50,10 @@ def parse_args():
     parser.add_argument('--cbf-ibv', action='store_true', help='use ibverbs acceleration for CBF SPEAD data [default=no].')
     parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--l0-spectral-interface', help='interface on which to send spectral L0 output. [default=auto]', metavar='INTERFACE')
+    parser.add_argument('--l0-spectral-name', default='sdp_l0', help='telstate name of the spectral output stream', metavar='NAME')
     parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--l0-continuum-interface', help='interface on which to send continuum L0 output. [default=auto]', metavar='INTERFACE')
+    parser.add_argument('--l0-continuum-name', default='sdp_l0_continuum', help='telstate name of the continuum output stream', metavar='NAME')
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
     parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
     parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
@@ -61,6 +63,8 @@ def parse_args():
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
+    parser.add_argument('--servers', type=int, default=1, help='number of parallel servers producing the output [default=%(default)s]')
+    parser.add_argument('--server-id', type=int, default=1, help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
     parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
     parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
     parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
@@ -70,6 +74,8 @@ def parse_args():
         parser.error('argument --telstate is required')
     if args.cbf_ibv and args.cbf_interface is None:
         parser.error('--cbf-ibv requires --cbf-interface')
+    if not 1 <= args.server_id <= args.servers:
+        parser.error('--server-id is out of range')
     return args
 
 
@@ -105,6 +111,7 @@ def main():
         args.sd_output_channels = Range(0, cbf_channels)
     # TODO: determine an appropriate value for guard
     channel_ranges = ChannelRanges(
+        args.servers, args.server_id - 1,
         cbf_channels, args.continuum_factor, args.sd_continuum_factor,
         len(args.cbf_spead), 64, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
