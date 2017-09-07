@@ -658,6 +658,8 @@ class CBFIngest(object):
         inline_format = [('u', sd_flavour.heap_address_bits)]
         n_spec_channels = len(self.channel_ranges.sd_output)
         n_cont_channels = n_spec_channels // self.channel_ranges.sd_cont_factor
+        all_spec_channels = len(self.channel_ranges.all_sd_output)
+        all_cont_channels = all_spec_channels // self.channel_ranges.sd_cont_factor
         n_baselines = len(self.bls_ordering.sdp_bls_ordering)
         self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
         self.ig_sd.add_item(
@@ -726,7 +728,12 @@ class CBFIngest(object):
             name="n_chans", id=0x1009,
             description="The total number of frequency channels in the signal display product.",
             shape=(), dtype=None, format=inline_format,
-            value=len(self.channel_ranges.all_sd_output))
+            value=all_spec_channels)
+        self.ig_sd.add_item(
+            name="sd_blmx_n_chans", id=0x350A,
+            description="The total number of frequency channels in the baseline matrix product.",
+            shape=(), dtype=None, format=inline_format,
+            value=all_cont_channels)
         self.ig_sd.add_item(
             name="frequency", id=0x4103,
             description="The frequency channel of the data in this heap.",
