@@ -404,7 +404,8 @@ class Client(object):
                 self._logger.debug('Set signal handler for %s', signal_number)
         except Exception:
             self._logger.error("Exception during startup", exc_info=True)
-            yield self._device_server.stop(timeout=None)
+            if self._device_server is not None:
+                yield self._device_server.stop(timeout=None)
             self._loop.stop()
         else:
             self._logger.info("Startup complete")
