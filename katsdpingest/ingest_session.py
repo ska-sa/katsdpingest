@@ -894,7 +894,7 @@ class CBFIngest(object):
             self.output_dumps += 2
             self.output_dumps_sensor.set_value(self.output_dumps)
             host_output_a.ready()
-            logger.info("Finished dump group with raw timestamp %s", mid_timestamp)
+            logger.debug("Finished dump group with raw timestamp %.1f", mid_timestamp)
 
     def _flush_sd(self, mid_timestamp):
         """Finalise averaging of a group of dumps for signal display, and send
@@ -1024,7 +1024,7 @@ class CBFIngest(object):
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()
-            logger.info("Finished SD group with raw timestamp %s", mid_timestamp)
+            logger.debug("Finished SD group with raw timestamp %.1f", mid_timestamp)
 
     def _set_baseline_flags(self, baseline_flags, timestamp):
         """Query telstate for per-baseline flags to set.
@@ -1237,7 +1237,7 @@ class CBFIngest(object):
             # Done with reading this frame
             idx += 1
             tt = time.time() - st
-            logger.info(
+            logger.debug(
                 "Captured CBF frame with timestamp %i (process_time: %.2f, index: %i)",
                 current_ts, tt, idx)
             # Clear completed processing, so that any related exceptions are
