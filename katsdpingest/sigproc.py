@@ -1302,7 +1302,7 @@ class IngestOperation(accel.OperationSequence):
             compounds[name + '_flags'] = [name + '_flags:dest', name + '_flags:data']
 
         aliases = {
-            'scratch1': ['vis_in', 'auto_weights', 'vis_mid',
+            'scratch1': ['auto_weights', 'vis_mid',
                          'flagger:deviations_t', 'flagger:flags',
                          'cont_weights_fp32', 'sd_cont_weights_fp32']
         }
