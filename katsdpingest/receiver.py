@@ -8,6 +8,7 @@ import spead2.recv.trollius
 import trollius
 from trollius import From, Return
 import numpy as np
+from katsdptelstate.endpoint import endpoints_to_str
 from .utils import Range
 
 
@@ -194,7 +195,7 @@ class Receiver(object):
                                           interface_address=ifaddr)
         _logger.info(
             "CBF SPEAD stream reception on %s via %s%s",
-            [str(x) for x in endpoints],
+            endpoints_to_str(endpoints),
             ifaddr if ifaddr is not None else 'default interface',
             ' with ibv' if self._ibv else '')
 
