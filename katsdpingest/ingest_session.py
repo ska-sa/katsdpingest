@@ -14,6 +14,7 @@ from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 from katcp import Sensor
 import katsdpservices
+from katsdptelstate.endpoint import endpoints_to_str
 import logging
 import trollius
 from trollius import From, Return
@@ -617,7 +618,7 @@ class CBFIngest(object):
         endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
         endpoint_hi = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
-        logger.info('Sending %s output to %s', tx_type, endpoints)
+        logger.info('Sending %s output to %s', tx_type, endpoints_to_str(endpoints))
         tx = sender.VisSenderSet(
             spead2.ThreadPool(),
             endpoints,
