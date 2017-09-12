@@ -10,7 +10,7 @@ funcsigs
 future
 futures
 h5py
-ipaddress==1.0.16
+ipaddress
 katcp
 katdal==0.8
 katpoint==0.7
