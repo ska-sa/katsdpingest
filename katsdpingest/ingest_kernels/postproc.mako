@@ -4,21 +4,28 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     GLOBAL float2 * RESTRICT vis,
     GLOBAL float * RESTRICT weights,
     GLOBAL unsigned char * RESTRICT flags,
+% if continuum:
     GLOBAL float2 * RESTRICT cont_vis,
     GLOBAL float * RESTRICT cont_weights,
     GLOBAL unsigned char * RESTRICT cont_flags,
     int cont_factor,
+% endif
     int stride)
 {
+% if not continuum:
+    const int cont_factor = 1;
+% endif
     int baseline = get_global_id(0);
     int cont_channel = get_global_id(1);
     int channel0 = cont_channel * cont_factor;
 
+% if continuum:
     float2 cv;
     cv.x = 0.0f;
     cv.y = 0.0f;
     float cw = 0.0f;
     unsigned char cf = 0;
+% endif
 #pragma unroll 4
     for (int i = 0; i < cont_factor; i++)
     {
@@ -30,10 +37,12 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         float w = *wptr;
         GLOBAL unsigned char *fptr = &flags[addr];
         unsigned char f = *fptr;
+% if continuum:
         cv.x += v.x;
         cv.y += v.y;
         cw += w;
         cf |= f;
+% endif
         float scale = 1.0f / w;
 % if excise:
         if (!(f & ${unflagged_bit}))
@@ -46,6 +55,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         *vptr = v;
     }
 
+% if continuum:
     float scale = 1.0 / cw;
     cv.x *= scale;
     cv.y *= scale;
@@ -59,4 +69,5 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     cont_vis[cont_addr] = cv;
     cont_weights[cont_addr] = cw;
     cont_flags[cont_addr] = cf;
+% endif
 }

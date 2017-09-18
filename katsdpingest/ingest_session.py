@@ -487,7 +487,7 @@ class CBFIngest(object):
             return value
 
     @classmethod
-    def create_proc_template(cls, context, percentile_sizes, max_channels, excise):
+    def create_proc_template(cls, context, percentile_sizes, max_channels, excise, continuum):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -503,7 +503,9 @@ class CBFIngest(object):
         max_channels : int
             Maximum number of incoming channels to support
         excise : bool
-            Excise flagged data by downweighting it massively.
+            Excise flagged data by downweighting it massively
+        continuum : bool
+            Enable continuum averaging
         """
         # Quantise to reduce number of options to autotune
         max_percentile_sizes = [cls._tune_next(s, cls.tune_percentile_sizes)
@@ -520,7 +522,7 @@ class CBFIngest(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
-                                 excise=excise)
+                                 excise=excise, continuum=continuum)
 
     def _zero_counters(self):
         self.output_bytes = 0
@@ -559,7 +561,7 @@ class CBFIngest(object):
     def _init_proc(self, context, excise):
         percentile_sizes = list(set(r[1] - r[0] for r in self.bls_ordering.percentile_ranges))
         proc_template = self.create_proc_template(
-            context, percentile_sizes, len(self.channel_ranges.input), excise)
+            context, percentile_sizes, len(self.channel_ranges.input), excise, True)
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = proc_template.instantiate(
                 self.command_queue, len(self.channel_ranges.input),
