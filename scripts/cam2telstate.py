@@ -188,7 +188,6 @@ SENSORS = [
 
 def parse_args():
     parser = katsdpservices.ArgumentParser()
-    parser.add_argument('--subarray-numeric-id', type=int, help='Subarray number')
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
                         help='Namespace to create in katportal [sp_subarray_N]')
@@ -201,14 +200,10 @@ def parse_args():
     parser.add_argument('-p', '--port', type=int, metavar='N', default=2047,
                         help='Port to bind for katcp interface [%(default)s]')
     args = parser.parse_args()
-    if args.namespace is None:
-        args.namespace = 'sp_subarray_{}'.format(args.subarray_numeric_id)
     # Can't use required= on the parser, because telstate-provided arguments
     # are treated only as defaults rather than having set a value.
     if args.telstate is None:
         parser.error('argument --telstate is required')
-    if args.subarray_numeric_id is None:
-        parser.error('argument --subarray-numeric-id is required')
     if args.url is None:
         parser.error('argument --url is required')
     if args.streams is None:
@@ -235,15 +230,16 @@ class Client(object):
         self._logger = logger
         self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
+        self._namespace = None    #: Set after connecting
         self._sensors = None  #: Dictionary from CAM name to sensor object
         self._instruments = set()  #: Set of instruments available in the current subarray
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
         self._pool_resources = tornado.concurrent.Future()
         self._input_labels = tornado.concurrent.Future()
         self._band = tornado.concurrent.Future()
-        self._sub_name = 'subarray_{}'.format(args.subarray_numeric_id)
-        self._cbf_name = None     #: Set once _pool_resources result is set
-        self._sdp_name = None     #: Set once _pool_resources result is set
+        self._sub_name = None     #: Set once connected
+        self._cbf_name = None     #: Set once connected
+        self._sdp_name = None     #: Set once connected
         self._receptors = []      #: Set once _pool_resources result is set
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
 
@@ -330,11 +326,11 @@ class Client(object):
             Name of the sensor to subscribe to
         """
         status = yield self._portal_client.subscribe(
-            self._args.namespace, sensor)
+            self.namespace, sensor)
         if status != 1:
             raise RuntimeError("Expected 1 sensor for {}, found {}".format(sensor, status))
         status = yield self._portal_client.set_sampling_strategy(
-            self._args.namespace, sensor, 'event')
+            self.namespace, sensor, 'event')
         result = status[sensor]
         if result[u'success']:
             self._logger.info("Set sampling strategy on %s to event", sensor)
@@ -352,17 +348,17 @@ class Client(object):
         yield self.subscribe_one(sensor)
         # Wait until we get a callback with the value
         yield self._pool_resources
-        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        yield self._portal_client.unsubscribe(self.namespace, sensor)
         # Now input labels
         sensor = '{}_input_labels'.format(self._cbf_name)
         yield self.subscribe_one(sensor)
         yield self._input_labels
-        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        yield self._portal_client.unsubscribe(self.namespace, sensor)
         # Finally we need the band
         sensor = '{}_band'.format(self._sub_name)
         yield self.subscribe_one(sensor)
         yield self._band
-        yield self._portal_client.unsubscribe(self._args.namespace, sensor)
+        yield self._portal_client.unsubscribe(self.namespace, sensor)
 
     def set_status(self, status):
         self._telstate.add(STATUS_KEY, status)
@@ -374,6 +370,16 @@ class Client(object):
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
+            if self._args.namespace is None:
+                sub_nr = self._portal_client.sitemap['sub_nr']
+                if sub_nr is None:
+                    raise RuntimeError('subarray number not known')
+                self.namespace = 'sp_subarray_{}'.format(sub_nr)
+            else:
+                self.namespace = self._args.namespace
+            self._sub_name = yield self._portal_client.sensor_subarray_lookup('sub', '')
+            self._cbf_name = yield self._portal_client.sensor_subarray_lookup('cbf', '')
+            self._sdp_name = yield self._portal_client.sensor_subarray_lookup('sdp', '')
             self.set_status('initialising')
             # First find out which resources are allocated to the subarray
             yield self.get_resources()
@@ -382,11 +388,11 @@ class Client(object):
 
             self._waiting = len(self._sensors)
             status = yield self._portal_client.subscribe(
-                self._args.namespace, self._sensors.keys())
+                self.namespace, self._sensors.keys())
             self._logger.info("Subscribed to %d channels", status)
             for sensor in six.itervalues(self._sensors):
                 status = yield self._portal_client.set_sampling_strategy(
-                    self._args.namespace, sensor.cam_name, sensor.sampling_strategy_and_params)
+                    self.namespace, sensor.cam_name, sensor.sampling_strategy_and_params)
                 result = status[sensor.cam_name]
                 if result[u'success']:
                     self._logger.info("Set sampling strategy on %s to %s",
@@ -447,20 +453,9 @@ class Client(object):
                 resources = value.split(',')
                 self._receptors = []
                 for resource in resources:
-                    if resource.startswith('data_'):
-                        self._cbf_name = self._sdp_name = resource
-                    elif resource.startswith('cbf_'):
-                        self._cbf_name = resource
-                    elif resource.startswith('sdp_'):
-                        self._sdp_name = resource
-                    elif re.match(r'^m\d+$', resource):
+                    if re.match(r'^m\d+$', resource):
                         self._receptors.append(resource)
-                if not self._cbf_name or not self._sdp_name:
-                    self._pool_resources.set_exception(RuntimeError(
-                        'No data_* or cbf_* / sdp_* resource found for '
-                        '{}'.format(self._sub_name)))
-                else:
-                    self._pool_resources.set_result(resources)
+                self._pool_resources.set_result(resources)
         elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
             if not self._input_labels.done() and status == 'nominal':
                 labels = value.split(',')
@@ -501,7 +496,7 @@ class Client(object):
 
     @tornado.gen.coroutine
     def close(self):
-        yield self._portal_client.unsubscribe(self._args.namespace)
+        yield self._portal_client.unsubscribe(self.namespace)
         self._portal_client.disconnect()
         self._logger.info("disconnected")
         if self._device_server is not None:
