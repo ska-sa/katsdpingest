@@ -76,6 +76,8 @@ def parse_args():
         parser.error('--cbf-ibv requires --cbf-interface')
     if not 1 <= args.server_id <= args.servers:
         parser.error('--server-id is out of range')
+    if args.l0_spectral_spead is None and args.l0_continuum_spead is None:
+        parser.error('at least one of --l0-spectral-spead and --l0-continuum-spead must be given')
     return args
 
 

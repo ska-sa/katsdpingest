@@ -674,8 +674,6 @@ class CBFIngest(object):
         self.tx = {}
         self._init_tx_one(args, 'spectral', 'spec', 1)
         self._init_tx_one(args, 'continuum', 'cont', self.channel_ranges.cont_factor)
-        if not self.tx:
-            logger.warn('No output endpoints specified')
 
     def _init_ig_sd(self):
         """Create a item group for signal displays."""
