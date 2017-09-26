@@ -61,6 +61,9 @@ def parse_args():
     parser.add_argument('--sd-output-channels', type=range_str, help='signal display channels, in format A:B [default=all]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
+    parser.add_argument('--guard-channels', default=64, type=int, help='extra channels to use for RFI detection. [default=%(default)s]')
+    parser.add_argument('--input-streams', default=2, type=int, help='maximum separate streams for receive. [default=%(default)s]')
+    parser.add_argument('--input-buffer', default=128 * 1024**2, type=int, help='network buffer size ofr input. [default=%(default)s]')
     parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
     parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
     parser.add_argument('--servers', type=int, default=1, help='number of parallel servers producing the output [default=%(default)s]')
@@ -109,11 +112,10 @@ def main():
         args.output_channels = Range(0, cbf_channels)
     if args.sd_output_channels is None:
         args.sd_output_channels = Range(0, cbf_channels)
-    # TODO: determine an appropriate value for guard
     channel_ranges = ChannelRanges(
         args.servers, args.server_id - 1,
         cbf_channels, args.continuum_factor, args.sd_continuum_factor,
-        len(args.cbf_spead), 64, args.output_channels, args.sd_output_channels)
+        len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
     server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
     # allow remote debug connections and expose server and args
