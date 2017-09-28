@@ -291,10 +291,11 @@ class TestPostproc(object):
     def test_bad_cont_factor(self):
         """Test with a continuum factor that does not divide into the channel count"""
         template = mock.sentinel.template
+        template.continuum = True
         mock.sentinel.command_queue.context = mock.sentinel.context
         assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8, 8)
 
-    def _test_postproc(self, context, queue, excise):
+    def _test_postproc(self, context, queue, excise, continuum):
         channels = 1024
         baselines = 512
         cont_factor = 16
@@ -313,7 +314,7 @@ class TestPostproc(object):
             vis_in *= scale
             weights_in *= scale
 
-        template = sigproc.PostprocTemplate(context, UNFLAGGED_BIT, excise)
+        template = sigproc.PostprocTemplate(context, UNFLAGGED_BIT, excise, continuum)
         fn = sigproc.Postproc(template, queue, channels, baselines, cont_factor)
         fn.ensure_all_bound()
         fn.buffer('vis').set(queue, vis_in)
@@ -324,7 +325,8 @@ class TestPostproc(object):
         # Compute expected spectral values
         expected_vis = vis_in / weights_in
 
-        # Compute expected continuum values.
+        # Compute expected continuum values. This is done even if continuum is
+        # disabled, just to keep the code simple.
         indices = range(0, channels, cont_factor)
         cont_weights = np.add.reduceat(weights_in, indices, axis=0)
         cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
@@ -345,25 +347,32 @@ class TestPostproc(object):
         np.testing.assert_allclose(expected_vis, fn.buffer('vis').get(queue), rtol=1e-5)
         np.testing.assert_allclose(expected_weights, fn.buffer('weights').get(queue), rtol=1e-5)
         np.testing.assert_equal(expected_flags, fn.buffer('flags').get(queue))
-        np.testing.assert_allclose(cont_vis, fn.buffer('cont_vis').get(queue), rtol=1e-5)
-        np.testing.assert_allclose(cont_weights, fn.buffer('cont_weights').get(queue), rtol=1e-5)
-        np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
+        if continuum:
+            np.testing.assert_allclose(cont_vis, fn.buffer('cont_vis').get(queue), rtol=1e-5)
+            np.testing.assert_allclose(cont_weights, fn.buffer('cont_weights').get(queue), rtol=1e-5)
+            np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
 
     @device_test
     def test_postproc(self, context, queue):
         """Test with random data against a CPU implementation (with excision)"""
-        self._test_postproc(context, queue, True)
+        self._test_postproc(context, queue, True, True)
 
     @device_test
-    def test_postproc(self, context, queue):
+    def test_postproc_no_excise(self, context, queue):
         """Test with random data against a CPU implementation (no excision)"""
-        self._test_postproc(context, queue, False)
+        self._test_postproc(context, queue, False, True)
+
+    @device_test
+    def test_postproc_no_continuum(self, context, queue):
+        """Test with random data against a CPU implementation (no continuum)"""
+        self._test_postproc(context, queue, True, False)
 
     @device_test
     @force_autotune
     def test_autotune(self, context, queue):
-        sigproc.PostprocTemplate(context, 128, False)
-        sigproc.PostprocTemplate(context, 128, True)
+        sigproc.PostprocTemplate(context, 128, False, True)
+        sigproc.PostprocTemplate(context, 128, True, False)
+        sigproc.PostprocTemplate(context, 128, True, True)
 
 
 class TestCompressWeights(object):
@@ -419,7 +428,7 @@ class TestIngestOperation(object):
                 context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, [8, 12], True)
+        template = sigproc.IngestTemplate(context, flagger_template, [8, 12], True, True)
         fn = template.instantiate(
                 command_queue, channels, channel_range, inputs,
                 cbf_baselines, baselines,
@@ -442,11 +451,11 @@ class TestIngestOperation(object):
             ('ingest:flagger:transpose_flags', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)}),
             ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'excise': True, 'outputs': 2, 'unflagged_bit': 64}),
             ('ingest:finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8, 'excise': True, 'unflagged_bit': 64}),
+            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8, 'continuum': True, 'excise': True, 'unflagged_bit': 64}),
             ('ingest:finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:finalise:compress_weights_cont', {'baselines': 192, 'channels': 10, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16, 'excise': True, 'unflagged_bit': 64}),
+            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16, 'continuum': True, 'excise': True, 'unflagged_bit': 64}),
             ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
             ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': False}),
@@ -671,7 +680,7 @@ class TestIngestOperation(object):
 
         return expected
 
-    def _test_random(self, context, queue, excise):
+    def _test_random(self, context, queue, excise, continuum):
         """Test with random data against a CPU implementation"""
         channels = 128
         channel_range = Range(16, 96)
@@ -718,7 +727,7 @@ class TestIngestOperation(object):
                 context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12], excise)
+        template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12], excise, continuum)
         fn = template.instantiate(
                 queue, channels, channel_range, inputs,
                 cbf_baselines, baselines,
@@ -731,8 +740,9 @@ class TestIngestOperation(object):
         fn.buffer('baseline_inputs').set(queue, baseline_inputs)
         fn.buffer('timeseries_weights').set(queue, timeseries_weights)
 
-        data_keys = ['spec_vis', 'spec_weights', 'spec_weights_channel', 'spec_flags',
-                     'cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags']
+        data_keys = ['spec_vis', 'spec_weights', 'spec_weights_channel', 'spec_flags']
+        if continuum:
+            data_keys.extend(['cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags'])
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
                    'timeseries', 'timeseriesabs']
@@ -779,9 +789,14 @@ class TestIngestOperation(object):
     @device_test
     def test_random_excise(self, context, queue):
         """Test with random data against a CPU implementation (with excision)"""
-        self._test_random(context, queue, True)
+        self._test_random(context, queue, True, True)
 
     @device_test
     def test_random_no_excise(self, context, queue):
         """Test with random data against a CPU implementation (without excision)"""
-        self._test_random(context, queue, False)
+        self._test_random(context, queue, False, True)
+
+    @device_test
+    def test_random_no_continuum(self, context, queue):
+        """Test with random data against a CPU implementation (without continuum averaging)"""
+        self._test_random(context, queue, True, False)

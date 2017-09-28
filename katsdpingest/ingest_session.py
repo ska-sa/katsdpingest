@@ -449,7 +449,7 @@ class CBFIngest(object):
     output_resource : :class:`_ResourceSet`
         Wrapper of the L0 output device buffers, namely `spec_vis`,
         `spec_flags`, `spec_weights` and `spec_weights_channel`, and the
-        same for `cont_`.
+        same for `cont_` (if enabled).
     sd_input_resource : :class:`_ResourceSet`
         Wrapper of the buffers that serve as inputs to signal display
         processing (currently `timeseries_weights`).
@@ -487,7 +487,7 @@ class CBFIngest(object):
             return value
 
     @classmethod
-    def create_proc_template(cls, context, percentile_sizes, max_channels, excise):
+    def create_proc_template(cls, context, percentile_sizes, max_channels, excise, continuum):
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -503,7 +503,9 @@ class CBFIngest(object):
         max_channels : int
             Maximum number of incoming channels to support
         excise : bool
-            Excise flagged data by downweighting it massively.
+            Excise flagged data by downweighting it massively
+        continuum : bool
+            Enable continuum averaging
         """
         # Quantise to reduce number of options to autotune
         max_percentile_sizes = [cls._tune_next(s, cls.tune_percentile_sizes)
@@ -520,7 +522,7 @@ class CBFIngest(object):
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
         return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
-                                 excise=excise)
+                                 excise=excise, continuum=continuum)
 
     def _zero_counters(self):
         self.output_bytes = 0
@@ -556,10 +558,10 @@ class CBFIngest(object):
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
 
-    def _init_proc(self, context, excise):
+    def _init_proc(self, context, excise, continuum):
         percentile_sizes = list(set(r[1] - r[0] for r in self.bls_ordering.percentile_ranges))
         proc_template = self.create_proc_template(
-            context, percentile_sizes, len(self.channel_ranges.input), excise)
+            context, percentile_sizes, len(self.channel_ranges.input), excise, continuum)
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = proc_template.instantiate(
                 self.command_queue, len(self.channel_ranges.input),
@@ -591,8 +593,8 @@ class CBFIngest(object):
         self.input_resource = _ResourceSet(
             self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
         self.output_resource = _ResourceSet(
-            self.proc, [prefix + suffix
-                        for prefix in ['spec_', 'cont_']
+            self.proc, [prefix + '_' + suffix
+                        for prefix in self.tx
                         for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
         self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
         sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
@@ -603,7 +605,27 @@ class CBFIngest(object):
             sd_output_names.append(base_name + '_flags')
         self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
 
-    def _init_tx_one(self, args, tx_type, cont_factor):
+    def _init_tx_one(self, args, arg_name, name, cont_factor):
+        """Initialise a single transmit stream.
+
+        If the stream has no endpoint specified, does nothing. Otherwise stores
+        the :class:`VisSenderSet` into `self.tx[name]`.
+
+        Parameters
+        ----------
+        args : :class:`argparse.Namespace`
+            Command-line arguments
+        arg_name : {'spectral', 'continuum'}
+            Name used in command-line arguments
+        name : {'spec', 'cont'}
+            Name used in internal data structures
+        cont_factor : int
+            Continuum factor (1 for spectral product)
+        """
+        endpoints = getattr(args, 'l0_{}_spead'.format(arg_name))
+        if not endpoints:
+            return
+
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         all_output = self.channel_ranges.all_output
         # Compute channel ranges relative to those computed
@@ -611,18 +633,17 @@ class CBFIngest(object):
         channels = utils.Range(spectral_channels.start // cont_factor,
                                spectral_channels.stop // cont_factor)
         baselines = len(self.bls_ordering.sdp_bls_ordering)
-        endpoints = getattr(args, 'l0_{}_spead'.format(tx_type))
         if len(endpoints) % args.servers:
             raise ValueError('Number of endpoints ({}) not divisible by number of servers ({})'
                 .format(len(endpoints), args.servers))
         endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
         endpoint_hi = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
-        logger.info('Sending %s output to %s', tx_type, endpoints_to_str(endpoints))
+        logger.info('Sending %s output to %s', arg_name, endpoints_to_str(endpoints))
         tx = sender.VisSenderSet(
             spead2.ThreadPool(),
             endpoints,
-            katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(tx_type))),
+            katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(arg_name))),
             l0_flavour,
             self._output_avg.int_time,
             channels,
@@ -632,7 +653,7 @@ class CBFIngest(object):
 
         # Put attributes into telstate. This will be done by all the ingest
         # nodes, with the same values.
-        prefix = getattr(args, 'l0_{}_name'.format(tx_type))
+        prefix = getattr(args, 'l0_{}_name'.format(arg_name))
         self._set_telstate_entry('n_chans', len(all_output) // cont_factor, prefix)
         self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
         self._set_telstate_entry('n_bls', baselines, prefix)
@@ -647,11 +668,12 @@ class CBFIngest(object):
         self._set_telstate_entry('center_freq', center_freq, prefix)
         self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
         self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
-        return tx
+        self.tx[name] = tx
 
     def _init_tx(self, args):
-        self.tx_spectral = self._init_tx_one(args, 'spectral', 1)
-        self.tx_continuum = self._init_tx_one(args, 'continuum', self.channel_ranges.cont_factor)
+        self.tx = {}
+        self._init_tx_one(args, 'spectral', 'spec', 1)
+        self._init_tx_one(args, 'continuum', 'cont', self.channel_ranges.cont_factor)
 
     def _init_ig_sd(self):
         """Create a item group for signal displays."""
@@ -760,13 +782,13 @@ class CBFIngest(object):
         self._init_sensors(my_sensors)
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
-        self._init_proc(context, args.excise)
+        self._init_tx(args)  # Note: must be run after _init_time_averaging, before _init_proc
+        self._init_proc(context, args.excise, 'cont' in self.tx)
         self._init_resources()
 
         # Instantiation of input streams is delayed until the asynchronous task
         # is running, to avoid receiving data we're not yet ready for.
         self.rx = None
-        self._init_tx(args)  # Note: must be run after _init_time_averaging
         self._init_ig_sd()
 
         # Record information about the processing in telstate
@@ -869,8 +891,8 @@ class CBFIngest(object):
             self.command_queue.enqueue_wait_for_events(events)
 
             # Transfer
-            data = {'spec': sender.Data(), 'cont': sender.Data()}
-            for prefix in ['spec', 'cont']:
+            data = {prefix: sender.Data() for prefix in self.tx}
+            for prefix in self.tx:
                 for field in ['vis', 'flags', 'weights', 'weights_channel']:
                     name = prefix + '_' + field
                     setattr(data[prefix], field, host_output[name])
@@ -885,16 +907,16 @@ class CBFIngest(object):
 
             ts_rel = mid_timestamp / self.cbf_attr['scale_factor_timestamp']
             yield From(resource.async_wait_for_events([transfer_done]))
-            spec = data['spec']
-            cont = data['cont']
-            yield From(trollius.gather(
-                self.tx_spectral.send(spec, ts_rel),
-                self.tx_continuum.send(cont, ts_rel)))
-            self.output_bytes += spec.nbytes + cont.nbytes
+            futures = []
+            for (name, tx) in self.tx.iteritems():
+                part = data[name]
+                self.output_bytes += part.nbytes
+                self.output_heaps += tx.size
+                self.output_dumps += 1
+                futures.append(tx.send(part, ts_rel))
+            yield From(trollius.gather(*futures))
             self.output_bytes_sensor.set_value(self.output_bytes)
-            self.output_heaps += self.tx_spectral.size + self.tx_continuum.size
             self.output_heaps_sensor.set_value(self.output_heaps)
-            self.output_dumps += 2
             self.output_dumps_sensor.set_value(self.output_dumps)
             host_output_a.ready()
             logger.debug("Finished dump group with raw timestamp %.1f", mid_timestamp)
@@ -1258,8 +1280,8 @@ class CBFIngest(object):
         self._init_ig_sd()
         # Send start-of-stream packets.
         yield From(self._send_sd_data(self.ig_sd.get_start()))
-        yield From(self.tx_spectral.start())
-        yield From(self.tx_continuum.start())
+        for tx in self.tx.itervalues():
+            yield From(tx.start())
         # Initialise the input stream
         self.rx = receiver.Receiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
@@ -1280,10 +1302,9 @@ class CBFIngest(object):
         logger.info('Waiting for jobs to complete...')
         yield From(self.jobs.finish())
         logger.info('Jobs complete')
-        logger.info('Stopping tx_spectral stream...')
-        yield From(self.tx_spectral.stop())
-        logger.info('Stopping tx_continuum stream...')
-        yield From(self.tx_continuum.stop())
+        for (name, tx) in self.tx.iteritems():
+            logger.info('Stopping %s tx stream...', name)
+            yield From(tx.stop())
         for tx in self._sdisp_ips.itervalues():
             logger.info('Stopping signal display stream...')
             yield From(self._stop_stream(tx, self.ig_sd))

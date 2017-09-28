@@ -48,10 +48,10 @@ def parse_args():
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--cbf-interface', help='interface to subscribe to for CBF SPEAD data. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--cbf-ibv', action='store_true', help='use ibverbs acceleration for CBF SPEAD data [default=no].')
-    parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), default='127.0.0.1:7200', help='destination for spectral L0 output. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), help='destination for spectral L0 output. [default=do not send]', metavar='ENDPOINTS')
     parser.add_argument('--l0-spectral-interface', help='interface on which to send spectral L0 output. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--l0-spectral-name', default='sdp_l0', help='telstate name of the spectral output stream', metavar='NAME')
-    parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), default='127.0.0.1:7201', help='destination for continuum L0 output. [default=%(default)s]', metavar='ENDPOINTS')
+    parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), help='destination for continuum L0 output. [default=do not send]', metavar='ENDPOINTS')
     parser.add_argument('--l0-continuum-interface', help='interface on which to send continuum L0 output. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--l0-continuum-name', default='sdp_l0_continuum', help='telstate name of the continuum output stream', metavar='NAME')
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
@@ -79,6 +79,8 @@ def parse_args():
         parser.error('--cbf-ibv requires --cbf-interface')
     if not 1 <= args.server_id <= args.servers:
         parser.error('--server-id is out of range')
+    if args.l0_spectral_spead is None and args.l0_continuum_spead is None:
+        parser.error('at least one of --l0-spectral-spead and --l0-continuum-spead must be given')
     return args
 
 
@@ -112,9 +114,13 @@ def main():
         args.output_channels = Range(0, cbf_channels)
     if args.sd_output_channels is None:
         args.sd_output_channels = Range(0, cbf_channels)
+    # If no continuum product is selected, set continuum factor to 1 since
+    # that effectively disables the alignment checks.
+    continuum_factor = args.continuum_factor if args.l0_continuum_spead else 1
+    # TODO: determine an appropriate value for guard
     channel_ranges = ChannelRanges(
         args.servers, args.server_id - 1,
-        cbf_channels, args.continuum_factor, args.sd_continuum_factor,
+        cbf_channels, continuum_factor, args.sd_continuum_factor,
         len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
     server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
