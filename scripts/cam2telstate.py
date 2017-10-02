@@ -191,8 +191,9 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
                         help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument('--streams', type=str,
-                        help='String of comma separated full_stream_name:stream_type pairs.')
+    parser.add_argument(
+        '--streams', type=str,
+        help='String of comma-separated full_stream_name:stream_type[:instrument] tuples.')
     parser.add_argument('--collapse-streams', action='store_true',
                         help='Collapse instrument and stream prefixes for compatibility with AR1.')
     parser.add_argument('-a', '--host', type=str, metavar='HOST', default='',
@@ -248,20 +249,25 @@ class Client(object):
         and the stream_types dictionary."""
         for stream in self._args.streams.split(","):
             try:
-                (full_stream_name, stream_type) = stream.split(":")
-                try:
-                    (instrument_name, stream_name) = full_stream_name.split(".", 1)
-                except ValueError:
-                    # default to 'cbf' for unknown instrument names - likely to be removed in the future
-                    instrument_name = "cbf"
-                    full_stream_name = "cbf_{}".format(full_stream_name)
+                parts = stream.split(":")
+                if len(parts) not in [2, 3]:
+                    raise ValueError
+                (full_stream_name, stream_type) = parts[:2]
+                if len(parts) == 3:
+                    instrument_name = parts[2]
+                else:
+                    # Backwards compatibility: full_stream_name has the form
+                    # instrument.stream_name.
+                    (instrument_name, _) = full_stream_name.split(".", 1)
                 self._instruments.add(instrument_name)
                 # CAM sensor names are exposed with underscores in the pubsub
                 uname = full_stream_name.replace(".", "_").replace("-", "_")
                 self._streams_with_type[uname] = stream_type
             except ValueError:
-                self._logger.error("Unable to add stream {} to list of subscriptions because it has an invalid format."
-                                   "Expecting <full_stream_name>:<stream_type>.".format(stream))
+                self._logger.error(
+                    "Unable to add stream {} to list of subscriptions "
+                    "because it has an invalid format. "
+                    "Expecting <full_stream_name>:<stream_type>[:<instrument>].".format(stream))
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
