@@ -47,7 +47,7 @@ class Receiver(object):
         If true, use ibverbs for acceleration
     max_streams : int
         Maximum number of separate streams to use. The endpoints are spread
-        acros the streams, with a thread per stream.
+        across the streams, with a thread per stream.
     buffer_size : int
         Buffer size. It is split across the streams.
     channel_range : :class:`katsdpingest.utils.Range`
