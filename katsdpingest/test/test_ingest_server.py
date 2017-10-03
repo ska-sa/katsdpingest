@@ -48,7 +48,8 @@ class MockReceiver(object):
         1D array of CBF timestamps
     """
     def __init__(self, data, timestamps,
-                 endpoints, interface_address, ibv, channel_range, cbf_channels, sensors,
+                 endpoints, interface_address, ibv, max_streams, buffer_size,
+                 channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, loop=None, pauses=None):
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
@@ -217,6 +218,9 @@ class TestIngestDeviceServer(object):
             sd_output_channels=Range(640, 1664),
             continuum_factor=16,
             sd_continuum_factor=128,
+            guard_channels=64,
+            input_streams=2,
+            input_buffer=32*1024**2,
             sd_spead_rate=1000000000.0,
             excise=False,
             servers=4,

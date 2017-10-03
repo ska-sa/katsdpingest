@@ -45,6 +45,11 @@ class Receiver(object):
         Address of interface to subscribe to for endpoints
     ibv : bool
         If true, use ibverbs for acceleration
+    max_streams : int
+        Maximum number of separate streams to use. The endpoints are spread
+        across the streams, with a thread per stream.
+    buffer_size : int
+        Buffer size. It is split across the streams.
     channel_range : :class:`katsdpingest.utils.Range`
         Channels to capture. These must be aligned to the stream boundaries.
     cbf_channels : int
@@ -80,7 +85,8 @@ class Receiver(object):
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
     """
-    def __init__(self, endpoints, interface_address, ibv, channel_range, cbf_channels, sensors,
+    def __init__(self, endpoints, interface_address, ibv, max_streams, buffer_size,
+                 channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, loop=None):
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
@@ -116,14 +122,13 @@ class Receiver(object):
         self._input_heaps_sensor.set_value(0)
         self._input_dumps_sensor = sensors['input-dumps-total']
         self._input_dumps_sensor.set_value(0)
-        # 2 threads (with a stream per thread) should be enough to keep up, and
-        # more risks excessive context switching. endpoints are distributed
-        # amongst the streams.
-        n_streams = min(2, len(use_endpoints))
+
+        n_streams = min(max_streams, len(use_endpoints))
+        stream_buffer_size = buffer_size // n_streams
         for i in range(n_streams):
             first = len(use_endpoints) * i // n_streams
             last = len(use_endpoints) * (i + 1) // n_streams
-            self._streams.append(self._make_stream(use_endpoints[first:last]))
+            self._streams.append(self._make_stream(use_endpoints[first:last], stream_buffer_size))
             self._futures.append(trollius.async(
                 self._read_stream(self._streams[-1], i), loop=loop))
         self._running = n_streams
@@ -177,7 +182,7 @@ class Receiver(object):
             self._pop_frame()
             yield From(self._put_frame(frame))
 
-    def _add_readers(self, stream, endpoints):
+    def _add_readers(self, stream, endpoints, buffer_size):
         """Subscribe a stream to a list of endpoints."""
         ifaddr = self._interface_address
         if self._ibv:
@@ -185,7 +190,7 @@ class Receiver(object):
                 raise ValueError('Cannot use ibverbs without an interface address')
             endpoint_tuples = [(endpoint.host, endpoint.port) for endpoint in endpoints]
             stream.add_udp_ibv_reader(endpoint_tuples, ifaddr,
-                                      buffer_size=64 * 1024**2)
+                                      buffer_size=buffer_size)
         else:
             for endpoint in endpoints:
                 if ifaddr is None:
@@ -199,7 +204,7 @@ class Receiver(object):
             ifaddr if ifaddr is not None else 'default interface',
             ' with ibv' if self._ibv else '')
 
-    def _make_stream(self, endpoints):
+    def _make_stream(self, endpoints, buffer_size):
         """Prepare a stream, which may combine multiple endpoints."""
         # Figure out how many heaps will have the same timestamp, and set
         # up the stream.
@@ -232,7 +237,7 @@ class Receiver(object):
                                         memory_pool_heaps, memory_pool_heaps)
         stream.set_memory_allocator(memory_pool)
         stream.set_memcpy(spead2.MEMCPY_NONTEMPORAL)
-        self._add_readers(stream, endpoints)
+        self._add_readers(stream, endpoints, buffer_size)
         return stream
 
     @trollius.coroutine

@@ -772,6 +772,8 @@ class CBFIngest(object):
         self.rx_spead_endpoints = args.cbf_spead
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
         self.rx_spead_ibv = args.cbf_ibv
+        self.rx_spead_max_streams = args.input_streams
+        self.rx_spead_buffer_size = args.input_buffer
         self.sd_spead_rate = args.sd_spead_rate
         self.channel_ranges = channel_ranges
         self.telstate = telstate
@@ -1283,6 +1285,7 @@ class CBFIngest(object):
         # Initialise the input stream
         self.rx = receiver.Receiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
+            self.rx_spead_max_streams, self.rx_spead_buffer_size,
             self.channel_ranges.subscribed,
             len(self.channel_ranges.cbf), self._my_sensors, self.cbf_attr)
         # If stop() was called before we create self.rx, it won't have been able
