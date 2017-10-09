@@ -192,8 +192,12 @@ class Receiver(object):
             if ifaddr is None:
                 raise ValueError('Cannot use ibverbs without an interface address')
             endpoint_tuples = [(endpoint.host, endpoint.port) for endpoint in endpoints]
+            # We use poll mode (comp_vector=-1) rather than interrupt-driven receiving,
+            # because the latter has performance anomalies when running several
+            # processes on the same host which lead to packet losses.
             stream.add_udp_ibv_reader(endpoint_tuples, ifaddr,
-                                      max_size=max_size, buffer_size=buffer_size)
+                                      max_size=max_size, buffer_size=buffer_size,
+                                      comp_vector=-1)
         else:
             for endpoint in endpoints:
                 if ifaddr is None:
