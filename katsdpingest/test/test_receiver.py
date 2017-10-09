@@ -114,7 +114,7 @@ class TestReceiver(object):
         self.cbf_attr = fake_cbf_attr(4, self.n_xengs)
         self.n_chans = self.cbf_attr['n_chans']
         self.n_bls = len(self.cbf_attr['bls_ordering'])
-        self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 32 * 1024**2,
+        self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
