@@ -773,7 +773,7 @@ class CBFIngest(object):
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
         self.rx_spead_ibv = args.cbf_ibv
         self.rx_spead_max_streams = args.input_streams
-        self.rx_spead_max_size = args.input_max_packet_size
+        self.rx_spead_max_packet_size = args.input_max_packet_size
         self.rx_spead_buffer_size = args.input_buffer
         self.sd_spead_rate = args.sd_spead_rate
         self.channel_ranges = channel_ranges
@@ -1287,7 +1287,7 @@ class CBFIngest(object):
         self.rx = receiver.Receiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.rx_spead_max_streams,
-            max_size=self.rx_spead_max_size,
+            max_packet_size=self.rx_spead_max_packet_size,
             buffer_size=self.rx_spead_buffer_size,
             channel_range=self.channel_ranges.subscribed,
             cbf_channels=len(self.channel_ranges.cbf),

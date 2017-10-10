@@ -48,7 +48,8 @@ class MockReceiver(object):
         1D array of CBF timestamps
     """
     def __init__(self, data, timestamps,
-                 endpoints, interface_address, ibv, max_streams, max_size, buffer_size,
+                 endpoints, interface_address, ibv,
+                 max_streams, max_packet_size, buffer_size,
                  channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, loop=None, pauses=None):
         assert data.shape[0] == len(timestamps)
