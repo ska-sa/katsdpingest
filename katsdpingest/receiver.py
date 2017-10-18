@@ -221,12 +221,12 @@ class Receiver(object):
         baselines = len(self.cbf_attr['bls_ordering'])
         heap_data_size = np.dtype(np.complex64).itemsize * heap_channels * baselines
         stream_xengs = stream_channels // heap_channels
-        ring_heaps = stream_xengs
-        # CBF currently sends 2 metadata heaps in a row, hence the + 2
-        # We assume that each xengine will not overlap packets between
-        # heaps, and that there is enough of a gap between heaps that
-        # reordering in the network is a non-issue.
-        max_heaps = stream_xengs + 2 * len(endpoints)
+        # It's possible for a heap from each X engine and a descriptor heap
+        # per endpoint to all arrive at once. We assume that each xengine will
+        # not overlap packets between heaps, and that there is enough of a gap
+        # between heaps that reordering in the network is a non-issue.
+        ring_heaps = stream_xengs + len(endpoints)
+        max_heaps = ring_heaps
         # We need space in the memory pool for:
         # - live heaps (max_heaps, plus a newly incoming heap)
         # - ringbuffer heaps
