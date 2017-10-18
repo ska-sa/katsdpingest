@@ -685,6 +685,8 @@ class CBFIngest(object):
         all_cont_channels = all_spec_channels // self.channel_ranges.sd_cont_factor
         n_baselines = len(self.bls_ordering.sdp_bls_ordering)
         self.ig_sd = spead2.send.ItemGroup(flavour=sd_flavour)
+        # If any items are added/changed here, update _timeplot_frame_size in
+        # katsdpcontroller/generate.py as well.
         self.ig_sd.add_item(
             name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
             format=[('f', 32)], shape=(n_spec_channels, None, 2))
