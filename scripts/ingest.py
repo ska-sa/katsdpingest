@@ -31,17 +31,6 @@ def comma_list(type_):
     return convert
 
 
-def range_str(value):
-    """Convert a string of the form 'A:B' to a :class:`~katsdpingest.utils.Range`,
-    where A and B are integers.
-    """
-    fields = value.split(':', 1)
-    if len(fields) != 2:
-        raise ValueError('Invalid range format {}'.format(value))
-    else:
-        return Range(int(fields[0]), int(fields[1]))
-
-
 def parse_args():
     parser = katsdpservices.ArgumentParser()
     parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
@@ -57,8 +46,8 @@ def parse_args():
     parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
     parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
     parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
-    parser.add_argument('--output-channels', type=range_str, help='output spectral channels, in format A:B [default=all]')
-    parser.add_argument('--sd-output-channels', type=range_str, help='signal display channels, in format A:B [default=all]')
+    parser.add_argument('--output-channels', type=Range.parse, help='output spectral channels, in format A:B [default=all]')
+    parser.add_argument('--sd-output-channels', type=Range.parse, help='signal display channels, in format A:B [default=all]')
     parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
     parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
     parser.add_argument('--guard-channels', default=64, type=int, help='extra channels to use for RFI detection. [default=%(default)s]')
