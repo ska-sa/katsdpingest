@@ -157,8 +157,8 @@ SENSORS = [
     Sensor('{stream_fengine}_n_samples_between_spectra',
            sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
     Sensor('{stream_fengine}_n_chans', immutable=True),
-    Sensor('{subarray}_streams_{stream_base_fengine}_centre_frequency',
-           sp_name='{stream_base_fengine}_center_freq', immutable=True),
+    Sensor('{sub_stream_fengine}_centre_frequency',
+           sp_name='{sub_stream_fengine}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
     Sensor('{stream_fengine}_{inputn}_fft0_shift',
            sp_name='{stream_fengine}_fft_shift'),
@@ -172,8 +172,7 @@ SENSORS = [
     Sensor('{subarray}_sub_nr', immutable=True),
     Sensor('{subarray}_dump_rate', immutable=True),
     Sensor('{subarray}_pool_resources', immutable=True),
-    Sensor('{subarray}_streams_{stream_base_fengine}_channel_mask',
-           sp_name='{stream_base_fengine}_channel_mask', convert=convert_bitmask),
+    Sensor('{sub_stream_fengine}_channel_mask', convert=convert_bitmask),
     Sensor('{subarray}_state'),
     # Misc other sensors
     Sensor('anc_air_pressure'),
@@ -304,14 +303,15 @@ class Client(object):
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
                 cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
+                cam_sub_stream = "{}_streams_{}".format(self._sub_name, full_stream_name)
                 if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
                     sp_stream = "cbf"
                 else:
                     sp_stream = "cbf_" + full_stream_name
                 substitutions['stream'].append((cam_stream, sp_stream))
                 substitutions['stream_' + stream_type].append((cam_stream, sp_stream))
-                substitutions['stream_base'].append((full_stream_name, sp_stream))
-                substitutions['stream_base_' + stream_type].append((full_stream_name, sp_stream))
+                substitutions['sub_stream'].append((cam_sub_stream, sp_stream))
+                substitutions['sub_stream_' + stream_type].append((cam_sub_stream, sp_stream))
 
         sensors = []
         for template in SENSORS:
