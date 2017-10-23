@@ -6,6 +6,7 @@ import logging
 import collections
 import itertools
 import pprint
+import string
 import six
 import signal
 import re
@@ -37,6 +38,13 @@ def convert_bitmask(value):
         return np.array([c == '1' for c in value])
 
 
+class Template(string.Template):
+    """Template for a sensor name."""
+
+    # Override this to allow dots in the name
+    idpattern = '[A-Za-z0-9._]+'
+
+
 class Sensor(object):
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
@@ -45,8 +53,10 @@ class Sensor(object):
     ----------
     cam_name : str
         Name of the sensor to pass to katportalclient
-    sp_name : str, optional
-        Name of the sensor within katsdptelstate (defaults to `cam_name`)
+    sdp_name : str or list of str, optional
+        Name of the sensor within katsdptelstate (defaults to `cam_name`). If
+        a list, a copy of the sensor is placed in telstate for each name in
+        the list.
     sampling_strategy_and_params : str, optional
         Sampling method to pass to katportalclient
     immutable : bool, optional
@@ -55,10 +65,10 @@ class Sensor(object):
         If provided, it is used to transform the sensor value before storing
         it in telescope state.
     """
-    def __init__(self, cam_name, sp_name=None, sampling_strategy_and_params='event',
+    def __init__(self, cam_name, sdp_name=None, sampling_strategy_and_params='event',
                  immutable=False, convert=None):
         self.cam_name = cam_name
-        self.sp_name = sp_name or cam_name
+        self.sdp_name = sdp_name or cam_name
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
         self.convert = convert
@@ -70,31 +80,46 @@ class Sensor(object):
         replaced with each possible value to form the new sensors, taking the
         Cartesian product if there are multiple keys.
 
-        The `sp_name` must not contain any keys that are not part of the CAM
-        name.
+        The `sdp_name` must not contain any keys that are not part of the CAM
+        name, and must not be a list.
 
         Parameters
         ----------
         substitutions : dict-like
-            Maps a key to a list of (cam, sp) values to substitute.
+            Maps a key to a list of (cam, sdp) values to substitute. Each sdp
+            name is a list of values, each of which is used.
 
         Raises
         ------
         KeyError
-            if a key is used in `sp_name` but not in `cam_name`
+            if a key is used in `sdp_name` but not in `cam_name`
         """
-        def normalise(name):
-            """Eliminate doubled, leading and trailing underscores"""
+        def substitute(name, params):
+            """Expand a template with parameters.
+
+            Also eliminates doubled, leading and trailing underscores from the result.
+            """
+            name = Template(name).substitute(params)
             parts = [part for part in name.split('_') if part]
             return '_'.join(parts)
-        keys = list(set(re.findall(r'\{(\w+)\}', self.cam_name)))
+
+        keys = list(set(re.findall(r'\$\{([^}]+)\}', self.cam_name)))
         iters = [substitutions[key] for key in keys]
         ans = []
         for values in itertools.product(*iters):
             cam_dict = {key: value[0] for key, value in zip(keys, values)}
-            sp_dict = {key: value[1] for key, value in zip(keys, values)}
-            ans.append(Sensor(normalise(self.cam_name.format(**cam_dict)),
-                              normalise(self.sp_name.format(**sp_dict)),
+            sdp_dict = {key: value[1] for key, value in zip(keys, values)}
+            sdp_names = []
+            # sdp_dict maps each key to a list of values to substitute.
+            # Check that they are lists and not a single string.
+            for value in six.itervalues(sdp_dict):
+                assert isinstance(value, list)
+            for sdp_values in itertools.product(*six.itervalues(sdp_dict)):
+                # Recombine this specific set of values with the keys
+                sdp_single_dict = dict(zip(sdp_dict.keys(), sdp_values))
+                sdp_names.append(substitute(self.sdp_name, sdp_single_dict))
+            ans.append(Sensor(substitute(self.cam_name, cam_dict),
+                              sdp_names,
                               self.sampling_strategy_and_params,
                               self.immutable,
                               self.convert))
@@ -102,78 +127,78 @@ class Sensor(object):
 
 
 #: Stream types affected by --collapse-streams
-COLLAPSE_TYPES = frozenset(['visibility', 'fengine'])
+COLLAPSE_TYPES = frozenset(['cbf.baseline_correlation_products', 'cbf.antenna_channelised_voltage'])
 #: Templates for sensors
 SENSORS = [
     # Receptor sensors
-    Sensor('{receptor}_observer'),
-    Sensor('{receptor}_activity'),
-    Sensor('{receptor}_target'),
-    Sensor('{receptor}_pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
-    Sensor('{receptor}_pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
-    Sensor('{receptor}_pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
-    Sensor('{receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
-    Sensor('{receptor}_pos_adjust_pointm_azim'),
-    Sensor('{receptor}_pos_adjust_pointm_elev'),
+    Sensor('${receptor}_observer'),
+    Sensor('${receptor}_activity'),
+    Sensor('${receptor}_target'),
+    Sensor('${receptor}_pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('${receptor}_pos_request_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('${receptor}_pos_actual_scan_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('${receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('${receptor}_pos_adjust_pointm_azim'),
+    Sensor('${receptor}_pos_adjust_pointm_elev'),
     # XXX This should be removed once we are fully switched to new-style
     # digitiser sensor names
-    Sensor('{receptor}_dig_noise_diode'),
-    Sensor('{receptor}_{digitiser}_noise_diode'),
-    Sensor('{receptor}_ap_indexer_position'),
-    Sensor('{receptor}_ap_point_error_tiltmeter_enabled'),
-    Sensor('{receptor}_ap_tilt_corr_azim'),
-    Sensor('{receptor}_ap_tilt_corr_elev'),
-    Sensor('{receptor}_{receiver}_serial_number'),
-    Sensor('{receptor}_data_suspect'),
-    Sensor('{receptor}_ap_version_list', immutable=True),
+    Sensor('${receptor}_dig_noise_diode'),
+    Sensor('${receptor}_${digitiser}_noise_diode'),
+    Sensor('${receptor}_ap_indexer_position'),
+    Sensor('${receptor}_ap_point_error_tiltmeter_enabled'),
+    Sensor('${receptor}_ap_tilt_corr_azim'),
+    Sensor('${receptor}_ap_tilt_corr_elev'),
+    Sensor('${receptor}_${receiver}_serial_number'),
+    Sensor('${receptor}_data_suspect'),
+    Sensor('${receptor}_ap_version_list', immutable=True),
     # CBF proxy sensors
-    Sensor('{cbf}_target'),
-    Sensor('{cbf}_auto_delay_enabled'),
-    Sensor('{cbf}_input_labels', immutable=True, convert=comma_split),
-    Sensor('{cbf}_loaded_delay_correction'),
-    Sensor('{cbf}_delay_centre_frequency'),
-    Sensor('{cbf}_delay_adjustments', convert=json.loads),
-    Sensor('{cbf}_pos_request_offset_azim', sampling_strategy_and_params='period 0.4'),
-    Sensor('{cbf}_pos_request_offset_elev', sampling_strategy_and_params='period 0.4'),
-    Sensor('{cbf}_cmc_version_list', immutable=True),
+    Sensor('${cbf}_target'),
+    Sensor('${cbf}_auto_delay_enabled'),
+    Sensor('${cbf}_input_labels', immutable=True, convert=comma_split),
+    Sensor('${cbf}_loaded_delay_correction'),
+    Sensor('${cbf}_delay_centre_frequency'),
+    Sensor('${cbf}_delay_adjustments', convert=json.loads),
+    Sensor('${cbf}_pos_request_offset_azim', sampling_strategy_and_params='period 0.4'),
+    Sensor('${cbf}_pos_request_offset_elev', sampling_strategy_and_params='period 0.4'),
+    Sensor('${cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
-    Sensor('{sdp}_spmc_version_list', immutable=True),
+    Sensor('${sdp}_spmc_version_list', immutable=True),
     # CBF sensors that are instrument specific
-    Sensor('{instrument}_adc_sample_rate', immutable=True),
-    Sensor('{instrument}_bandwidth', immutable=True),
-    Sensor('{instrument}_n_inputs', immutable=True),
-    Sensor('{instrument}_scale_factor_timestamp', immutable=True),
-    Sensor('{instrument}_sync_time', immutable=True),
+    Sensor('${instrument}_adc_sample_rate', immutable=True),
+    Sensor('${instrument}_bandwidth', immutable=True),
+    Sensor('${instrument}_n_inputs', immutable=True),
+    Sensor('${instrument}_scale_factor_timestamp', immutable=True),
+    Sensor('${instrument}_sync_time', immutable=True),
     # CBF sensors that are stream-specific
-    Sensor('{stream_visibility}_bls_ordering', immutable=True, convert=np.safe_eval),
-    Sensor('{stream_visibility}_int_time', immutable=True),
-    Sensor('{stream_visibility}_n_accs', immutable=True),
-    Sensor('{stream_visibility}_n_chans_per_substream', immutable=True),
+    Sensor('${stream.cbf.baseline_correlation_products}_bls_ordering', immutable=True, convert=np.safe_eval),
+    Sensor('${stream.cbf.baseline_correlation_products}_int_time', immutable=True),
+    Sensor('${stream.cbf.baseline_correlation_products}_n_accs', immutable=True),
+    Sensor('${stream.cbf.baseline_correlation_products}_n_chans_per_substream', immutable=True),
     # Beamformer metadata are not immutable, because controlled by passband
-    Sensor('{stream_beamformer}_n_chans'),
-    Sensor('{stream_beamformer}_{inputn}_weight'),
-    Sensor('{stream_beamformer}_n_chans_per_substream', immutable=True),
-    Sensor('{stream_beamformer}_spectra_per_heap', immutable=True),
-    Sensor('{stream_fengine}_n_samples_between_spectra',
-           sp_name='{stream_fengine}_ticks_between_spectra', immutable=True),
-    Sensor('{stream_fengine}_n_chans', immutable=True),
-    Sensor('{sub_stream_fengine}_centre_frequency',
-           sp_name='{sub_stream_fengine}_center_freq', immutable=True),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans'),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_${inputn}_weight'),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_n_samples_between_spectra',
+           sdp_name='${stream.cbf.antenna-channelised-voltage}_ticks_between_spectra', immutable=True),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_n_chans', immutable=True),
+    Sensor('${sub_stream.cbf.antenna-channelised-voltage}_centre_frequency',
+           sdp_name='${sub_stream.cbf.antenna-channelised-voltage}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
-    Sensor('{stream_fengine}_{inputn}_fft0_shift',
-           sp_name='{stream_fengine}_fft_shift'),
-    Sensor('{stream_fengine}_{inputn}_delay', convert=np.safe_eval),
-    Sensor('{stream_fengine}_{inputn}_delay_ok'),
-    Sensor('{stream_fengine}_{inputn}_eq', convert=np.safe_eval),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_${inputn}_fft0_shift',
+           sdp_name='${stream.cbf.antenna-channelised-voltage}_fft_shift'),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_${inputn}_delay', convert=np.safe_eval),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_${inputn}_delay_ok'),
+    Sensor('${stream.cbf.antenna-channelised-voltage}_${inputn}_eq', convert=np.safe_eval),
     # Subarray sensors
-    Sensor('{subarray}_config_label', immutable=True),
-    Sensor('{subarray}_band', immutable=True),
-    Sensor('{subarray}_product', immutable=True),
-    Sensor('{subarray}_sub_nr', immutable=True),
-    Sensor('{subarray}_dump_rate', immutable=True),
-    Sensor('{subarray}_pool_resources', immutable=True),
-    Sensor('{sub_stream_fengine}_channel_mask', convert=convert_bitmask),
-    Sensor('{subarray}_state'),
+    Sensor('${subarray}_config_label', immutable=True),
+    Sensor('${subarray}_band', immutable=True),
+    Sensor('${subarray}_product', immutable=True),
+    Sensor('${subarray}_sub_nr', immutable=True),
+    Sensor('${subarray}_dump_rate', immutable=True),
+    Sensor('${subarray}_pool_resources', immutable=True),
+    Sensor('${sub_stream.cbf.antenna-channelised-voltage}_channel_mask', convert=convert_bitmask),
+    Sensor('${subarray}_state'),
     # Misc other sensors
     Sensor('anc_air_pressure'),
     Sensor('anc_air_relative_humidity'),
@@ -190,9 +215,6 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
                         help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument(
-        '--streams', type=str,
-        help='String of comma-separated full_stream_name:stream_type[:instrument] tuples.')
     parser.add_argument('--collapse-streams', action='store_true',
                         help='Collapse instrument and stream prefixes for compatibility with AR1.')
     parser.add_argument('-a', '--host', type=str, metavar='HOST', default='',
@@ -206,8 +228,6 @@ def parse_args():
         parser.error('argument --telstate is required')
     if args.url is None:
         parser.error('argument --url is required')
-    if args.streams is None:
-        parser.error('argument --streams is required')
     return args
 
 
@@ -244,29 +264,14 @@ class Client(object):
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
 
     def parse_streams(self):
-        """Parse the supplied list of streams to populate the instruments
-        and the stream_types dictionary."""
-        for stream in self._args.streams.split(","):
-            try:
-                parts = stream.split(":")
-                if len(parts) not in [2, 3]:
-                    raise ValueError
-                (full_stream_name, stream_type) = parts[:2]
-                if len(parts) == 3:
-                    instrument_name = parts[2]
-                else:
-                    # Backwards compatibility: full_stream_name has the form
-                    # instrument.stream_name.
-                    (instrument_name, _) = full_stream_name.split(".", 1)
+        """Parse the stream information from telstate to populate the
+        instruments and the stream_types dictionary."""
+        sdp_config = self._telstate['sdp_config']
+        for name, stream in six.iteritems(sdp_config.get('inputs', {})):
+            if stream['type'].startswith('cbf.'):
+                instrument_name = stream['instrument_dev_name']
                 self._instruments.add(instrument_name)
-                # CAM sensor names are exposed with underscores in the pubsub
-                uname = full_stream_name.replace(".", "_").replace("-", "_")
-                self._streams_with_type[uname] = stream_type
-            except ValueError:
-                self._logger.error(
-                    "Unable to add stream {} to list of subscriptions "
-                    "because it has an invalid format. "
-                    "Expecting <full_stream_name>:<stream_type>[:<instrument>].".format(stream))
+                self._streams_with_type[name] = stream['type']
 
     def get_sensors(self):
         """Get list of sensors to be collected from CAM. This should be
@@ -285,33 +290,34 @@ class Client(object):
         # types.
         substitutions = collections.defaultdict(
             list,
-            receptor=[(name, name) for name in self._receptors],
-            receiver=[(rx_name, rx_name)],
-            digitiser=[(dig_name, dig_name)],
-            subarray=[(self._sub_name, 'sub')],
-            cbf=[(self._cbf_name, 'data')],
-            sdp=[(self._sdp_name, 'data')]
+            receptor=[(name, [name]) for name in self._receptors],
+            receiver=[(rx_name, [rx_name])],
+            digitiser=[(dig_name, [dig_name])],
+            subarray=[(self._sub_name, ['sub'])],
+            cbf=[(self._cbf_name, ['cbf', 'data'])],
+            sdp=[(self._sdp_name, ['sdp', 'data'])]
         )
         for (number, name) in enumerate(self._input_labels.result()):
-            substitutions['inputn'].append(('input{}'.format(number), name))
-        for (cam_prefix, sp_prefix) in substitutions['cbf']:
+            substitutions['inputn'].append(('input{}'.format(number), [name]))
+        for (cam_prefix, sdp_prefix) in substitutions['cbf']:
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
                 cam_instrument = "{}_{}".format(cam_prefix, instrument)
-                sp_instrument = "cbf_" + instrument if not self._args.collapse_streams else "cbf"
-                substitutions['instrument'].append((cam_instrument, sp_instrument))
+                sdp_instruments = ["cbf_" + instrument]
+                if self._args.collapse_streams:
+                    sdp_instruments.append("cbf")
+                substitutions['instrument'].append((cam_instrument, sdp_instruments))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
                 cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
                 cam_sub_stream = "{}_streams_{}".format(self._sub_name, full_stream_name)
+                sdp_streams = ["cbf_" + full_stream_name]
                 if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
-                    sp_stream = "cbf"
-                else:
-                    sp_stream = "cbf_" + full_stream_name
-                substitutions['stream'].append((cam_stream, sp_stream))
-                substitutions['stream_' + stream_type].append((cam_stream, sp_stream))
-                substitutions['sub_stream'].append((cam_sub_stream, sp_stream))
-                substitutions['sub_stream_' + stream_type].append((cam_sub_stream, sp_stream))
+                    sdp_streams.append("cbf")
+                substitutions['stream'].append((cam_stream, sdp_streams))
+                substitutions['stream.' + stream_type].append((cam_stream, sdp_streams))
+                substitutions['sub_stream'].append((cam_sub_stream, sdp_streams))
+                substitutions['sub_stream.' + stream_type].append((cam_sub_stream, sdp_streams))
 
         sensors = []
         for template in SENSORS:
@@ -435,13 +441,17 @@ class Client(object):
             self._logger.warn('Failed to convert %s, ignoring (value was %r)',
                               name, value, exc_info=True)
             return
-        try:
-            self._telstate.add(sensor.sp_name, value, timestamp, immutable=sensor.immutable)
-            self._logger.debug('Updated %s to %s with timestamp %s',
-                               sensor.sp_name, value, timestamp)
-        except katsdptelstate.ImmutableKeyError:
-            self._logger.error('Failed to set %s to %s with timestamp %s',
-                               sensor.sp_name, value, timestamp, exc_info=True)
+        sdp_names = sensor.sdp_name
+        if not isinstance(sdp_names, list):
+            sdp_names = [sdp_names]
+        for name in sdp_names:
+            try:
+                self._telstate.add(name, value, timestamp, immutable=sensor.immutable)
+                self._logger.debug('Updated %s to %s with timestamp %s',
+                                   name, value, timestamp)
+            except katsdptelstate.ImmutableKeyError:
+                self._logger.error('Failed to set %s to %s with timestamp %s',
+                                   name, value, timestamp, exc_info=True)
 
     def process_update(self, item):
         self._logger.debug("Received update %s", pprint.pformat(item))
