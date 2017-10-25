@@ -1,5 +1,9 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
 import logging
-from collections import Counter, OrderedDict
+from collections import OrderedDict
 
 import numpy as np
 import spead2
@@ -7,16 +11,43 @@ from spead2 import recv
 
 
 def channel_ordering(num_chans):
+    """Spectrometer channel indices as they are packed into an ECP-64 SPEAD item.
+
+    Parameters
+    ----------
+    num_chans : int
+        Number of spectrometer channels
+
+    Returns
+    -------
+    channel_inds : array of int, shape (`num_chans`,)
+        Channel indices as they are packed into an ECP-64 SPEAD item
+    """
     pairs = np.arange(num_chans).reshape(-1, 2)
-    first_half =  pairs[:num_chans // 4]
+    first_half = pairs[:num_chans // 4]
     second_half = pairs[num_chans // 4:]
     return np.c_[first_half, second_half].ravel()
 
 
 def unpack_bits(x, partition):
+    """Extract a series of bit fields from an integer.
+
+    Parameters
+    ----------
+    x : uint
+        Unsigned integer to be interpreted as a series of bit fields
+    partition : sequence of int
+        Bit fields to extract from `x` as indicated by their size in bits,
+        with the last field ending at the LSB of `x` (as per ECP-64 document)
+
+    Returns
+    -------
+    fields : list of uint
+        The value of each bit field as an unsigned integer
+    """
     sizes = np.asarray(partition)
     shifts = np.cumsum(np.r_[0, partition[::-1][:-1]])[::-1]
-    return [(x >> shift) & int(size * '1', 2)
+    return [(x >> shift) & ((1 << size) - 1)
             for size, shift in zip(sizes, shifts)]
 
 
@@ -34,31 +65,30 @@ freqs = centre_freq + bandwidth / num_chans * (np.arange(num_chans) - num_chans 
 logging.basicConfig(level='DEBUG')
 rx = recv.Stream(spead2.ThreadPool())
 for port in ports:
-    rx.add_udp_reader(port, bind_hostname=ip, max_size=1536)
+    rx.add_udp_reader(port, bind_hostname=ip)
 ig = spead2.ItemGroup()
 
 # Hack to create descriptors locally (Marc's DMC will provide them eventually)
-ig.add_item(id=int('0x1600', 16), name='timestamp',
+ig.add_item(id=0x1600, name='timestamp',
             description='Local digitiser timestamp at start of accumulation',
             shape=(), format=[('u', 48)])
-ig.add_item(id=int('0x3101', 16), name='digitiser_id',
+ig.add_item(id=0x3101, name='digitiser_id',
             description='Digitiser serial number, type, receptor ID, pol ID',
             shape=(), format=[('u', 48)])
-ig.add_item(id=int('0x3102', 16), name='digitiser_status',
+ig.add_item(id=0x3102, name='digitiser_status',
             description='Accumulator / FFT / ADC saturation, noise diode status',
             shape=(), format=[('u', 48)])
-ig.add_item(id=int('0x3301', 16), name='data_vv',
+ig.add_item(id=0x3301, name='data_vv',
             description='Autocorrelation VV*',
             shape=(num_chans,), dtype='>u4')
-ig.add_item(id=int('0x3302', 16), name='data_hh',
+ig.add_item(id=0x3302, name='data_hh',
             description='Autocorrelation HH*',
             shape=(num_chans,), dtype='>u4')
-ig.add_item(id=int('0x3303', 16), name='data_vh',
+ig.add_item(id=0x3303, name='data_vh',
             description='Crosscorrelation VH* (real followed by imag)',
             shape=(2 * num_chans,), dtype='>i4')
 
-old_versions = Counter({name: item.version for (name, item) in ig.items()})
-
+# This was used to create a live signal display of the ECP-64 data
 # plt.close('all')
 # fig, axgrid = plt.subplots(2, 2, num=1)
 # axgrid[0][0].set_title('HH')
@@ -98,20 +128,16 @@ raw_data = OrderedDict()
 
 for heap in rx:
     # print heap
-    ig.update(heap)
+    new_items = ig.update(heap)
     if 'timestamp' not in ig:
         continue
-    new_versions = Counter({name: item.version for (name, item) in ig.items()})
-    new_items = (new_versions - old_versions).keys()
-    old_versions = new_versions
-
     timestamp = ig['timestamp'].value / sampling_rate
     dig_id = ig['digitiser_id'].value
     dig_status = ig['digitiser_status'].value
     dig_serial, dig_type, receptor, pol = unpack_bits(dig_id, (24, 8, 14, 2))
     saturation, nd_on = unpack_bits(dig_status, (8, 1))
     stream = [s[5:] for s in new_items if s.startswith('data_')][0]
-    print receptor, timestamp, nd_on, stream
+    print(receptor, timestamp, nd_on, stream)
     key = (receptor, timestamp)
     fields = raw_data.get(key, {})
     fields['saturation'] = saturation
