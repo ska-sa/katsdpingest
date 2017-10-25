@@ -11,7 +11,7 @@ from spead2 import recv
 
 
 def channel_ordering(num_chans):
-    """Spectrometer channel indices as they are packed into an ECP-64 SPEAD item.
+    """Ordering of spectrometer channels in an ECP-64 SPEAD item.
 
     Parameters
     ----------
@@ -20,8 +20,9 @@ def channel_ordering(num_chans):
 
     Returns
     -------
-    channel_inds : array of int, shape (`num_chans`,)
-        Channel indices as they are packed into an ECP-64 SPEAD item
+    spead_index_per_channel : array of int, shape (`num_chans`,)
+        Index into SPEAD item of each spectrometer channel, allowing i'th
+        channel to be accessed as `spead_data[spead_index_per_channel[i]]`
     """
     pairs = np.arange(num_chans).reshape(-1, 2)
     first_half = pairs[:num_chans // 4]
@@ -45,10 +46,11 @@ def unpack_bits(x, partition):
     fields : list of uint
         The value of each bit field as an unsigned integer
     """
-    sizes = np.asarray(partition)
-    shifts = np.cumsum(np.r_[0, partition[::-1][:-1]])[::-1]
-    return [(x >> shift) & ((1 << size) - 1)
-            for size, shift in zip(sizes, shifts)]
+    out = []
+    for size in reversed(partition):  # Grab fields starting from LSB
+        out.append(x & ((1 << size) - 1))
+        x >>= size
+    return out[::-1]    # Put back into MSB-to-LSB order
 
 
 def signal_display(freqs, test_tone):
@@ -133,7 +135,7 @@ if __name__ == '__main__':
     for heap in rx:
         # print heap
         new_items = ig.update(heap)
-        if 'timestamp' not in ig:
+        if 'timestamp' not in new_items:
             continue
         timestamp = ig['timestamp'].value / sampling_rate
         dig_id = ig['digitiser_id'].value
