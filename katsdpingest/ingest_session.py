@@ -285,17 +285,40 @@ def get_cbf_attr(telstate, cbf_name):
     telstate : :class:`katsdptelstate.TelescopeState`
         Telescope state from which the CBF stream metadata is retrieved.
     cbf_name : str
-        Common prefix on telstate keys
+        Name of the baseline-correlation-products stream
     """
     cbf_attr = {}
-    for attr in CBF_CRITICAL_ATTRS:
-        telstate_name = '{}_{}'.format(cbf_name, attr)
+    prefixes = []
+    if cbf_name is not None:
+        prefixes.append('cbf_' + cbf_name)
+        # Generate a list of places to look for attributes:
+        # - the stream itself
+        # - if known, the upstream antenna-channelised-voltage stream, and its instrument
+        # - if all else fails, the base cbf_ prefix (for backwards compatibility)
         try:
-            cbf_attr[attr] = telstate[telstate_name]
-            logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
-        except KeyError:
-            # Telstate's KeyError does not have a useful description
-            raise KeyError('Telstate key {} not found'.format(telstate_name))
+            # antenna-channelised-voltage stream
+            src = telstate['cbf_' + cbf_name + '_src_streams'][0]
+            prefixes.append('cbf_' + src)
+            instrument = telstate['cbf_' + src + '_instrument_dev_name']
+            prefixes.append('cbf_' + instrument)
+        except KeyError, IndexError:
+            logger.warning('Could not find upstream sources of %s', cbf_name)
+            pass
+    prefixes.append('cbf')
+
+    for attr in CBF_CRITICAL_ATTRS:
+        for prefix in prefixes:
+            try:
+                telstate_name = '{}_{}'.format(prefix, attr)
+                cbf_attr[attr] = telstate[telstate_name]
+                logger.info('Setting cbf_attr %s to %r from %s',
+                            attr, cbf_attr[attr], telstate_name)
+                break
+            except KeyError:
+                pass
+        else:
+            # We didn't find a match on any prefix
+            raise KeyError('CBF attribute {} not found in telstate'.format(attr))
     logger.info('All metadata received from telstate')
     return cbf_attr
 
@@ -668,6 +691,8 @@ class CBFIngest(object):
         self._set_telstate_entry('center_freq', center_freq, prefix)
         self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
         self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
+        if self.src_stream is not None:
+            self._set_telstate_entry('src_streams', [self.src_stream], prefix)
         self.tx[name] = tx
 
     def _init_tx(self, args):
@@ -781,6 +806,7 @@ class CBFIngest(object):
         self.channel_ranges = channel_ranges
         self.telstate = telstate
         self.cbf_attr = cbf_attr
+        self.src_stream = args.cbf_name
 
         self._init_sensors(my_sensors)
         self._init_baselines(args.antenna_mask)
