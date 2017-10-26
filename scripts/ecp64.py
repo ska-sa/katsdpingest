@@ -133,7 +133,6 @@ if __name__ == '__main__':
 
     raw_data = OrderedDict()
     for heap in rx:
-        # print heap
         new_items = ig.update(heap)
         if 'timestamp' not in new_items:
             continue
