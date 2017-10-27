@@ -288,37 +288,10 @@ def get_cbf_attr(telstate, cbf_name):
         Name of the baseline-correlation-products stream
     """
     cbf_attr = {}
-    prefixes = []
-    if cbf_name is not None:
-        prefixes.append('cbf_' + cbf_name)
-        # Generate a list of places to look for attributes:
-        # - the stream itself
-        # - if known, the upstream antenna-channelised-voltage stream, and its instrument
-        # - if all else fails, the base cbf_ prefix (for backwards compatibility)
-        try:
-            # antenna-channelised-voltage stream
-            src = telstate['cbf_' + cbf_name + '_src_streams'][0]
-            prefixes.append('cbf_' + src)
-            instrument = telstate['cbf_' + src + '_instrument_dev_name']
-            prefixes.append('cbf_' + instrument)
-        except KeyError, IndexError:
-            logger.warning('Could not find upstream sources of %s', cbf_name)
-            pass
-    prefixes.append('cbf')
-
+    prefixes = utils.cbf_telstate_prefixes(telstate, cbf_name)
     for attr in CBF_CRITICAL_ATTRS:
-        for prefix in prefixes:
-            try:
-                telstate_name = '{}_{}'.format(prefix, attr)
-                cbf_attr[attr] = telstate[telstate_name]
-                logger.info('Setting cbf_attr %s to %r from %s',
-                            attr, cbf_attr[attr], telstate_name)
-                break
-            except KeyError:
-                pass
-        else:
-            # We didn't find a match on any prefix
-            raise KeyError('CBF attribute {} not found in telstate'.format(attr))
+        cbf_attr[attr] = utils.get_telstate_entry(telstate, prefixes, attr)
+        logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
     logger.info('All metadata received from telstate')
     return cbf_attr
 
