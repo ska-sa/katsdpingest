@@ -1,5 +1,7 @@
 """Tests for the ingest_session module"""
 
+from collections import OrderedDict
+
 import numpy as np
 from katsdpingest import ingest_session
 from katsdpingest.utils import Range
@@ -34,6 +36,59 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
             bls_ordering.append((a + 'v', b + 'h'))
     cbf_attr['bls_ordering'] = np.array(bls_ordering)
     return cbf_attr
+
+
+class TestGetCbfAttr(object):
+    def setup(self):
+        self.telstate = OrderedDict({
+            'cbf_i0_bandwidth': 856000000.0,
+            'cbf_i0_sync_time': 1234567890.0,
+            'cbf_i0_adc_sample_rate': 1712000000.0,
+            'cbf_i0_scale_factor_timestamp': 1712000000.0,
+            'cbf_i0_antenna_channelised_voltage_instrument_dev_name': 'i0',
+            'cbf_i0_antenna_channelised_voltage_n_chans': 262144,  # Different, to check precedence
+            'cbf_i0_antenna_channelised_voltage_center_freq': 1284000000.0,
+            'cbf_i0_antenna_channelised_voltage_ticks_between_spectra': 8192,
+            'cbf_i1_baseline_correlation_products_src_streams': ['i0_antenna_channelised_voltage'],
+            'cbf_i1_baseline_correlation_products_instrument_dev_name': 'i1',
+            'cbf_i1_baseline_correlation_products_int_time': 0.499,
+            'cbf_i1_baseline_correlation_products_n_chans': 4096,
+            'cbf_i1_baseline_correlation_products_n_chans_per_substream': 256,
+            'cbf_i1_baseline_correlation_products_n_accs': 104448,
+            'cbf_i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')]
+        })
+        self.expected = {
+            'adc_sample_rate': 1712000000.0,
+            'n_chans': 4096,
+            'n_chans_per_substream': 256,
+            'n_accs': 104448,
+            'bls_ordering': [('m001h', 'm001h')],
+            'bandwidth': 856000000.0,
+            'center_freq': 1284000000.0,
+            'sync_time': 1234567890.0,
+            'int_time': 0.499,
+            'scale_factor_timestamp': 1712000000.0,
+            'ticks_between_spectra': 8192
+        }
+
+    def _collapse_name(self, name):
+        name = name.replace('i1_baseline_correlation_products_', '')
+        name = name.replace('i0_antenna_channelised_voltage_', '')
+        name = name.replace('i0_', '')
+        return name
+
+    def test_named(self):
+        attrs = ingest_session.get_cbf_attr(self.telstate, 'i1_baseline_correlation_products')
+        assert_equal(self.expected, attrs)
+
+    def test_compat(self):
+        flat = {}
+        # telstate needs to be an ordered dict so that conflicts are resolved
+        # deterministically.
+        for key, value in self.telstate.items():
+            flat[self._collapse_name(key)] = value
+        attrs = ingest_session.get_cbf_attr(flat, None)
+        assert_equal(self.expected, attrs)
 
 
 class TestTimeAverage(object):
