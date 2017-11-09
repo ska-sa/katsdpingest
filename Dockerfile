@@ -129,9 +129,9 @@ ENV PSRCAT_FILE $PSRHOME/psrcat_tar/psrcat.db
 ENV PATH $PATH:$PSRHOME/psrcat_tar
 ENV TEMPO2 $PSRHOME/tempo2/T2runtime
 ENV PATH $PATH:$PSRHOME/tempo2/T2runtime/bin
-ENV C_INCLUDE_PATH $C_INCLUDE_PATH:/usr/local/src/tempo2/T2runtime/include:/usr/local/cuda-8.0/include
+ENV C_INCLUDE_PATH $C_INCLUDE_PATH:/usr/local/src/tempo2/T2runtime/include:/usr/local/cuda-8.0/include:/usr/local/cuda-8.0/lib64/
 ENV LDFLAGS -lstdc++
-ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/src/tempo2/T2runtime/lib:/usr/local/cuda-8.0/include
+ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/src/tempo2/T2runtime/lib:/usr/local/cuda-8.0/include:/usr/local/cuda-8.0/lib64/
 WORKDIR $PSRHOME/psrdada
 RUN ./bootstrap
 RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH --with-hwloc-dir=/usr
@@ -188,6 +188,7 @@ ENV LDFLAGS ""
 WORKDIR $PSRHOME
 RUN git clone https://git.code.sf.net/p/dspsr/code dspsr-code
 WORKDIR $PSRHOME/dspsr-code
+#RUN git reset --hard af66555
 
 #RUN chown -R kat:kat .
 #RUN chmod -R  a+rw .
@@ -202,7 +203,7 @@ RUN ./bootstrap
 RUN echo "dada dummy fits kat sigproc" > backends.list
 #RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH
 RUN ls $PSRHOME/psrdada
-RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH --x-libraries=/usr/lib/x86_64-linux-gnu CPPFLAGS="-I/usr/local/cuda/include -I"$PSRHOME/psrdada"/install/include" LDFLAGS="-L/usr/local/cuda/lib64" LIBS="-lpgplot -lcpgplot -lcuda -lstdc++"
+RUN ./configure --prefix=$PSRHOME/$LOGIN_ARCH --x-libraries=/usr/lib/x86_64-linux-gnu CPPFLAGS="-I/usr/local/cuda/include -I"$PSRHOME/psrdada"/install/include" LDFLAGS="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs" LIBS="-lpgplot -lcpgplot -lcuda -lstdc++"
 RUN make clean
 run make -j 16
 run make install

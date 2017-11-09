@@ -640,8 +640,6 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
     @tornado.gen.coroutine
     def request_capture_done(self, sock):
         """Stop a capture that is in progress."""
-        if not self.capturing:
-            raise tornado.gen.Return(('fail', 'not capturing'))
         self._stop_capture()
         raise tornado.gen.Return(('ok',))
 
