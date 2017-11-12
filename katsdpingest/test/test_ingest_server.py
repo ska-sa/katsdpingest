@@ -206,6 +206,7 @@ class TestIngestDeviceServer(object):
             cbf_spead=[Endpoint('239.102.250.{}'.format(i), 7148) for i in range(n_xengs)],
             cbf_interface='dummyif1',
             cbf_ibv=False,
+            cbf_name='i0_baseline_correlation_products',
             l0_spectral_spead=[Endpoint('239.102.251.{}'.format(i), 7148) for i in range(4)],
             l0_spectral_interface='dummyif2',
             l0_spectral_name='sdp_l0',
