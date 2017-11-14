@@ -467,7 +467,7 @@ class CBFIngest(object):
     # configurations.
     tune_channels = [4096, 8192, 9216, 32768]
     tune_percentile_sizes = set()
-    for ants in [2, 4, 8, 16, 32]:
+    for ants in [2, 4, 8, 16, 32, 64]:
         tune_percentile_sizes.update({ants, 2 * ants, ants * (ants - 1) // 2, ants * (ants - 1)})
     tune_percentile_sizes = list(sorted(tune_percentile_sizes))
 
