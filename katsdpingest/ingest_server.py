@@ -148,9 +148,10 @@ class IngestDeviceServer(AsyncDeviceServer):
                 return ("fail", "Unknown log level specified {}".format(level))
             return ("ok", "Log level set to {}".format(level))
 
+    @request(Str(optional=True))
     @return_reply(Str())
     @tornado.gen.coroutine
-    def request_capture_init(self, req, msg):
+    def request_capture_init(self, req, program_block_id=None):
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
         if self.cbf_ingest.capturing:
