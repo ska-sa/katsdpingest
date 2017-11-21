@@ -3,7 +3,7 @@ import spead2
 import spead2.recv
 import spead2.recv.trollius
 import katcp
-from katcp.kattypes import request, return_reply
+from katcp.kattypes import request, return_reply, Str
 import os
 import os.path
 import trollius
@@ -616,9 +616,9 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
     def setup_sensors(self):
         pass
 
-    @request()
+    @request(Str(optional=True))
     @return_reply()
-    def request_capture_init(self, sock):
+    def request_capture_init(self, sock, program_block_id=None):
         """Start capture to file."""
         if self.capturing:
             return ('fail', 'already capturing')
