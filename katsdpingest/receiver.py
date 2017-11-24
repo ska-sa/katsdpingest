@@ -313,12 +313,13 @@ class Receiver(object):
                         self._frames.append(Frame(data_ts + self._interval * i, xengs))
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
-                    _logger.warning('Timestamp %d on stream %d is too far in the past, discarding',
-                                    data_ts, stream_idx)
+                    _logger.warning('Timestamp %d is too far in the past, discarding '
+                                    '(frequency %d)', data_ts, channel0)
                     continue
                 elif (data_ts - ts0) % self._interval != 0:
-                    _logger.warning('Timestamp %d on stream %d does not match expected period, discarding',
-                                    data_ts, stream_idx)
+                    _logger.warning('Timestamp %d does not conform to %d + %dn, '
+                                    'discarding (frequency %d)',
+                                    data_ts, ts0, self._interval, channel0)
                     continue
                 while data_ts >= ts0 + self._interval * self.active_frames:
                     frame = self._frames[0]
