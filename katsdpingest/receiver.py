@@ -90,7 +90,7 @@ class Receiver(object):
     def __init__(self, endpoints, interface_address, ibv,
                  max_streams, max_packet_size, buffer_size,
                  channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=2, loop=None):
+                 cbf_attr, active_frames=4, loop=None):
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
             raise ValueError('cbf_channels not divisible by the number of endpoints')
