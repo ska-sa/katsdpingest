@@ -244,6 +244,20 @@ class Receiver(object):
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
+    def _first_timestamp(self, candidate):
+        """Get raw ADC timestamp of the first frame across all ingests.
+
+        This is called when the first valid dump is received for this
+        receiver, and returns the raw timestamp of the first valid dump
+        across all receivers. Note that the return value may be greater
+        than `candidate` if another receiver received a heap first but with
+        a larger timestamp.
+
+        In the base implementation, it simply returns `candidate`. Subclasses
+        may override this to implement inter-receiver communication.
+        """
+        return candidate
+
     @trollius.coroutine
     def _read_stream(self, stream, stream_idx):
         """Co-routine that sucks data from a single stream and populates
@@ -304,9 +318,10 @@ class Receiver(object):
                 self._input_bytes_sensor.set_value(self._input_bytes)
                 self._input_heaps_sensor.set_value(self._input_heaps)
                 if self._frames is None:
+                    initial_ts = self._first_timestamp(data_ts)
                     self._frames = deque()
                     for i in range(self.active_frames):
-                        self._frames.append(Frame(data_ts + self._interval * i, xengs))
+                        self._frames.append(Frame(initial_ts + self._interval * i, xengs))
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
                     _logger.warning('Timestamp %d is too far in the past, discarding '

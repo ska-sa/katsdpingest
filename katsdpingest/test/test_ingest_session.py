@@ -3,11 +3,14 @@
 from collections import OrderedDict
 
 import numpy as np
-from katsdpingest import ingest_session
-from katsdpingest.utils import Range
-from katsdpsigproc.test.test_accel import device_test
 import mock
 from nose.tools import *
+
+from katsdpsigproc.test.test_accel import device_test
+from katsdptelstate import TelescopeState
+
+from katsdpingest import ingest_session
+from katsdpingest.utils import Range
 
 
 def fake_cbf_attr(n_antennas, n_xengs=4):
@@ -158,6 +161,29 @@ def test_split_array():
             expected[i, j, 0] = src[i, j].real
             expected[i, j, 1] = src[i, j].imag
     np.testing.assert_equal(actual, expected)
+
+
+class TestTelstateReceiver(object):
+    def setup(self):
+        self.telstate = TelescopeState()
+        self.telstate.clear()
+
+    def test_first_timestamp(self):
+        # We don't want to bother setting up a valid Receiver base class, we
+        # just want to test the subclass, so we mock in a different base.
+        class DummyBase(object):
+            pass
+
+        patcher = mock.patch.object(ingest_session.TelstateReceiver, '__bases__', (DummyBase,))
+        with patcher:
+            patcher.is_local = True   # otherwise mock tries to delete __bases__
+            receiver = ingest_session.TelstateReceiver(telstate=self.telstate)
+            # Set first value
+            assert_equal(12345, receiver._first_timestamp(12345))
+            # Try a different value, first value must stick
+            assert_equal(12345, receiver._first_timestamp(54321))
+            # Set same value
+            assert_equal(12345, receiver._first_timestamp(12345))
 
 
 class TestCBFIngest(object):

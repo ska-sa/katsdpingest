@@ -51,7 +51,8 @@ class MockReceiver(object):
                  endpoints, interface_address, ibv,
                  max_streams, max_packet_size, buffer_size,
                  channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=2, loop=None, pauses=None):
+                 cbf_attr, active_frames=2, loop=None, telstate=None,
+                 pauses=None):
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
         self._data = data
@@ -248,7 +249,7 @@ class TestIngestDeviceServer(object):
         self._data, self._timestamps = self._create_data()
         self._pauses = None
         self._Receiver = self._patch(
-            'katsdpingest.receiver.Receiver',
+            'katsdpingest.ingest_session.TelstateReceiver',
             side_effect=lambda *args, **kwargs:
                 MockReceiver(self._data, self._timestamps, *args, pauses=self._pauses, **kwargs))
         self._tx = {'continuum': mock.MagicMock(), 'spectral': mock.MagicMock()}
@@ -401,7 +402,7 @@ class TestIngestDeviceServer(object):
     @tornado.gen.coroutine
     def test_capture(self):
         """Test the core data capture process."""
-        yield self.make_request('capture-init')
+        yield self.make_request('capture-init', 'pb1')
         yield self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
         l0_int_time = 8 * self.cbf_attr['int_time']
@@ -465,8 +466,8 @@ class TestIngestDeviceServer(object):
     @tornado.gen.coroutine
     def test_init_when_capturing(self):
         """Calling capture-init when capturing fails"""
-        yield self.make_request('capture-init')
-        yield self.assert_request_fails(r'Existing capture session found', 'capture-init')
+        yield self.make_request('capture-init', 'pb1')
+        yield self.assert_request_fails(r'Existing capture session found', 'capture-init', 'pb2')
         yield self.make_request('capture-done')
 
     @async_test
@@ -487,7 +488,7 @@ class TestIngestDeviceServer(object):
         yield self.make_request('add-sdisp-ip', '127.0.0.4')
         # A duplicate
         yield self.make_request('add-sdisp-ip', '127.0.0.3:8001')
-        yield self.make_request('capture-init')
+        yield self.make_request('capture-init', 'pb1')
         yield self.make_request('capture-done')
         assert_equal([('127.0.0.2', 7149), ('127.0.0.3', 8000), ('127.0.0.4', 7149)],
                      list(sorted(self._sd_tx.keys())))
@@ -501,7 +502,7 @@ class TestIngestDeviceServer(object):
     def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
         yield self.make_request('drop-sdisp-ip', '127.0.0.2')
-        yield self.make_request('capture-init')
+        yield self.make_request('capture-init', 'pb1')
         yield self.make_request('capture-done')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         sd_tx.async_send_heap.assert_not_called()
@@ -511,7 +512,7 @@ class TestIngestDeviceServer(object):
     def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
         self._pauses = {10: trollius.Future()}
-        yield self.make_request('capture-init')
+        yield self.make_request('capture-init', 'pb1')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for
         # the signal display data to be sent.

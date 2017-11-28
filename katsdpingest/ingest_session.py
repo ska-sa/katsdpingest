@@ -1,24 +1,32 @@
 """Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
 from __future__ import division, print_function, absolute_import
+import time
+import fractions
+import logging
+
 import numpy as np
+
+import trollius
+from trollius import From, Return
+
 import spead2
 import spead2.send
 import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
-import time
-import fractions
-import katsdpingest.sigproc as sp
+
+from katcp import Sensor
+
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
-from katcp import Sensor
+
 import katsdpservices
+
+import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
-import logging
-import trollius
-from trollius import From, Return
-from . import utils, receiver, sender
+
+from . import utils, receiver, sender, sigproc
 
 
 logger = logging.getLogger(__name__)
@@ -432,6 +440,27 @@ class BaselineOrdering(object):
                 self.percentile_ranges.append((0, 0))
 
 
+class TelstateReceiver(receiver.Receiver):
+    """Receiver that uses telescope state to coordinate a shared first dump timestamp
+
+    Parameters
+    ----------
+    telstate
+        A telescope state view with a scope that is unique to the receiver instance.
+    """
+    def __init__(self, *args, **kwargs):
+        self._telstate = kwargs.pop('telstate')
+        super(TelstateReceiver, self).__init__(*args, **kwargs)
+
+    def _first_timestamp(self, candidate):
+        try:
+            self._telstate.add('first_timestamp', candidate, immutable=True)
+            return candidate
+        except katsdptelstate.ImmutableKeyError:
+            # A different ingest process beat us to it. Use its value.
+            return self._telstate.get('first_timestamp')
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -460,6 +489,10 @@ class CBFIngest(object):
         Input stream attributes, as returned by :func:`get_cbf_attr`
     bls_ordering : :class:`BaselineOrdering`
         Baseline ordering and related tables
+    telstate : :class:`katsdptelstate.TelescopeState`
+        Global view of telescope state
+    program_block_id : str
+        Current program block ID, or ``None`` if not capturing
     """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -509,7 +542,7 @@ class CBFIngest(object):
         max_percentile_sizes = list(sorted(set(max_percentile_sizes)))
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
-        flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
+        flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
                 context, width=13, use_flags=True)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
@@ -517,8 +550,9 @@ class CBFIngest(object):
                 context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
-                                 excise=excise, continuum=continuum)
+        return sigproc.IngestTemplate(context, flagger_template,
+                                      percentile_sizes=max_percentile_sizes,
+                                      excise=excise, continuum=continuum)
 
     def _zero_counters(self):
         self.output_bytes = 0
@@ -1064,7 +1098,7 @@ class CBFIngest(object):
             return
         cache = {}
         baselines = self.bls_ordering.sdp_bls_ordering
-        cam_flag = 1 << sp.IngestTemplate.flag_names.index('cam')
+        cam_flag = 1 << sigproc.IngestTemplate.flag_names.index('cam')
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
             a = baseline[0][:-1]
@@ -1112,7 +1146,7 @@ class CBFIngest(object):
             try:
                 channel_mask = self.telstate['cbf_channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
-                static_flag = 1 << sp.IngestTemplate.flag_names.index('static')
+                static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
                 channel_flags[:] = channel_mask * np.uint8(static_flag)
             except KeyError:
                 channel_flags.fill(0)
@@ -1121,7 +1155,7 @@ class CBFIngest(object):
                 logger.warn('Error loading channel flags from telstate', exc_info=True)
                 channel_flags.fill(0)
             self._set_baseline_flags(baseline_flags, frame.timestamp)
-            data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
+            data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1160,11 +1194,12 @@ class CBFIngest(object):
     def capturing(self):
         return self._run_future is not None
 
-    def start(self):
+    def start(self, program_block_id):
         assert self._run_future is None
         assert self.rx is None
         assert self._stopped
         self._stopped = False
+        self.program_block_id = program_block_id
         self._run_future = trollius.async(self.run())
 
     @trollius.coroutine
@@ -1198,6 +1233,7 @@ class CBFIngest(object):
             if self._run_future is future:
                 ret = True
                 self._run_future = None
+                self.program_block_id = None
                 self.rx = None
         raise Return(ret)
 
@@ -1285,7 +1321,7 @@ class CBFIngest(object):
         for tx in self.tx.itervalues():
             yield From(tx.start())
         # Initialise the input stream
-        self.rx = receiver.Receiver(
+        self.rx = TelstateReceiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.rx_spead_max_streams,
             max_packet_size=self.rx_spead_max_packet_size,
@@ -1293,7 +1329,8 @@ class CBFIngest(object):
             channel_range=self.channel_ranges.subscribed,
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
-            cbf_attr=self.cbf_attr)
+            cbf_attr=self.cbf_attr,
+            telstate=self.telstate.view('{}.{}'.format(self.program_block_id, self.src_stream)))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
