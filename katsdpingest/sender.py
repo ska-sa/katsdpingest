@@ -95,8 +95,10 @@ class VisSender(object):
                           shape=(channels, baselines), dtype=np.uint8)
         self._ig.add_item(id=None, name='weights_channel', description="Coarse (per-channel) weights",
                           shape=(channels,), dtype=np.float32)
-        self._ig.add_item(id=None, name='timestamp', description="Seconds since sync time",
+        self._ig.add_item(id=None, name='timestamp', description="Seconds since CBF sync time",
                           shape=(), dtype=None, format=[('f', 64)])
+        self._ig.add_item(id=None, name='index', description='Index in time',
+                          shape=(), dtype=None, format=[('u', 64)])
         self._ig.add_item(id=0x4103, name='frequency', description="Channel index of first channel in the heap",
                           shape=(), dtype=np.uint32)
 
@@ -114,7 +116,7 @@ class VisSender(object):
         yield From(self._stream.async_send_heap(self._ig.get_end()))
 
     @trollius.coroutine
-    def send(self, data, ts_rel):
+    def send(self, data, idx, ts_rel):
         """Asynchronously send visibilities to the receiver, returning a
         future."""
         data = data[self._channel_range.asslice()]
@@ -123,6 +125,7 @@ class VisSender(object):
         self._ig['weights'].value = data.weights
         self._ig['weights_channel'].value = data.weights_channel
         self._ig['timestamp'].value = ts_rel
+        self._ig['index'].value = idx
         self._ig['frequency'].value = self._channel0
         return trollius.async(async_send_heap(self._stream, self._ig.get_heap()))
 
@@ -162,7 +165,7 @@ class VisSenderSet(object):
         return trollius.gather(*(trollius.async(sender.stop()) for sender in self._senders))
 
     @trollius.coroutine
-    def send(self, data, ts_rel):
+    def send(self, data, idx, ts_rel):
         """Send a data heap to all streams, splitting the data between them."""
-        return trollius.gather(*(trollius.async(sender.send(data, ts_rel))
+        return trollius.gather(*(trollius.async(sender.send(data, idx, ts_rel))
                                  for sender in self._senders))

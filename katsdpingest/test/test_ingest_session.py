@@ -95,57 +95,32 @@ class TestGetCbfAttr(object):
 
 
 class TestTimeAverage(object):
-    def setup(self):
-        self.cbf_attr = fake_cbf_attr(1)
-        self.cbf_attr['int_time'] = 0.75  # Change to a round number for sake of the test
-        self.input_interval = self.cbf_attr['n_accs'] * self.cbf_attr['ticks_between_spectra']
-
     def test_constructor(self):
-        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
-        assert_equal(2.25, avg.int_time)
+        avg = ingest_session._TimeAverage(3)
         assert_equal(3, avg.ratio)
-        assert_equal(avg.ratio * self.input_interval, avg.interval)
-        assert_is(None, avg._start_ts)
+        assert_is(None, avg._start_idx)
 
-    def make_ts(self, idx):
-        if isinstance(idx, list):
-            return [self.make_ts(x) for x in idx]
-        else:
-            return 100000000 + idx * self.input_interval
-
-    def test_add_timestamp(self):
-        avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
+    def test_add_index(self):
+        avg = ingest_session._TimeAverage(3)
         avg.flush = mock.Mock(name='flush', spec_set=avg.flush)
-        avg.add_timestamp(self.make_ts(0))
-        avg.add_timestamp(self.make_ts(2))
-        avg.add_timestamp(self.make_ts(1))  # Test time reordering
+        avg.add_index(0)
+        avg.add_index(2)
+        avg.add_index(1)  # Test time reordering
         assert not avg.flush.called
 
-        avg.add_timestamp(self.make_ts(4))  # Skip first packet in the group
-        avg.flush.assert_called_once_with(self.make_ts(1.5))
+        avg.add_index(3)  # Skip first frame in the group
+        avg.flush.assert_called_once_with(0)
         avg.flush.reset_mock()
-        assert_equal(self.make_ts(3), avg._start_ts)
+        assert_equal(3, avg._start_idx)
 
-        avg.add_timestamp(self.make_ts(12))  # Skip some whole groups
-        avg.flush.assert_called_once_with(self.make_ts(4.5))
+        avg.add_index(12)  # Skip some whole groups
+        avg.flush.assert_called_once_with(1)
         avg.flush.reset_mock()
-        assert_equal(self.make_ts(12), avg._start_ts)
+        assert_equal(12, avg._start_idx)
 
         avg.finish()
-        avg.flush.assert_called_once_with(self.make_ts(13.5))
-        assert_is(None, avg._start_ts)
-
-    def test_alignment(self):
-        """Phase must be independent of first timestamp seen"""
-        for i in range(5):
-            avg = ingest_session._TimeAverage(self.cbf_attr, 2.0)
-            ts = self.make_ts(i)
-            avg.add_timestamp(ts)
-            start_ts = avg._start_ts
-            interval = avg.ratio * self.input_interval
-            assert_less_equal(start_ts, ts)
-            assert_less(ts - interval, start_ts)
-            assert_equal(0, (self.make_ts(0) - start_ts) % interval)
+        avg.flush.assert_called_once_with(4)
+        assert_is(None, avg._start_idx)
 
 
 def test_split_array():

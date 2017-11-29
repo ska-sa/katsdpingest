@@ -62,6 +62,10 @@ class MockReceiver(object):
         self._substreams = len(channel_range) // cbf_attr['n_chans_per_substream']
         self._pauses = {} if pauses is None else pauses
         self._loop = loop
+        # Set values to match Receiver
+        self.cbf_attr = cbf_attr
+        self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
+        self.timestamp_base = timestamps[0]
 
     def stop(self):
         self._stop_event.set()
@@ -78,7 +82,7 @@ class MockReceiver(object):
         yield From(event)
         if self._next_frame >= len(self._data):
             raise spead2.Stopped('end of frame list')
-        frame = Frame(self._timestamps[self._next_frame], self._substreams)
+        frame = Frame(self._next_frame, self._timestamps[self._next_frame], self._substreams)
         item_channels = len(self._channel_range) // self._substreams
         for i in range(self._substreams):
             start = self._channel_range.start + i * item_channels
@@ -366,11 +370,13 @@ class TestIngestDeviceServer(object):
         tx.stop.assert_called_once_with()
         calls = tx.send.mock_calls
         assert_equal(len(expected_vis), len(calls))
-        for vis, flags, ts, call in zip(expected_vis, expected_flags, expected_ts, calls):
-            data, ts_rel = call[1]
+        for i, (vis, flags, ts, call) in enumerate(
+                zip(expected_vis, expected_flags, expected_ts, calls)):
+            data, idx, ts_rel = call[1]
             assert_is_instance(data, Data)
             np.testing.assert_allclose(vis, data.vis[send_slice], rtol=1e-5, atol=1e-6)
             np.testing.assert_array_equal(flags, data.flags[send_slice])
+            assert_equal(i, idx)
             assert_almost_equal(ts, ts_rel)
 
     def test_init_telstate(self):
