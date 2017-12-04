@@ -109,7 +109,7 @@ def decode_heap(heap):
     """
     out_stream = spead2.send.BytesStream(spead2.ThreadPool())
     out_stream.send_heap(heap)
-    in_stream = spead2.recv.Stream(spead2.ThreadPool(), bug_compat=spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+    in_stream = spead2.recv.Stream(spead2.ThreadPool())
     in_stream.add_buffer_reader(out_stream.getvalue())
     try:
         heap = next(in_stream)
@@ -403,7 +403,7 @@ class TestIngestDeviceServer(object):
         """Test the core data capture process."""
         yield self.make_request('capture-init')
         yield self.make_request('capture-done')
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        l0_flavour = spead2.Flavour(4, 64, 48)
         l0_int_time = 8 * self.cbf_attr['int_time']
         expected_vis, expected_flags, expected_ts = self._get_expected()
         expected_output_vis = expected_vis[:, self.channel_ranges.output.asslice(), :]

@@ -622,7 +622,7 @@ class CBFIngest(object):
         if not endpoints:
             return
 
-        l0_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        l0_flavour = spead2.Flavour(4, 64, 48)
         all_output = self.channel_ranges.all_output
         # Compute channel ranges relative to those computed
         spectral_channels = self.channel_ranges.output.relative_to(self.channel_ranges.computed)
@@ -675,7 +675,7 @@ class CBFIngest(object):
 
     def _init_ig_sd(self):
         """Create a item group for signal displays."""
-        sd_flavour = spead2.Flavour(4, 64, 48, spead2.BUG_COMPAT_PYSPEAD_0_5_2)
+        sd_flavour = spead2.Flavour(4, 64, 48)
         inline_format = [('u', sd_flavour.heap_address_bits)]
         n_spec_channels = len(self.channel_ranges.sd_output)
         n_cont_channels = n_spec_channels // self.channel_ranges.sd_cont_factor
