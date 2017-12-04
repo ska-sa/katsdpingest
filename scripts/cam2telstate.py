@@ -294,8 +294,8 @@ class Client(object):
             receiver=[(rx_name, [rx_name])],
             digitiser=[(dig_name, [dig_name])],
             subarray=[(self._sub_name, ['sub'])],
-            cbf=[(self._cbf_name, ['cbf', 'data'])],
-            sdp=[(self._sdp_name, ['sdp', 'data'])]
+            cbf=[(self._cbf_name, ['cbf'])],
+            sdp=[(self._sdp_name, ['sdp'])]
         )
         for (number, name) in enumerate(self._input_labels.result()):
             substitutions['inputn'].append(('input{}'.format(number), [name]))
@@ -352,9 +352,9 @@ class Client(object):
 
     @tornado.gen.coroutine
     def get_resources(self):
-        """Query subarray_N_pool_resources to find out which data_M resource and
+        """Query subarray_N_pool_resources to find out which cbf_M resource and
         which receptors are assigned to the subarray, followed by
-        data_N_input_labels to find the input labels.
+        cbf_N_input_labels to find the input labels.
         """
         sensor = '{}_pool_resources'.format(self._sub_name)
         yield self.subscribe_one(sensor)
