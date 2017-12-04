@@ -459,7 +459,7 @@ class _CaptureSession(object):
 
             try:
                 data = pyfits.open("%s.writing/%s"%(self.save_dir, data_files[index]), mode="update", memmap=True, save_backup=False)
-                target = [s.strip() for s in self.args.telstate.get("data_target").split(",")]
+                target = [s.strip() for s in self.args.telstate.get("cbf_target").split(",")]
                 hduPrimary=data[0].header
                 start_time = Time([hduPrimary['STT_IMJD'] + hduPrimary['STT_SMJD'] / 3600.0 / 24.0],format='mjd')
                 start_time.format = 'isot'
