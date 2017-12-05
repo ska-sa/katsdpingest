@@ -97,7 +97,7 @@ class VisSender(object):
                           shape=(channels,), dtype=np.float32)
         self._ig.add_item(id=None, name='timestamp', description="Seconds since CBF sync time",
                           shape=(), dtype=None, format=[('f', 64)])
-        self._ig.add_item(id=None, name='index', description='Index in time',
+        self._ig.add_item(id=None, name='dump_index', description='Index in time',
                           shape=(), dtype=None, format=[('u', 64)])
         self._ig.add_item(id=0x4103, name='frequency', description="Channel index of first channel in the heap",
                           shape=(), dtype=np.uint32)

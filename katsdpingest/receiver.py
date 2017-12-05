@@ -77,7 +77,7 @@ class Receiver(object):
     timestamp_base : int
         Timestamp associated with the frame with index 0. It is initially
         ``None``, and is set when the first dump is received. The raw
-        timestamp of any other frame can be computed from as
+        timestamp of any other frame can be computed as
         ``timestamp_base + idx * interval``.
     _frames : :class:`deque`
         Deque of :class:`Frame` objects representing incomplete frames. After

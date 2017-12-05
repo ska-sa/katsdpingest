@@ -451,7 +451,7 @@ class TelstateReceiver(receiver.Receiver):
 
     Parameters
     ----------
-    telstate
+    telstate : :class:`katsdptelstate.TelescopeState`
         A telescope state view with a scope that is unique to the receiver instance.
     """
     def __init__(self, *args, **kwargs):
