@@ -159,6 +159,8 @@ class TestReceiver(object):
         xeng_raw : np.ndarray
             5D array of integer correlator data, indexed by time, stream,
             channel, baseline, and real/complex
+        indices : np.ndarray
+            1D array of input dump indices
         timestamps : np.ndarray
             1D array of timestamps
         """
@@ -167,8 +169,9 @@ class TestReceiver(object):
             size=(n_frames, self.n_xengs, self.n_chans // self.n_xengs, self.n_bls, 2))
         xeng_raw = xeng_raw.astype(np.int32)
         interval = self.cbf_attr['ticks_between_spectra'] * self.cbf_attr['n_accs']
-        timestamps = np.arange(n_frames, dtype=np.uint64) * interval + 1234567890123
-        return xeng_raw, timestamps
+        indices = np.arange(n_frames, dtype=np.uint64)
+        timestamps = indices * interval + 1234567890123
+        return xeng_raw, indices, timestamps
 
     @trollius.coroutine
     def _send_in_order(self, xeng_raw, timestamps):
@@ -187,10 +190,11 @@ class TestReceiver(object):
     def test_in_order(self):
         """Test normal case with data arriving in the expected order"""
         n_frames = 10
-        xeng_raw, timestamps = self._make_data(n_frames)
+        xeng_raw, indices, timestamps = self._make_data(n_frames)
         send_future = trollius.async(self._send_in_order(xeng_raw, timestamps), loop=self.loop)
         for t in range(n_frames):
             frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
+            assert_equal(indices[t], frame.idx)
             assert_equal(timestamps[t], frame.timestamp)
             assert_equal(self.n_xengs, len(frame.items))
             for i in range(self.n_xengs):
@@ -236,11 +240,12 @@ class TestReceiver(object):
     def test_out_of_order(self):
         """Test various edge behaviour for out-of-order data"""
         n_frames = 10
-        xeng_raw, timestamps = self._make_data(n_frames)
+        xeng_raw, indices, timestamps = self._make_data(n_frames)
         send_future = trollius.async(self._send_out_of_order(xeng_raw, timestamps), loop=self.loop)
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []), (8, [])]:
                 frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
+                assert_equal(indices[t], frame.idx)
                 assert_equal(timestamps[t], frame.timestamp)
                 assert_equal(self.n_xengs, len(frame.items))
                 for i in range(self.n_xengs):

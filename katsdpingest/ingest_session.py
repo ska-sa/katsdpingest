@@ -1,24 +1,32 @@
 """Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
 from __future__ import division, print_function, absolute_import
+import time
+import fractions
+import logging
+
 import numpy as np
+
+import trollius
+from trollius import From, Return
+
 import spead2
 import spead2.send
 import spead2.recv
 import spead2.send.trollius
 import spead2.recv.trollius
-import time
-import fractions
-import katsdpingest.sigproc as sp
+
+from katcp import Sensor
+
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
-from katcp import Sensor
+
 import katsdpservices
+
+import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
-import logging
-import trollius
-from trollius import From, Return
-from . import utils, receiver, sender
+
+from . import utils, receiver, sender, sigproc
 
 
 logger = logging.getLogger(__name__)
@@ -31,67 +39,73 @@ CBF_CRITICAL_ATTRS = frozenset([
 
 class _TimeAverage(object):
     """Manages a collection of dumps that are averaged together at a specific
-    cadence. Note that all timestamps in this case are in raw form i.e., ticks
-    of the ADC clock since the sync time.
+    cadence.
 
-    This object never sees dump contents directly, only timestamps. When a
-    timestamp is added that is not part of the current group, :func:`flush`
+    This object never sees dump contents directly, only dump indices. When an
+    index is added that is not part of the current group, :func:`flush`
     is called, which must be overloaded or set to a callback function.
 
     Parameters
     ----------
-    cbf_attr : dict
-        CBF attributes (the critical attributes must be present)
-    int_time : float
-        requested integration time, which will be rounded to a multiple of
-        the CBF integration time
+    ratio : int
+        Number of input dumps per output dump
 
     Attributes
     ----------
-    interval : int
-        length of each group, in timestamp units
     ratio : int
-        number of CBF dumps per output dump
-    int_time : float
-        quantised integration time
-    _start_ts : int or NoneType
-        Timestamp of first dump in the current group, or `None` if no dumps have been seen
+        number of input dumps per output dump
+    _start_idx : int
+        Index of first dump in the current group, or ``None`` if no dumps have been seen.
+        There is at least one dump in the current group if and only if this is
+        not ``None``.
     """
-    def __init__(self, cbf_attr, int_time):
-        self.ratio = max(1, int(round(int_time / cbf_attr['int_time'])))
-        self.int_time = self.ratio * cbf_attr['int_time']
-        # Integration time in timestamp ticks
-        self._sub_interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
-        self.interval = self.ratio * self._sub_interval
-        self._start_ts = None
+    def __init__(self, ratio):
+        self.ratio = ratio
+        self._start_idx = None
 
-    def add_timestamp(self, timestamp):
-        """Record that a dump with a given timestamp has arrived and is about to
+    def _warp_start(self, idx):
+        """Set :attr:`start_idx` to the smallest multiple of ratio that is <= idx."""
+        self._start_idx = idx // self.ratio * self.ratio
+
+    def add_index(self, idx):
+        """Record that a dump with a given index has arrived and is about to
         be processed. This may call :func:`flush`."""
 
-        if self._start_ts is None:
-            # First time: special case. We need to choose _start_ts in a way
-            # that will have the same phase as other ingest processes, even if
-            # they see a different timestamp first. We do this by choosing the
-            # largest _start_ts such that:
-            # 1. _start_ts <= timestamp.
-            # 2. _start_ts % interval < sub_interval
-            si = self._sub_interval
-            self._start_ts = timestamp - (timestamp % self.interval) // si * si
+        if self._start_idx is None:
+            self._warp_start(idx)
+        elif idx >= self._start_idx + self.ratio:
+            self.flush(self._start_idx // self.ratio)
+            self._warp_start(idx)
 
-        if timestamp >= self._start_ts + self.interval:
-            self.flush(self._start_ts + 0.5 * self.interval)
-            skip_groups = (timestamp - self._start_ts) // self.interval
-            self._start_ts += skip_groups * self.interval
-
-    def flush(self, timestamps):
+    def flush(self, out_idx):
         raise NotImplementedError
 
     def finish(self, flush=True):
         """Flush if not empty and `flush` is true, and reset to initial state"""
-        if self._start_ts is not None and flush:
-            self.flush(self._start_ts + 0.5 * self.interval)
-        self._start_ts = None
+        if self._start_idx is not None and flush:
+            self.flush(self._start_idx // self.ratio)
+        self._start_idx = None
+
+
+def _mid_timestamp_rel(time_average, receiver, idx):
+    """Convert an output dump index into a timestamp.
+
+    Parameters
+    ----------
+    time_average : :class:`_TimeAverage`
+        Averager, used to get the ratio of input to output dumps
+    receiver : :class:`.Receiver`
+        Receiver, used to get CBF attributes, start timestamp and interval
+    idx : int
+        Output dump index
+
+    Returns
+    -------
+    ts_rel : float
+        Time in seconds from CBF sync time to the middle of the dump
+    """
+    ts_raw = (idx + 0.5) * time_average.ratio * receiver.interval + receiver.timestamp_base
+    return ts_raw / receiver.cbf_attr['scale_factor_timestamp']
 
 
 def _split_array(x, dtype):
@@ -432,6 +446,27 @@ class BaselineOrdering(object):
                 self.percentile_ranges.append((0, 0))
 
 
+class TelstateReceiver(receiver.Receiver):
+    """Receiver that uses telescope state to coordinate a shared first dump timestamp
+
+    Parameters
+    ----------
+    telstate : :class:`katsdptelstate.TelescopeState`
+        A telescope state view with a scope that is unique to the receiver instance.
+    """
+    def __init__(self, *args, **kwargs):
+        self._telstate = kwargs.pop('telstate')
+        super(TelstateReceiver, self).__init__(*args, **kwargs)
+
+    def _first_timestamp(self, candidate):
+        try:
+            self._telstate.add('first_timestamp', candidate, immutable=True)
+            return candidate
+        except katsdptelstate.ImmutableKeyError:
+            # A different ingest process beat us to it. Use its value.
+            return self._telstate.get('first_timestamp')
+
+
 class CBFIngest(object):
     """
     Ingest session.
@@ -460,6 +495,10 @@ class CBFIngest(object):
         Input stream attributes, as returned by :func:`get_cbf_attr`
     bls_ordering : :class:`BaselineOrdering`
         Baseline ordering and related tables
+    telstate : :class:`katsdptelstate.TelescopeState`
+        Global view of telescope state
+    program_block_id : str
+        Current program block ID, or ``None`` if not capturing
     """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -509,7 +548,7 @@ class CBFIngest(object):
         max_percentile_sizes = list(sorted(set(max_percentile_sizes)))
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
-        flag_value = 1 << sp.IngestTemplate.flag_names.index('ingest_rfi')
+        flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
                 context, width=13, use_flags=True)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
@@ -517,8 +556,9 @@ class CBFIngest(object):
                 context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
                 background_template, noise_est_template, threshold_template)
-        return sp.IngestTemplate(context, flagger_template, percentile_sizes=max_percentile_sizes,
-                                 excise=excise, continuum=continuum)
+        return sigproc.IngestTemplate(context, flagger_template,
+                                      percentile_sizes=max_percentile_sizes,
+                                      excise=excise, continuum=continuum)
 
     def _zero_counters(self):
         self.output_bytes = 0
@@ -545,11 +585,13 @@ class CBFIngest(object):
                 self.cbf_attr['bls_ordering'], antenna_mask))
 
     def _init_time_averaging(self, output_int_time, sd_int_time):
-        self._output_avg = _TimeAverage(self.cbf_attr, output_int_time)
+        output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
+        self._output_avg = _TimeAverage(output_ratio)
         self._output_avg.flush = self._flush_output
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
-        self._sd_avg = _TimeAverage(self.cbf_attr, sd_int_time)
+        sd_ratio = max(1, int(round(sd_int_time / self.cbf_attr['int_time'])))
+        self._sd_avg = _TimeAverage(sd_ratio)
         self._sd_avg.flush = self._flush_sd
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
@@ -636,12 +678,13 @@ class CBFIngest(object):
         endpoint_hi = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
         logger.info('Sending %s output to %s', arg_name, endpoints_to_str(endpoints))
+        int_time = self.cbf_attr['int_time'] * self._output_avg.ratio
         tx = sender.VisSenderSet(
             spead2.ThreadPool(),
             endpoints,
             katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(arg_name))),
             l0_flavour,
-            self._output_avg.int_time,
+            int_time,
             channels,
             (self.channel_ranges.output.start - all_output.start) // cont_factor,
             len(all_output) // cont_factor,
@@ -663,7 +706,7 @@ class CBFIngest(object):
         self._set_telstate_entry('bandwidth', bandwidth, prefix)
         self._set_telstate_entry('center_freq', center_freq, prefix)
         self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
-        self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
+        self._set_telstate_entry('int_time', int_time, prefix)
         if self.src_stream is not None:
             self._set_telstate_entry('src_streams', [self.src_stream], prefix)
         self.tx[name] = tx
@@ -870,14 +913,14 @@ class CBFIngest(object):
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
 
-    def _flush_output(self, mid_timestamp):
+    def _flush_output(self, output_idx):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
         output_a, host_output_a = self.output_resource.acquire()
-        self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, mid_timestamp))
+        self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, output_idx))
 
     @trollius.coroutine
-    def _flush_output_job(self, proc_a, output_a, host_output_a, mid_timestamp):
+    def _flush_output_job(self, proc_a, output_a, host_output_a, output_idx):
         with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
             events = yield From(proc_a.wait())
@@ -907,7 +950,7 @@ class CBFIngest(object):
             proc_a.ready([proc_done])
             output_a.ready([proc_done])
 
-            ts_rel = mid_timestamp / self.cbf_attr['scale_factor_timestamp']
+            ts_rel = _mid_timestamp_rel(self._output_avg, self.rx, output_idx)
             yield From(resource.async_wait_for_events([transfer_done]))
             futures = []
             for (name, tx) in self.tx.iteritems():
@@ -915,15 +958,15 @@ class CBFIngest(object):
                 self.output_bytes += part.nbytes
                 self.output_heaps += tx.size
                 self.output_dumps += 1
-                futures.append(tx.send(part, ts_rel))
+                futures.append(tx.send(part, output_idx, ts_rel))
             yield From(trollius.gather(*futures))
             self.output_bytes_sensor.set_value(self.output_bytes)
             self.output_heaps_sensor.set_value(self.output_heaps)
             self.output_dumps_sensor.set_value(self.output_dumps)
             host_output_a.ready()
-            logger.debug("Finished dump group with raw timestamp %.1f", mid_timestamp)
+            logger.debug("Finished dump group with index %d", output_idx)
 
-    def _flush_sd(self, mid_timestamp):
+    def _flush_sd(self, output_idx):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
         custom_signals_indices = None
@@ -960,12 +1003,12 @@ class CBFIngest(object):
         self.jobs.add(self._flush_sd_job(
                 proc_a, sd_input_a, host_sd_input_a,
                 sd_output_a, host_sd_output_a,
-                mid_timestamp, custom_signals_indices, mask))
+                output_idx, custom_signals_indices, mask))
 
     @trollius.coroutine
     def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
                       sd_output_a, host_sd_output_a,
-                      mid_timestamp, custom_signals_indices, mask):
+                      output_idx, custom_signals_indices, mask):
         with proc_a as proc, \
                 sd_input_a as sd_input_buffers, \
                 host_sd_input_a as host_sd_input, \
@@ -1011,7 +1054,7 @@ class CBFIngest(object):
 
             # Mangle and transmit the retrieved values
             yield From(resource.async_wait_for_events([transfer_out_done]))
-            ts_rel = mid_timestamp / self.cbf_attr['scale_factor_timestamp']
+            ts_rel = _mid_timestamp_rel(self._sd_avg, self.rx, output_idx)
             ts = self.cbf_attr['sync_time'] + ts_rel
             cont_vis = host_sd_output['sd_cont_vis']
             cont_flags = host_sd_output['sd_cont_flags']
@@ -1051,7 +1094,7 @@ class CBFIngest(object):
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()
-            logger.debug("Finished SD group with raw timestamp %.1f", mid_timestamp)
+            logger.debug("Finished SD group with index %d", output_idx)
 
     def _set_baseline_flags(self, baseline_flags, timestamp):
         """Query telstate for per-baseline flags to set.
@@ -1064,7 +1107,7 @@ class CBFIngest(object):
             return
         cache = {}
         baselines = self.bls_ordering.sdp_bls_ordering
-        cam_flag = 1 << sp.IngestTemplate.flag_names.index('cam')
+        cam_flag = 1 << sigproc.IngestTemplate.flag_names.index('cam')
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
             a = baseline[0][:-1]
@@ -1112,7 +1155,7 @@ class CBFIngest(object):
             try:
                 channel_mask = self.telstate['cbf_channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
-                static_flag = 1 << sp.IngestTemplate.flag_names.index('static')
+                static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
                 channel_flags[:] = channel_mask * np.uint8(static_flag)
             except KeyError:
                 channel_flags.fill(0)
@@ -1121,7 +1164,7 @@ class CBFIngest(object):
                 logger.warn('Error loading channel flags from telstate', exc_info=True)
                 channel_flags.fill(0)
             self._set_baseline_flags(baseline_flags, frame.timestamp)
-            data_lost_flag = 1 << sp.IngestTemplate.flag_names.index('data_lost')
+            data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1160,11 +1203,12 @@ class CBFIngest(object):
     def capturing(self):
         return self._run_future is not None
 
-    def start(self):
+    def start(self, program_block_id):
         assert self._run_future is None
         assert self.rx is None
         assert self._stopped
         self._stopped = False
+        self.program_block_id = program_block_id
         self._run_future = trollius.async(self.run())
 
     @trollius.coroutine
@@ -1198,6 +1242,7 @@ class CBFIngest(object):
             if self._run_future is future:
                 ret = True
                 self._run_future = None
+                self.program_block_id = None
                 self.rx = None
         raise Return(ret)
 
@@ -1251,8 +1296,8 @@ class CBFIngest(object):
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].set_value(current_ts)
 
-            self._output_avg.add_timestamp(frame.timestamp)
-            self._sd_avg.add_timestamp(frame.timestamp)
+            self._output_avg.add_index(frame.idx)
+            self._sd_avg.add_index(frame.idx)
 
             proc_a = self.proc_resource.acquire()
             input_a, host_input_a = self.input_resource.acquire()
@@ -1266,7 +1311,7 @@ class CBFIngest(object):
             tt = time.time() - st
             logger.debug(
                 "Captured CBF frame with timestamp %i (process_time: %.2f, index: %i)",
-                current_ts, tt, idx)
+                current_ts, tt, frame.idx)
             # Clear completed processing, so that any related exceptions are
             # thrown as soon as possible.
             self.jobs.clean()
@@ -1285,7 +1330,7 @@ class CBFIngest(object):
         for tx in self.tx.itervalues():
             yield From(tx.start())
         # Initialise the input stream
-        self.rx = receiver.Receiver(
+        self.rx = TelstateReceiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.rx_spead_max_streams,
             max_packet_size=self.rx_spead_max_packet_size,
@@ -1293,7 +1338,8 @@ class CBFIngest(object):
             channel_range=self.channel_ranges.subscribed,
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
-            cbf_attr=self.cbf_attr)
+            cbf_attr=self.cbf_attr,
+            telstate=self.telstate.view('{}.{}'.format(self.program_block_id, self.src_stream)))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:

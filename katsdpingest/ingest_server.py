@@ -148,10 +148,10 @@ class IngestDeviceServer(AsyncDeviceServer):
                 return ("fail", "Unknown log level specified {}".format(level))
             return ("ok", "Log level set to {}".format(level))
 
-    @request(Str(optional=True))
+    @request(Str())
     @return_reply(Str())
     @tornado.gen.coroutine
-    def request_capture_init(self, req, program_block_id=None):
+    def request_capture_init(self, req, program_block_id):
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
         if self.cbf_ingest.capturing:
@@ -161,7 +161,7 @@ class IngestDeviceServer(AsyncDeviceServer):
             raise tornado.gen.Return((
                 "fail", "Cannot start a capture session while ingest is shutting down"))
 
-        self.cbf_ingest.start()
+        self.cbf_ingest.start(program_block_id)
 
         self._my_sensors["capture-active"].set_value(1)
         smsg = "Capture initialised at %s" % time.ctime()

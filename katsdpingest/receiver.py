@@ -17,7 +17,8 @@ _logger = logging.getLogger(__name__)
 
 class Frame(object):
     """A group of xeng_raw data with a common timestamp"""
-    def __init__(self, timestamp, n_xengs):
+    def __init__(self, idx, timestamp, n_xengs):
+        self.idx = idx
         self.timestamp = timestamp
         self.items = [None] * n_xengs
 
@@ -71,8 +72,13 @@ class Receiver(object):
         Dictionary mapping CBF attribute names to value
     active_frames : int
         Value of `active_frames` passed to constructor
-    _interval : int
-        Expected timestamp change between successive frames.
+    interval : int
+        Timestamp change between successive frames.
+    timestamp_base : int
+        Timestamp associated with the frame with index 0. It is initially
+        ``None``, and is set when the first dump is received. The raw
+        timestamp of any other frame can be computed as
+        ``timestamp_base + idx * interval``.
     _frames : :class:`deque`
         Deque of :class:`Frame` objects representing incomplete frames. After
         initialization, it always contains exactly `active_frames`
@@ -114,7 +120,8 @@ class Receiver(object):
         self._frames = None
         self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
         self._futures = []
-        self._interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
+        self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
+        self.timestamp_base = 0
         self._loop = loop
         self._input_bytes = 0
         self._input_heaps = 0
@@ -162,9 +169,10 @@ class Receiver(object):
         a new frame at the other end.
         """
         xengs = len(self._frames[-1].items)
-        next_timestamp = self._frames[-1].timestamp + self._interval
+        next_idx = self._frames[-1].idx + 1
+        next_timestamp = self._frames[-1].timestamp + self.interval
         self._frames.popleft()
-        self._frames.append(Frame(next_timestamp, xengs))
+        self._frames.append(Frame(next_idx, next_timestamp, xengs))
 
     @trollius.coroutine
     def _put_frame(self, frame):
@@ -244,6 +252,20 @@ class Receiver(object):
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
+    def _first_timestamp(self, candidate):
+        """Get raw ADC timestamp of the first frame across all ingests.
+
+        This is called when the first valid dump is received for this
+        receiver, and returns the raw timestamp of the first valid dump
+        across all receivers. Note that the return value may be greater
+        than `candidate` if another receiver received a heap first but with
+        a larger timestamp.
+
+        In the base implementation, it simply returns `candidate`. Subclasses
+        may override this to implement inter-receiver communication.
+        """
+        return candidate
+
     @trollius.coroutine
     def _read_stream(self, stream, stream_idx):
         """Co-routine that sucks data from a single stream and populates
@@ -304,20 +326,21 @@ class Receiver(object):
                 self._input_bytes_sensor.set_value(self._input_bytes)
                 self._input_heaps_sensor.set_value(self._input_heaps)
                 if self._frames is None:
+                    self.timestamp_base = self._first_timestamp(data_ts)
                     self._frames = deque()
                     for i in range(self.active_frames):
-                        self._frames.append(Frame(data_ts + self._interval * i, xengs))
+                        self._frames.append(Frame(i, self.timestamp_base + self.interval * i, xengs))
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
                     _logger.warning('Timestamp %d is too far in the past, discarding '
                                     '(frequency %d)', data_ts, channel0)
                     continue
-                elif (data_ts - ts0) % self._interval != 0:
+                elif (data_ts - ts0) % self.interval != 0:
                     _logger.warning('Timestamp %d does not conform to %d + %dn, '
                                     'discarding (frequency %d)',
-                                    data_ts, ts0, self._interval, channel0)
+                                    data_ts, ts0, self.interval, channel0)
                     continue
-                while data_ts >= ts0 + self._interval * self.active_frames:
+                while data_ts >= ts0 + self.interval * self.active_frames:
                     frame = self._frames[0]
                     self._pop_frame()
                     if frame.empty():
@@ -331,7 +354,7 @@ class Receiver(object):
                     del frame   # Free it up, particularly if discarded
                     yield From(self._flush_frames())
                     ts0 = self._frames[0].timestamp
-                frame_idx = (data_ts - ts0) // self._interval
+                frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
                 yield From(self._flush_frames())
         finally:
