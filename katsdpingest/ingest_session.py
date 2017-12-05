@@ -288,9 +288,9 @@ def get_cbf_attr(telstate, cbf_name):
         Name of the baseline-correlation-products stream
     """
     cbf_attr = {}
-    prefixes = utils.cbf_telstate_prefixes(telstate, cbf_name)
+    telstate = utils.cbf_telstate_view(telstate, cbf_name)
     for attr in CBF_CRITICAL_ATTRS:
-        cbf_attr[attr] = utils.get_telstate_entry(telstate, prefixes, attr)
+        cbf_attr[attr] = telstate[attr]
         logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
     logger.info('All metadata received from telstate')
     return cbf_attr
@@ -650,22 +650,23 @@ class CBFIngest(object):
         # Put attributes into telstate. This will be done by all the ingest
         # nodes, with the same values.
         prefix = getattr(args, 'l0_{}_name'.format(arg_name))
-        self._set_telstate_entry('n_chans', len(all_output) // cont_factor, prefix)
-        self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
-        self._set_telstate_entry('n_bls', baselines, prefix)
-        self._set_telstate_entry('bls_ordering', self.bls_ordering.sdp_bls_ordering, prefix)
-        self._set_telstate_entry('sync_time', self.cbf_attr['sync_time'], prefix)
+        view = self.telstate.view(prefix)
+        utils.set_telstate_entry(view, 'n_chans', len(all_output) // cont_factor)
+        utils.set_telstate_entry(view, 'n_chans_per_substream', tx.sub_channels)
+        utils.set_telstate_entry(view, 'n_bls', baselines)
+        utils.set_telstate_entry(view, 'bls_ordering', self.bls_ordering.sdp_bls_ordering)
+        utils.set_telstate_entry(view, 'sync_time', self.cbf_attr['sync_time'])
         bandwidth = self.cbf_attr['bandwidth'] * len(all_output) / len(self.channel_ranges.cbf)
         center_freq = _convert_center_freq(self.channel_ranges.cbf,
                                            self.cbf_attr['center_freq'],
                                            self.cbf_attr['bandwidth'],
                                            all_output)
-        self._set_telstate_entry('bandwidth', bandwidth, prefix)
-        self._set_telstate_entry('center_freq', center_freq, prefix)
-        self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
-        self._set_telstate_entry('int_time', self._output_avg.int_time, prefix)
+        utils.set_telstate_entry(view, 'bandwidth', bandwidth)
+        utils.set_telstate_entry(view, 'center_freq', center_freq)
+        utils.set_telstate_entry(view, 'channel_range', all_output.astuple())
+        utils.set_telstate_entry(view, 'int_time', self._output_avg.int_time)
         if self.src_stream is not None:
-            self._set_telstate_entry('src_streams', [self.src_stream], prefix)
+            utils.set_telstate_entry(view, 'src_streams', [self.src_stream])
         self.tx[name] = tx
 
     def _init_tx(self, args):
@@ -796,8 +797,8 @@ class CBFIngest(object):
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = list(self.proc.descriptions())
-            attribute_name = args.name.replace('.', '_') + '_process_log'
-            self._set_telstate_entry(attribute_name, descriptions)
+            process_view = self.telstate.view(args.name.replace('.', '_'))
+            utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
     def enable_debug(self, debug):
         if debug:
@@ -1152,9 +1153,6 @@ class CBFIngest(object):
             done_event = self.command_queue.enqueue_marker()
             input_a.ready([done_event])
             proc_a.ready([done_event])
-
-    def _set_telstate_entry(self, name, value, prefix=None, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, prefix, attribute)
 
     @property
     def capturing(self):
