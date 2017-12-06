@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
     parser.add_argument('--cbf-interface', help='interface to subscribe to for CBF SPEAD data. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--cbf-ibv', action='store_true', help='use ibverbs acceleration for CBF SPEAD data [default=no].')
-    parser.add_argument('--cbf-name', help='name of the baseline correlation products stream [default=none]')
+    parser.add_argument('--cbf-name', help='name of the baseline correlation products stream')
     parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), help='destination for spectral L0 output. [default=do not send]', metavar='ENDPOINTS')
     parser.add_argument('--l0-spectral-interface', help='interface on which to send spectral L0 output. [default=auto]', metavar='INTERFACE')
     parser.add_argument('--l0-spectral-name', default='sdp_l0', help='telstate name of the spectral output stream', metavar='NAME')
@@ -68,6 +68,8 @@ def parse_args():
         parser.error('argument --telstate is required')
     if args.cbf_ibv and args.cbf_interface is None:
         parser.error('--cbf-ibv requires --cbf-interface')
+    if args.cbf_name is None:
+        parser.error('--cbf-name is required')
     if not 1 <= args.server_id <= args.servers:
         parser.error('--server-id is out of range')
     if args.l0_spectral_spead is None and args.l0_continuum_spead is None:

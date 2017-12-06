@@ -665,8 +665,7 @@ class CBFIngest(object):
         utils.set_telstate_entry(view, 'center_freq', center_freq)
         utils.set_telstate_entry(view, 'channel_range', all_output.astuple())
         utils.set_telstate_entry(view, 'int_time', self._output_avg.int_time)
-        if self.src_stream is not None:
-            utils.set_telstate_entry(view, 'src_streams', [self.src_stream])
+        utils.set_telstate_entry(view, 'src_streams', [self.src_stream])
         self.tx[name] = tx
 
     def _init_tx(self, args):
