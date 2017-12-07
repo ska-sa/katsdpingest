@@ -821,6 +821,7 @@ class CBFIngest(object):
         self.sd_spead_rate = args.sd_spead_rate
         self.channel_ranges = channel_ranges
         self.telstate = telstate
+        self.telstate_view = utils.cbf_telstate_view(telstate, args.cbf_name)
         self.cbf_attr = cbf_attr
         self.src_stream = args.cbf_name
 
@@ -1153,7 +1154,7 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             try:
-                channel_mask = self.telstate['cbf_channel_mask']
+                channel_mask = self.telstate_view['channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
                 static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
                 channel_flags[:] = channel_mask * np.uint8(static_flag)
@@ -1336,7 +1337,7 @@ class CBFIngest(object):
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
-            telstate=self.telstate.view('{}.{}'.format(self.program_block_id, self.src_stream)))
+            telstate=self.telstate.view('{}_{}'.format(self.program_block_id, self.src_stream)))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
