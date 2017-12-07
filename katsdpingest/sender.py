@@ -125,7 +125,7 @@ class VisSender(object):
         self._ig['weights'].value = data.weights
         self._ig['weights_channel'].value = data.weights_channel
         self._ig['timestamp'].value = ts_rel
-        self._ig['index'].value = idx
+        self._ig['dump_index'].value = idx
         self._ig['frequency'].value = self._channel0
         return trollius.async(async_send_heap(self._stream, self._ig.get_heap()))
 
