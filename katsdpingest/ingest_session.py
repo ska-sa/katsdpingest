@@ -821,7 +821,8 @@ class CBFIngest(object):
         self.sd_spead_rate = args.sd_spead_rate
         self.channel_ranges = channel_ranges
         self.telstate = telstate
-        self.telstate_view = utils.cbf_telstate_view(telstate, args.cbf_name)
+        self.telstate_cbf = utils.cbf_telstate_view(telstate, args.cbf_name)
+        self.telstate_sdisp = telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
         self.cbf_attr = cbf_attr
         self.src_stream = args.cbf_name
 
@@ -972,19 +973,18 @@ class CBFIngest(object):
         signal display data to the signal display server"""
         custom_signals_indices = None
         full_mask = None
-        if self.telstate is not None:
-            try:
-                custom_signals_indices = np.array(
-                    self.telstate['sdp_sdisp_custom_signals'],
-                    dtype=np.uint32, copy=False)
-            except KeyError:
-                pass
-            try:
-                full_mask = np.array(
-                    self.telstate['sdp_sdisp_timeseries_mask'],
-                    dtype=np.float32, copy=False)
-            except KeyError:
-                pass
+        try:
+            custom_signals_indices = np.array(
+                self.telstate_sdisp['sdisp_custom_signals'],
+                dtype=np.uint32, copy=False)
+        except KeyError:
+            pass
+        try:
+            full_mask = np.array(
+                self.telstate_sdisp['sdisp_timeseries_mask'],
+                dtype=np.float32, copy=False)
+        except KeyError:
+            pass
 
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
@@ -1084,7 +1084,7 @@ class CBFIngest(object):
                 self.ig_sd['sd_data_index'].value = custom_signals_indices
                 self.ig_sd['sd_flags'].value = spec_flags[spec_channels, custom_signals_indices]
             else:
-                logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                logger.warn('sdisp_custom_signals out of range, not updating (%s)',
                             custom_signals_indices)
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
@@ -1154,7 +1154,7 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             try:
-                channel_mask = self.telstate_view['channel_mask']
+                channel_mask = self.telstate_cbf['channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
                 static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
                 channel_flags[:] = channel_mask * np.uint8(static_flag)
