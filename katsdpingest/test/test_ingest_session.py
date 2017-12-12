@@ -43,23 +43,27 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
 
 class TestGetCbfAttr(object):
     def setup(self):
-        self.telstate = OrderedDict({
-            'cbf_i0_bandwidth': 856000000.0,
-            'cbf_i0_sync_time': 1234567890.0,
-            'cbf_i0_adc_sample_rate': 1712000000.0,
-            'cbf_i0_scale_factor_timestamp': 1712000000.0,
-            'cbf_i0_antenna_channelised_voltage_instrument_dev_name': 'i0',
-            'cbf_i0_antenna_channelised_voltage_n_chans': 262144,  # Different, to check precedence
-            'cbf_i0_antenna_channelised_voltage_center_freq': 1284000000.0,
-            'cbf_i0_antenna_channelised_voltage_ticks_between_spectra': 8192,
-            'cbf_i1_baseline_correlation_products_src_streams': ['i0_antenna_channelised_voltage'],
-            'cbf_i1_baseline_correlation_products_instrument_dev_name': 'i1',
-            'cbf_i1_baseline_correlation_products_int_time': 0.499,
-            'cbf_i1_baseline_correlation_products_n_chans': 4096,
-            'cbf_i1_baseline_correlation_products_n_chans_per_substream': 256,
-            'cbf_i1_baseline_correlation_products_n_accs': 104448,
-            'cbf_i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')]
-        })
+        values = {
+            'i0_bandwidth': 856000000.0,
+            'i0_sync_time': 1234567890.0,
+            'i0_adc_sample_rate': 1712000000.0,
+            'i0_scale_factor_timestamp': 1712000000.0,
+            'i0_antenna_channelised_voltage_instrument_dev_name': 'i0',
+            'i0_antenna_channelised_voltage_n_chans': 262144,  # Different, to check precedence
+            'i0_antenna_channelised_voltage_center_freq': 1284000000.0,
+            'i0_antenna_channelised_voltage_ticks_between_spectra': 8192,
+            'i1_baseline_correlation_products_src_streams': ['i0_antenna_channelised_voltage'],
+            'i1_baseline_correlation_products_instrument_dev_name': 'i1',
+            'i1_baseline_correlation_products_int_time': 0.499,
+            'i1_baseline_correlation_products_n_chans': 4096,
+            'i1_baseline_correlation_products_n_chans_per_substream': 256,
+            'i1_baseline_correlation_products_n_accs': 104448,
+            'i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')]
+        }
+        self.telstate = TelescopeState()
+        self.telstate.clear()
+        for key, value in values.iteritems():
+            self.telstate.add(key, value, immutable=True)
         self.expected = {
             'adc_sample_rate': 1712000000.0,
             'n_chans': 4096,
@@ -74,23 +78,8 @@ class TestGetCbfAttr(object):
             'ticks_between_spectra': 8192
         }
 
-    def _collapse_name(self, name):
-        name = name.replace('i1_baseline_correlation_products_', '')
-        name = name.replace('i0_antenna_channelised_voltage_', '')
-        name = name.replace('i0_', '')
-        return name
-
-    def test_named(self):
+    def test(self):
         attrs = ingest_session.get_cbf_attr(self.telstate, 'i1_baseline_correlation_products')
-        assert_equal(self.expected, attrs)
-
-    def test_compat(self):
-        flat = {}
-        # telstate needs to be an ordered dict so that conflicts are resolved
-        # deterministically.
-        for key, value in self.telstate.items():
-            flat[self._collapse_name(key)] = value
-        attrs = ingest_session.get_cbf_attr(flat, None)
         assert_equal(self.expected, attrs)
 
 

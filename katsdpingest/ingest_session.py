@@ -302,9 +302,9 @@ def get_cbf_attr(telstate, cbf_name):
         Name of the baseline-correlation-products stream
     """
     cbf_attr = {}
-    prefixes = utils.cbf_telstate_prefixes(telstate, cbf_name)
+    telstate = utils.cbf_telstate_view(telstate, cbf_name)
     for attr in CBF_CRITICAL_ATTRS:
-        cbf_attr[attr] = utils.get_telstate_entry(telstate, prefixes, attr)
+        cbf_attr[attr] = telstate[attr]
         logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
     logger.info('All metadata received from telstate')
     return cbf_attr
@@ -693,22 +693,22 @@ class CBFIngest(object):
         # Put attributes into telstate. This will be done by all the ingest
         # nodes, with the same values.
         prefix = getattr(args, 'l0_{}_name'.format(arg_name))
-        self._set_telstate_entry('n_chans', len(all_output) // cont_factor, prefix)
-        self._set_telstate_entry('n_chans_per_substream', tx.sub_channels, prefix)
-        self._set_telstate_entry('n_bls', baselines, prefix)
-        self._set_telstate_entry('bls_ordering', self.bls_ordering.sdp_bls_ordering, prefix)
-        self._set_telstate_entry('sync_time', self.cbf_attr['sync_time'], prefix)
+        view = self.telstate.view(prefix)
+        utils.set_telstate_entry(view, 'n_chans', len(all_output) // cont_factor)
+        utils.set_telstate_entry(view, 'n_chans_per_substream', tx.sub_channels)
+        utils.set_telstate_entry(view, 'n_bls', baselines)
+        utils.set_telstate_entry(view, 'bls_ordering', self.bls_ordering.sdp_bls_ordering)
+        utils.set_telstate_entry(view, 'sync_time', self.cbf_attr['sync_time'])
         bandwidth = self.cbf_attr['bandwidth'] * len(all_output) / len(self.channel_ranges.cbf)
         center_freq = _convert_center_freq(self.channel_ranges.cbf,
                                            self.cbf_attr['center_freq'],
                                            self.cbf_attr['bandwidth'],
                                            all_output)
-        self._set_telstate_entry('bandwidth', bandwidth, prefix)
-        self._set_telstate_entry('center_freq', center_freq, prefix)
-        self._set_telstate_entry('channel_range', all_output.astuple(), prefix)
-        self._set_telstate_entry('int_time', int_time, prefix)
-        if self.src_stream is not None:
-            self._set_telstate_entry('src_streams', [self.src_stream], prefix)
+        utils.set_telstate_entry(view, 'bandwidth', bandwidth, prefix)
+        utils.set_telstate_entry(view, 'center_freq', center_freq, prefix)
+        utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)
+        utils.set_telstate_entry(view, 'int_time', int_time, prefix)
+        utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
         self.tx[name] = tx
 
     def _init_tx(self, args):
@@ -821,6 +821,8 @@ class CBFIngest(object):
         self.sd_spead_rate = args.sd_spead_rate
         self.channel_ranges = channel_ranges
         self.telstate = telstate
+        self.telstate_cbf = utils.cbf_telstate_view(telstate, args.cbf_name)
+        self.telstate_sdisp = telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
         self.cbf_attr = cbf_attr
         self.src_stream = args.cbf_name
 
@@ -839,8 +841,8 @@ class CBFIngest(object):
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = list(self.proc.descriptions())
-            attribute_name = args.name.replace('.', '_') + '_process_log'
-            self._set_telstate_entry(attribute_name, descriptions)
+            process_view = self.telstate.view(args.name.replace('.', '_'))
+            utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
     def enable_debug(self, debug):
         if debug:
@@ -971,19 +973,18 @@ class CBFIngest(object):
         signal display data to the signal display server"""
         custom_signals_indices = None
         full_mask = None
-        if self.telstate is not None:
-            try:
-                custom_signals_indices = np.array(
-                    self.telstate['sdp_sdisp_custom_signals'],
-                    dtype=np.uint32, copy=False)
-            except KeyError:
-                pass
-            try:
-                full_mask = np.array(
-                    self.telstate['sdp_sdisp_timeseries_mask'],
-                    dtype=np.float32, copy=False)
-            except KeyError:
-                pass
+        try:
+            custom_signals_indices = np.array(
+                self.telstate_sdisp['sdisp_custom_signals'],
+                dtype=np.uint32, copy=False)
+        except KeyError:
+            pass
+        try:
+            full_mask = np.array(
+                self.telstate_sdisp['sdisp_timeseries_mask'],
+                dtype=np.float32, copy=False)
+        except KeyError:
+            pass
 
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
@@ -1083,7 +1084,7 @@ class CBFIngest(object):
                 self.ig_sd['sd_data_index'].value = custom_signals_indices
                 self.ig_sd['sd_flags'].value = spec_flags[spec_channels, custom_signals_indices]
             else:
-                logger.warn('sdp_sdisp_custom_signals out of range, not updating (%s)',
+                logger.warn('sdisp_custom_signals out of range, not updating (%s)',
                             custom_signals_indices)
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
@@ -1153,7 +1154,7 @@ class CBFIngest(object):
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             try:
-                channel_mask = self.telstate['cbf_channel_mask']
+                channel_mask = self.telstate_cbf['channel_mask']
                 channel_mask = channel_mask[self.channel_ranges.input.asslice()]
                 static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
                 channel_flags[:] = channel_mask * np.uint8(static_flag)
@@ -1195,9 +1196,6 @@ class CBFIngest(object):
             done_event = self.command_queue.enqueue_marker()
             input_a.ready([done_event])
             proc_a.ready([done_event])
-
-    def _set_telstate_entry(self, name, value, prefix=None, attribute=True):
-        utils.set_telstate_entry(self.telstate, name, value, prefix, attribute)
 
     @property
     def capturing(self):
@@ -1339,7 +1337,7 @@ class CBFIngest(object):
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
-            telstate=self.telstate.view('{}.{}'.format(self.program_block_id, self.src_stream)))
+            telstate=self.telstate.view('{}_{}'.format(self.program_block_id, self.src_stream)))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:

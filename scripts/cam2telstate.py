@@ -126,8 +126,6 @@ class Sensor(object):
         return ans
 
 
-#: Stream types affected by --collapse-streams
-COLLAPSE_TYPES = frozenset(['cbf.baseline_correlation_products', 'cbf.antenna_channelised_voltage'])
 #: Templates for sensors
 SENSORS = [
     # Receptor sensors
@@ -215,8 +213,6 @@ def parse_args():
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
                         help='Namespace to create in katportal [sp_subarray_N]')
-    parser.add_argument('--collapse-streams', action='store_true',
-                        help='Collapse instrument and stream prefixes for compatibility with AR1.')
     parser.add_argument('-a', '--host', type=str, metavar='HOST', default='',
                         help='Hostname to bind for katcp interface')
     parser.add_argument('-p', '--port', type=int, metavar='N', default=2047,
@@ -303,17 +299,13 @@ class Client(object):
             # Add the per instrument specific sensors for every instrument we know about
             for instrument in self._instruments:
                 cam_instrument = "{}_{}".format(cam_prefix, instrument)
-                sdp_instruments = ["cbf_" + instrument]
-                if self._args.collapse_streams:
-                    sdp_instruments.append("cbf")
+                sdp_instruments = [instrument]
                 substitutions['instrument'].append((cam_instrument, sdp_instruments))
             # For each stream we add type specific sensors
             for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
                 cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
                 cam_sub_stream = "{}_streams_{}".format(self._sub_name, full_stream_name)
-                sdp_streams = ["cbf_" + full_stream_name]
-                if self._args.collapse_streams and stream_type in COLLAPSE_TYPES:
-                    sdp_streams.append("cbf")
+                sdp_streams = [full_stream_name]
                 substitutions['stream'].append((cam_stream, sdp_streams))
                 substitutions['stream.' + stream_type].append((cam_stream, sdp_streams))
                 substitutions['sub_stream'].append((cam_sub_stream, sdp_streams))
