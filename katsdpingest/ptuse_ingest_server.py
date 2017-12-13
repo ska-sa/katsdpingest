@@ -618,7 +618,7 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
 
     @request(Str(optional=True))
     @return_reply()
-    def request_capture_init(self, sock, program_block_id=None):
+    def request_capture_init(self, sock, capture_block_id=None):
         """Start capture to file."""
         if self.capturing:
             return ('fail', 'already capturing')
