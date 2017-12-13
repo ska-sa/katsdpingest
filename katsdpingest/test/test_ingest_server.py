@@ -412,7 +412,7 @@ class TestIngestDeviceServer(object):
     @tornado.gen.coroutine
     def test_capture(self):
         """Test the core data capture process."""
-        yield self.make_request('capture-init', 'pb1')
+        yield self.make_request('capture-init', 'cb1')
         yield self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48)
         l0_int_time = 8 * self.cbf_attr['int_time']
@@ -476,8 +476,8 @@ class TestIngestDeviceServer(object):
     @tornado.gen.coroutine
     def test_init_when_capturing(self):
         """Calling capture-init when capturing fails"""
-        yield self.make_request('capture-init', 'pb1')
-        yield self.assert_request_fails(r'Existing capture session found', 'capture-init', 'pb2')
+        yield self.make_request('capture-init', 'cb1')
+        yield self.assert_request_fails(r'Existing capture session found', 'capture-init', 'cb2')
         yield self.make_request('capture-done')
 
     @async_test
@@ -498,7 +498,7 @@ class TestIngestDeviceServer(object):
         yield self.make_request('add-sdisp-ip', '127.0.0.4')
         # A duplicate
         yield self.make_request('add-sdisp-ip', '127.0.0.3:8001')
-        yield self.make_request('capture-init', 'pb1')
+        yield self.make_request('capture-init', 'cb1')
         yield self.make_request('capture-done')
         assert_equal([('127.0.0.2', 7149), ('127.0.0.3', 8000), ('127.0.0.4', 7149)],
                      list(sorted(self._sd_tx.keys())))
@@ -512,7 +512,7 @@ class TestIngestDeviceServer(object):
     def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
         yield self.make_request('drop-sdisp-ip', '127.0.0.2')
-        yield self.make_request('capture-init', 'pb1')
+        yield self.make_request('capture-init', 'cb1')
         yield self.make_request('capture-done')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         sd_tx.async_send_heap.assert_not_called()
@@ -522,7 +522,7 @@ class TestIngestDeviceServer(object):
     def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
         self._pauses = {10: trollius.Future()}
-        yield self.make_request('capture-init', 'pb1')
+        yield self.make_request('capture-init', 'cb1')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for
         # the signal display data to be sent.
