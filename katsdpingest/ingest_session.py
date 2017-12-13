@@ -497,8 +497,8 @@ class CBFIngest(object):
         Baseline ordering and related tables
     telstate : :class:`katsdptelstate.TelescopeState`
         Global view of telescope state
-    program_block_id : str
-        Current program block ID, or ``None`` if not capturing
+    capture_block_id : str
+        Current capture block ID, or ``None`` if not capturing
     """
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
@@ -1201,12 +1201,12 @@ class CBFIngest(object):
     def capturing(self):
         return self._run_future is not None
 
-    def start(self, program_block_id):
+    def start(self, capture_block_id):
         assert self._run_future is None
         assert self.rx is None
         assert self._stopped
         self._stopped = False
-        self.program_block_id = program_block_id
+        self.capture_block_id = capture_block_id
         self._run_future = trollius.async(self.run())
 
     @trollius.coroutine
@@ -1240,7 +1240,7 @@ class CBFIngest(object):
             if self._run_future is future:
                 ret = True
                 self._run_future = None
-                self.program_block_id = None
+                self.capture_block_id = None
                 self.rx = None
         raise Return(ret)
 
@@ -1337,7 +1337,7 @@ class CBFIngest(object):
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
-            telstate=self.telstate.view('{}_{}'.format(self.program_block_id, self.src_stream)))
+            telstate=self.telstate.view('{}_{}'.format(self.capture_block_id, self.src_stream)))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
