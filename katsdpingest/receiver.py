@@ -289,6 +289,7 @@ class Receiver(object):
                     _logger.debug("%d/%d endpoints stopped on stream %d",
                                  n_stop, n_endpoints, stream_idx)
                     if n_stop == n_endpoints:
+                        stream.stop()
                         break
                     else:
                         continue
