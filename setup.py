@@ -92,7 +92,7 @@ setup(
         'futures',
         'manhole',
         'numpy',
-        'spead2>=1.3.1',   # Need fix for add_udp_ibv_reader with multiple endpoints
+        'spead2>=1.5.0',   # Needed for stop_on_stop_item
         'ipaddress',
         'katcp',
         'katsdpsigproc',
