@@ -46,12 +46,10 @@ class QueueStream(object):
         encoder.send_heap(heap)
         raw = encoder.getvalue()
         decoder = spead2.recv.Stream(tp)
+        decoder.stop_on_stop_item = False
         decoder.add_buffer_reader(raw)
-        try:
-            heap = decoder.get()
-            self._queue.put_nowait(heap)
-        except spead2.Stopped:
-            self.stop()
+        heap = decoder.get()
+        self._queue.put_nowait(heap)
 
     @classmethod
     def get_instance(cls, multicast_group, port, loop=None):

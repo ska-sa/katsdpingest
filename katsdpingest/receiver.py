@@ -141,7 +141,7 @@ class Receiver(object):
             self._streams.append(self._make_stream(use_endpoints[first:last],
                                                    max_packet_size, stream_buffer_size))
             self._futures.append(trollius.async(
-                self._read_stream(self._streams[-1], i), loop=loop))
+                self._read_stream(self._streams[-1], i, last - first), loop=loop))
         self._running = n_streams
 
     def stop(self):
@@ -249,6 +249,7 @@ class Receiver(object):
                                         memory_pool_heaps, memory_pool_heaps)
         stream.set_memory_allocator(memory_pool)
         stream.set_memcpy(spead2.MEMCPY_NONTEMPORAL)
+        stream.stop_on_stop_item = False
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
@@ -267,7 +268,7 @@ class Receiver(object):
         return candidate
 
     @trollius.coroutine
-    def _read_stream(self, stream, stream_idx):
+    def _read_stream(self, stream, stream_idx, n_endpoints):
         """Co-routine that sucks data from a single stream and populates
         :attr:`_frames_complete`."""
         try:
@@ -277,11 +278,20 @@ class Receiver(object):
             ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
             ts_wrap_period = 2**48
             ig_cbf = spead2.ItemGroup()
+            n_stop = 0
             while True:
                 try:
                     heap = yield From(stream.get())
                 except spead2.Stopped:
                     break
+                if heap.is_end_of_stream():
+                    n_stop += 1
+                    _logger.debug("%d/%d endpoints stopped on stream %d",
+                                 n_stop, n_endpoints, stream_idx)
+                    if n_stop == n_endpoints:
+                        break
+                    else:
+                        continue
                 updated = ig_cbf.update(heap)
                 if 'xeng_raw' not in updated:
                     _logger.debug("CBF non-data heap received on stream %d", stream_idx)
