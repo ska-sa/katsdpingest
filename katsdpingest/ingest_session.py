@@ -1226,7 +1226,7 @@ class CBFIngest(object):
             self._stopped = True
             future = self._run_future
             # Give it a chance to stop on its own (due to stop items)
-            logger.info('Waiting for run to stop...')
+            logger.info('Waiting for run to stop (5s timeout)...')
             done, _ = yield From(trollius.wait([future], timeout=5))
             if future not in done:
                 logger.info('Stopping receiver...')
