@@ -1224,12 +1224,16 @@ class CBFIngest(object):
         ret = False
         if self.capturing:
             self._stopped = True
-            if self.rx is not None:
-                logger.info('Stopping receiver...')
-                self.rx.stop()
-            logger.info('Waiting for run to stop...')
             future = self._run_future
-            yield From(future)
+            # Give it a chance to stop on its own (due to stop items)
+            logger.info('Waiting for run to stop (5s timeout)...')
+            done, _ = yield From(trollius.wait([future], timeout=5))
+            if future not in done:
+                logger.info('Stopping receiver...')
+                if self.rx is not None:
+                    self.rx.stop()
+                logger.info('Waiting for run to stop...')
+                yield From(future)
             logger.info('Run stopped')
             # If multiple callers arrive here, we want only the first to
             # return True and clean up. We also need to protect against a prior
@@ -1337,7 +1341,8 @@ class CBFIngest(object):
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
-            telstate=self.telstate.view('{}_{}'.format(self.capture_block_id, self.src_stream)))
+            telstate=self.telstate.view(
+                self.telstate.SEPARATOR.join([self.capture_block_id, self.src_stream])))
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
