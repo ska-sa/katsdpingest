@@ -20,6 +20,7 @@ catchError {
                 deleteDir()
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
+                katsdp.unpackKatsdpdockerbase()
                 katsdp.virtualenv('venv') {
                     dir('git') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
@@ -35,6 +36,7 @@ catchError {
         katsdp.simpleNode {
             deleteDir()
             katsdp.unpackGit()
+            katsdp.unpackKatsdpdockerbase()
             katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
         }
     }
