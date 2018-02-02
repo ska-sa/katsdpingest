@@ -129,7 +129,7 @@ class Sensor(object):
 #: Templates for sensors
 SENSORS = [
     # Receptor sensors
-    Sensor('${receptor}_observer'),
+    Sensor('${receptor}_observer', immutable=True),
     Sensor('${receptor}_activity'),
     Sensor('${receptor}_target'),
     Sensor('${receptor}_pos_request_scan_azim', sampling_strategy_and_params='period 0.4'),
@@ -138,22 +138,19 @@ SENSORS = [
     Sensor('${receptor}_pos_actual_scan_elev', sampling_strategy_and_params='period 0.4'),
     Sensor('${receptor}_pos_adjust_pointm_azim'),
     Sensor('${receptor}_pos_adjust_pointm_elev'),
-    # XXX This should be removed once we are fully switched to new-style
-    # digitiser sensor names
-    Sensor('${receptor}_dig_noise_diode'),
     Sensor('${receptor}_${digitiser}_noise_diode'),
     Sensor('${receptor}_ap_indexer_position'),
     Sensor('${receptor}_ap_point_error_tiltmeter_enabled'),
     Sensor('${receptor}_ap_tilt_corr_azim'),
     Sensor('${receptor}_ap_tilt_corr_elev'),
-    Sensor('${receptor}_${receiver}_serial_number'),
+    Sensor('${receptor}_${receiver}_serial_number', immutable=True),
     Sensor('${receptor}_data_suspect'),
     Sensor('${receptor}_ap_version_list', immutable=True),
     # CBF proxy sensors
     Sensor('${cbf}_target'),
     Sensor('${cbf}_auto_delay_enabled'),
     Sensor('${cbf}_input_labels', immutable=True, convert=comma_split),
-    Sensor('${cbf}_loaded_delay_correction'),
+    Sensor('${cbf}_loaded_delay_correction', immutable=True),
     Sensor('${cbf}_delay_centre_frequency'),
     Sensor('${cbf}_delay_adjustments', convert=json.loads),
     Sensor('${cbf}_pos_request_offset_azim', sampling_strategy_and_params='period 0.4'),
