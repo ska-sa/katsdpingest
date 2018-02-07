@@ -51,8 +51,8 @@ class MockReceiver(object):
                  endpoints, interface_address, ibv,
                  max_streams, max_packet_size, buffer_size,
                  channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=2, loop=None, telstate=None,
-                 pauses=None):
+                 cbf_attr, active_frames=2, loop=None, telstates=None,
+                 l0_int_time=None, pauses=None):
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
         self._data = data

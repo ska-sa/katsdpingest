@@ -447,24 +447,36 @@ class BaselineOrdering(object):
 
 
 class TelstateReceiver(receiver.Receiver):
-    """Receiver that uses telescope state to coordinate a shared first dump timestamp
+    """Receiver that uses telescope state to coordinate a shared first dump timestamp.
+
+    It supports multiple telescope states (typically views on the same backing
+    store), and puts the key in all of them. This critically depends on all instances
+    using the same ordering to avoid race conditions.
 
     Parameters
     ----------
-    telstate : :class:`katsdptelstate.TelescopeState`
-        A telescope state view with a scope that is unique to the receiver instance.
+    telstates : list of :class:`katsdptelstate.TelescopeState`
+        Telescope state views with scopes unique to the capture session (but shared
+        across cooperating ingest servers).
+    l0_int_time : float
+        Output integration time
     """
     def __init__(self, *args, **kwargs):
-        self._telstate = kwargs.pop('telstate')
+        self._telstates = kwargs.pop('telstates')
+        self._l0_int_time = kwargs.pop('l0_int_time')
         super(TelstateReceiver, self).__init__(*args, **kwargs)
 
     def _first_timestamp(self, candidate):
+        scaled = candidate / self.cbf_attr['scale_factor_timestamp'] + 0.5 * self._l0_int_time
         try:
-            self._telstate.add('first_timestamp', candidate, immutable=True)
+            for telstate in self._telstates:
+                telstate.add('first_timestamp_adc', candidate, immutable=True)
+                telstate.add('first_timestamp', scaled, immutable=True)
             return candidate
         except katsdptelstate.ImmutableKeyError:
             # A different ingest process beat us to it. Use its value.
-            return self._telstate.get('first_timestamp')
+            # That other process will fill in the remaining values
+            return self._telstates[0].get('first_timestamp_adc')
 
 
 class CBFIngest(object):
@@ -497,6 +509,8 @@ class CBFIngest(object):
         Baseline ordering and related tables
     telstate : :class:`katsdptelstate.TelescopeState`
         Global view of telescope state
+    l0_names : list of str
+        Stream names of the L0 stream, for those streams being transmitted
     capture_block_id : str
         Current capture block ID, or ``None`` if not capturing
     """
@@ -710,9 +724,11 @@ class CBFIngest(object):
         utils.set_telstate_entry(view, 'int_time', int_time, prefix)
         utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
         self.tx[name] = tx
+        self.l0_names.append(prefix)
 
     def _init_tx(self, args):
         self.tx = {}
+        self.l0_names = []
         self._init_tx_one(args, 'spectral', 'spec', 1)
         self._init_tx_one(args, 'continuum', 'cont', self.channel_ranges.cont_factor)
 
@@ -1332,6 +1348,9 @@ class CBFIngest(object):
         for tx in self.tx.itervalues():
             yield From(tx.start())
         # Initialise the input stream
+        prefixes = [self.telstate.SEPARATOR.join([self.capture_block_id, l0_name])
+                    for l0_name in self.l0_names]
+        telstates = [self.telstate.view(prefix) for prefix in prefixes]
         self.rx = TelstateReceiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.rx_spead_max_streams,
@@ -1341,8 +1360,8 @@ class CBFIngest(object):
             cbf_channels=len(self.channel_ranges.cbf),
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
-            telstate=self.telstate.view(
-                self.telstate.SEPARATOR.join([self.capture_block_id, self.src_stream])))
+            telstates=telstates,
+            l0_int_time = self.cbf_attr['int_time'] * self._output_avg.ratio)
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:

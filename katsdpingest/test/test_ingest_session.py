@@ -136,18 +136,25 @@ class TestTelstateReceiver(object):
         # We don't want to bother setting up a valid Receiver base class, we
         # just want to test the subclass, so we mock in a different base.
         class DummyBase(object):
-            pass
+            def __init__(self, cbf_attr):
+                self.cbf_attr = cbf_attr
 
         patcher = mock.patch.object(ingest_session.TelstateReceiver, '__bases__', (DummyBase,))
         with patcher:
             patcher.is_local = True   # otherwise mock tries to delete __bases__
-            receiver = ingest_session.TelstateReceiver(telstate=self.telstate)
+            cbf_attr = {'scale_factor_timestamp': 4.0}
+            receiver = ingest_session.TelstateReceiver(cbf_attr=cbf_attr,
+                                                       telstates=[self.telstate],
+                                                       l0_int_time=3.0)
             # Set first value
             assert_equal(12345, receiver._first_timestamp(12345))
             # Try a different value, first value must stick
             assert_equal(12345, receiver._first_timestamp(54321))
             # Set same value
             assert_equal(12345, receiver._first_timestamp(12345))
+            # Check the telstate keys
+            assert_equal(12345, self.telstate['first_timestamp_adc'])
+            assert_equal(3087.75, self.telstate['first_timestamp'])
 
 
 class TestCBFIngest(object):
