@@ -3,6 +3,7 @@ backports-abc
 backports.ssl-match-hostname
 certifi
 Cython
+dask==0.17.0
 decorator
 enum34
 fakenewsredis
@@ -46,6 +47,7 @@ scipy
 singledispatch
 six
 spead2
+toolz==0.9.0
 tornado
 traceback2
 trollius
