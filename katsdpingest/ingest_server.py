@@ -13,6 +13,7 @@ from katsdpsigproc import accel
 
 import katsdpingest
 from .ingest_session import CBFIngest
+from . import receiver
 
 
 logger = logging.getLogger(__name__)
@@ -77,8 +78,17 @@ class IngestDeviceServer(AsyncDeviceServer):
             Sensor(
                 Sensor.INTEGER, "output-dumps-total",
                 "Number of payload dumps sent on L0 in this session",
-                "", default=0)
+                "", default=0),
+            Sensor(
+                Sensor.BOOLEAN, "descriptors-received",
+                "Whether the SPEAD descriptors have been received",
+                "", default=False)
         ]
+        for key, value in receiver.REJECT_HEAP_TYPES.items():
+            sensors.append(Sensor(
+                Sensor.INTEGER, "input-" + key + "-heaps-total",
+                "Number of heaps rejected because " + value,
+                "", default=0))
         self._my_sensors = {sensor.name: sensor for sensor in sensors}
 
         # create the device resources
@@ -97,8 +107,10 @@ class IngestDeviceServer(AsyncDeviceServer):
             # take care of basic defaults to ensure sensor status is 'nominal'
             if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
                 self._my_sensors[sensor].set_value("")
-            if self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
+            elif self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
                 self._my_sensors[sensor].set_value(0)
+            elif self._my_sensors[sensor]._sensor_type == Sensor.BOOLEAN:
+                self._my_sensors[sensor].set_value(False)
         self._my_sensors["status"].set_value("init")
         self._my_sensors["device-status"].set_value("ok")
 

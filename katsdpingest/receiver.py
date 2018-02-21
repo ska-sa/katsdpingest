@@ -3,16 +3,33 @@
 from __future__ import print_function, absolute_import, division
 import logging
 from collections import deque
+
+import katcp
 import spead2
+import spead2.recv
 import spead2.recv.trollius
 import trollius
 from trollius import From, Return
 import numpy as np
 from katsdptelstate.endpoint import endpoints_to_str
-from .utils import Range
+
+from .utils import Range, SensorWrapper
 
 
 _logger = logging.getLogger(__name__)
+
+
+REJECT_HEAP_TYPES = {
+    'incomplete': 'incomplete',
+    'no-descriptor': 'descriptors not yet received',
+    'bad-timestamp': 'timestamp not aligned to integration boundary',
+    'too-old': 'timestamp is prior to the start time',
+    'bad-channel': 'channel offset is not aligned to the substreams'
+}
+
+
+def _warn_if_positive(value):
+    return katcp.Sensor.WARN if value > 0 else katcp.Sensor.NOMINAL
 
 
 class Frame(object):
@@ -92,6 +109,9 @@ class Receiver(object):
         Futures associated with each call to :meth:`_read_stream`
     _streams : list of :class:`spead2.recv.trollius.Stream`
         Individual SPEAD streams
+    _stopping : bool
+        Set to try by stop(). Note that some streams may still be running
+        (:attr:`_running` > 0) at the same time.
     """
     def __init__(self, endpoints, interface_address, ibv,
                  max_streams, max_packet_size, buffer_size,
@@ -120,18 +140,19 @@ class Receiver(object):
         self._frames = None
         self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
         self._futures = []
+        self._stopping = False
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.timestamp_base = 0
         self._loop = loop
-        self._input_bytes = 0
-        self._input_heaps = 0
-        self._input_dumps = 0
-        self._input_bytes_sensor = sensors['input-bytes-total']
-        self._input_bytes_sensor.set_value(0)
-        self._input_heaps_sensor = sensors['input-heaps-total']
-        self._input_heaps_sensor.set_value(0)
-        self._input_dumps_sensor = sensors['input-dumps-total']
-        self._input_dumps_sensor.set_value(0)
+        self._ig_cbf = spead2.ItemGroup()
+
+        self._input_bytes = SensorWrapper(sensors['input-bytes-total'], 0)
+        self._input_heaps = SensorWrapper(sensors['input-heaps-total'], 0)
+        self._input_dumps = SensorWrapper(sensors['input-dumps-total'], 0)
+        self._descriptors_received = SensorWrapper(sensors['descriptors-received'], False)
+        self._reject_heaps = {name: SensorWrapper(sensors['input-' + name + '-heaps-total'], 0,
+                                                  _warn_if_positive)
+                              for name in REJECT_HEAP_TYPES}
 
         n_streams = min(max_streams, len(use_endpoints))
         stream_buffer_size = buffer_size // n_streams
@@ -146,6 +167,7 @@ class Receiver(object):
 
     def stop(self):
         """Stop all the individual streams."""
+        self._stopping = True
         for stream in self._streams:
             if stream is not None:
                 stream.stop()
@@ -177,8 +199,7 @@ class Receiver(object):
     @trollius.coroutine
     def _put_frame(self, frame):
         """Put a frame onto :attr:`_frames_complete` and update the sensor."""
-        self._input_dumps += 1
-        self._input_dumps_sensor.set_value(self._input_dumps)
+        self._input_dumps.value += 1
         yield From(self._frames_complete.put(frame))
 
     @trollius.coroutine
@@ -244,7 +265,8 @@ class Receiver(object):
         stream = spead2.recv.trollius.Stream(
             spead2.ThreadPool(),
             max_heaps=max_heaps,
-            ring_heaps=ring_heaps, loop=self._loop)
+            ring_heaps=ring_heaps, loop=self._loop,
+            contiguous_only=False)
         memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                         memory_pool_heaps, memory_pool_heaps)
         stream.set_memory_allocator(memory_pool)
@@ -277,7 +299,6 @@ class Receiver(object):
             prev_ts = None
             ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
             ts_wrap_period = 2**48
-            ig_cbf = spead2.ItemGroup()
             n_stop = 0
             while True:
                 try:
@@ -293,7 +314,25 @@ class Receiver(object):
                         break
                     else:
                         continue
-                updated = ig_cbf.update(heap)
+                elif isinstance(heap, spead2.recv.IncompleteHeap):
+                    # Don't warn if we've already been asked to stop. There may
+                    # be some heaps still in the network at the time we were
+                    # asked to stop.
+                    if not self._stopping:
+                        _logger.debug('dropped incomplete heap %d (%d/%d bytes of payload)',
+                                      heap.cnt, heap.received_length, heap.heap_length)
+                        self._reject_heaps['incomplete'].value += 1
+                    continue
+                elif not self._descriptors_received.value and not heap.get_descriptors():
+                    _logger.debug('Received non-descriptor heap before descriptors')
+                    self._reject_heaps['no-descriptor'].value += 1
+                    continue
+                updated = self._ig_cbf.update(heap)
+                # The _ig_cbf is shared between streams, so we need to use the values
+                # before next yielding.
+                if not self._descriptors_received.value and 'xeng_raw' in self._ig_cbf:
+                    # This heap added the descriptors
+                    self._descriptors_received.value = True
                 if 'xeng_raw' not in updated:
                     _logger.debug("CBF non-data heap received on stream %d", stream_idx)
                     continue
@@ -307,12 +346,13 @@ class Receiver(object):
                 heap_channel_range = Range(channel0, channel0 + heap_channels)
                 if not (heap_channel_range.isaligned(heap_channels) and
                         heap_channel_range.issubset(self.channel_range)):
-                    _logger.warning("CBF heap with invalid channel %d on stream %d", channel0, stream_idx)
+                    _logger.debug("CBF heap with invalid channel %d on stream %d", channel0, stream_idx)
+                    self._reject_heaps['bad-channel'].value += 1
                     continue
                 xeng_idx = (channel0 - self.channel_range.start) // heap_channels
 
-                data_ts = ig_cbf['timestamp'].value + ts_wrap_offset
-                data_item = ig_cbf['xeng_raw'].value
+                data_ts = self._ig_cbf['timestamp'].value + ts_wrap_offset
+                data_item = self._ig_cbf['xeng_raw'].value
                 if prev_ts is not None and data_ts < prev_ts - ts_wrap_period // 2:
                     # This happens either because packets ended up out-of-order,
                     # or because the CBF timestamp wrapped. Out-of-order should
@@ -332,10 +372,8 @@ class Receiver(object):
                 prev_ts = data_ts
                 # we have new data...
 
-                self._input_bytes += data_item.nbytes
-                self._input_heaps += 1
-                self._input_bytes_sensor.set_value(self._input_bytes)
-                self._input_heaps_sensor.set_value(self._input_heaps)
+                self._input_bytes.value += data_item.nbytes
+                self._input_heaps.value += 1
                 if self._frames is None:
                     self.timestamp_base = self._first_timestamp(data_ts)
                     self._frames = deque()
@@ -343,13 +381,15 @@ class Receiver(object):
                         self._frames.append(Frame(i, self.timestamp_base + self.interval * i, xengs))
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
-                    _logger.warning('Timestamp %d is too far in the past, discarding '
-                                    '(frequency %d)', data_ts, channel0)
+                    _logger.debug('Timestamp %d is too far in the past, discarding '
+                                  '(frequency %d)', data_ts, channel0)
+                    self._reject_heaps['too-old'].value += 1
                     continue
                 elif (data_ts - ts0) % self.interval != 0:
-                    _logger.warning('Timestamp %d does not conform to %d + %dn, '
-                                    'discarding (frequency %d)',
-                                    data_ts, ts0, self.interval, channel0)
+                    _logger.debug('Timestamp %d does not conform to %d + %dn, '
+                                  'discarding (frequency %d)',
+                                  data_ts, ts0, self.interval, channel0)
+                    self._reject_heaps['bad-timestamp'].value += 1
                     continue
                 while data_ts >= ts0 + self.interval * self.active_frames:
                     frame = self._frames[0]
