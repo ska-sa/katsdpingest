@@ -582,15 +582,6 @@ class CBFIngest(object):
         self.output_dumps = 0
         self.output_dumps_sensor.set_value(0)
 
-    def _init_sensors(self, my_sensors):
-        self._my_sensors = my_sensors
-        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
-        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
-        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
-        self.status_sensor = self._my_sensors['status']
-        self.status_sensor.set_value("init")
-        self._zero_counters()
-
     def _init_baselines(self, antenna_mask):
         # Configure the masking and reordering of baselines
         self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
@@ -609,6 +600,25 @@ class CBFIngest(object):
         self._sd_avg.flush = self._flush_sd
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
+
+    def _init_sensors(self, my_sensors):
+        self._my_sensors = my_sensors
+        # Autocorrelations are required, so it suffices to take just the first
+        # input from each pair to get all inputs.
+        inputs = set(bl[0] for bl in self.bls_ordering.sdp_bls_ordering)
+        antennas = set(input[:-1] for input in inputs)
+        my_sensors['output-n-inputs'].set_value(len(inputs))
+        my_sensors['output-n-ants'].set_value(len(antennas))
+        my_sensors['output-n-bls'].set_value(len(self.bls_ordering.sdp_bls_ordering))
+        my_sensors['output-n-chans'].set_value(len(self.channel_ranges.output))
+        my_sensors['output-int-time'].set_value(
+            self.cbf_attr['int_time'] * self._output_avg.ratio)
+        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
+        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
+        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
+        self.status_sensor = self._my_sensors['status']
+        self.status_sensor.set_value("init")
+        self._zero_counters()
 
     def _init_proc(self, context, excise, continuum):
         percentile_sizes = list(set(r[1] - r[0] for r in self.bls_ordering.percentile_ranges))
@@ -842,9 +852,9 @@ class CBFIngest(object):
         self.cbf_attr = cbf_attr
         self.src_stream = args.cbf_name
 
-        self._init_sensors(my_sensors)
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
+        self._init_sensors(my_sensors)
         self._init_tx(args)  # Note: must be run after _init_time_averaging, before _init_proc
         self._init_proc(context, args.excise, 'cont' in self.tx)
         self._init_resources()
