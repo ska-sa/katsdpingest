@@ -82,7 +82,7 @@ class VisSender(object):
             kwargs['ttl'] = 1
         self._stream = spead2.send.trollius.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
-            spead2.send.StreamConfig(max_packet_size=8972, rate=rate), **kwargs)
+            spead2.send.StreamConfig(max_packet_size=8872, rate=rate), **kwargs)
         self._stream.set_cnt_sequence(channel0, all_channels)
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
