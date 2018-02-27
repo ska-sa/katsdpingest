@@ -45,50 +45,51 @@ class IngestDeviceServer(AsyncDeviceServer):
         self._stopping = False
 
         sensors = [
-            Sensor(
-                Sensor.INTEGER, "capture-active",
-                "Is there a currently active capture session.",
-                "", default=0, params=[0, 1]),
-            Sensor.string("status", "The current status of the capture session.", ""),
-            Sensor(
-                Sensor.FLOAT, "last-dump-timestamp",
-                "Timestamp of most recently received correlator dump in Unix seconds",
-                "", default=0, params=[0, 2**63]),
-            Sensor.discrete("device-status", "Health status", "", ["ok", "degraded", "fail"]),
-            Sensor(
-                Sensor.INTEGER, "input-bytes-total",
-                "Number of payload bytes received from CBF in this session",
-                "", default=0),
-            Sensor(
-                Sensor.INTEGER, "input-heaps-total",
-                "Number of payload heaps received from CBF in this session",
-                "", default=0),
-            Sensor(
-                Sensor.INTEGER, "input-dumps-total",
-                "Number of CBF dumps received in this session",
-                "", default=0),
-            Sensor(
-                Sensor.INTEGER, "output-bytes-total",
-                "Number of payload bytes sent on L0 in this session",
-                "", default=0),
-            Sensor(
-                Sensor.INTEGER, "output-heaps-total",
-                "Number of payload heaps sent on L0 in this session",
-                "", default=0),
-            Sensor(
-                Sensor.INTEGER, "output-dumps-total",
-                "Number of payload dumps sent on L0 in this session",
-                "", default=0),
-            Sensor(
-                Sensor.BOOLEAN, "descriptors-received",
-                "Whether the SPEAD descriptors have been received",
-                "", default=False)
+            Sensor(Sensor.INTEGER, "output-n-ants", "Number of antennas in L0 stream"),
+            Sensor(Sensor.INTEGER, "output-n-inputs", "Number of single-pol signals in L0 stream"),
+            Sensor(Sensor.INTEGER, "output-n-bls", "Number of baseline products in L0 stream"),
+            Sensor(Sensor.INTEGER, "output-n-chans",
+                   "Number of channels this server contributes to L0 spectral stream"),
+            Sensor(Sensor.FLOAT, "output-int-time", "Integration time of L0 stream", "s"),
+            Sensor(Sensor.BOOLEAN, "capture-active",
+                   "Is there a currently active capture session.",
+                   default=False, initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.DISCRETE, "status", "The current status of the capture session.", "",
+                   ["init", "wait-data", "capturing", "complete"],
+                   default="init", initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.FLOAT, "last-dump-timestamp",
+                   "Timestamp of most recently received correlator dump in Unix seconds", "s",
+                   default=0.0, initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.DISCRETE,
+                   "device-status", "Health status", "", ["ok", "degraded", "fail"],
+                   default="ok", initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "input-bytes-total",
+                   "Number of payload bytes received from CBF in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "input-heaps-total",
+                   "Number of payload heaps received from CBF in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "input-dumps-total",
+                   "Number of CBF dumps received in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "output-bytes-total",
+                   "Number of payload bytes sent on L0 in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "output-heaps-total",
+                   "Number of payload heaps sent on L0 in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "output-dumps-total",
+                   "Number of payload dumps sent on L0 in this session",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.BOOLEAN, "descriptors-received",
+                   "Whether the SPEAD descriptors have been received",
+                   initial_status=Sensor.NOMINAL)
         ]
         for key, value in receiver.REJECT_HEAP_TYPES.items():
             sensors.append(Sensor(
                 Sensor.INTEGER, "input-" + key + "-heaps-total",
                 "Number of heaps rejected because " + value,
-                "", default=0))
+                initial_status=Sensor.NOMINAL))
         self._my_sensors = {sensor.name: sensor for sensor in sensors}
 
         # create the device resources
@@ -104,15 +105,6 @@ class IngestDeviceServer(AsyncDeviceServer):
     def setup_sensors(self):
         for sensor in self._my_sensors:
             self.add_sensor(self._my_sensors[sensor])
-            # take care of basic defaults to ensure sensor status is 'nominal'
-            if self._my_sensors[sensor]._sensor_type == Sensor.STRING:
-                self._my_sensors[sensor].set_value("")
-            elif self._my_sensors[sensor]._sensor_type == Sensor.INTEGER:
-                self._my_sensors[sensor].set_value(0)
-            elif self._my_sensors[sensor]._sensor_type == Sensor.BOOLEAN:
-                self._my_sensors[sensor].set_value(False)
-        self._my_sensors["status"].set_value("init")
-        self._my_sensors["device-status"].set_value("ok")
 
     @return_reply(Str())
     def request_enable_debug(self, req, msg):
