@@ -193,6 +193,8 @@ SENSORS = [
     Sensor('${subarray}_dump_rate', immutable=True),
     Sensor('${subarray}_pool_resources', immutable=True),
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_channel_mask', convert=convert_bitmask),
+    Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_precise_time_epoch_fraction'),
+    Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_precise_time_uncertainty'),
     Sensor('${subarray}_state'),
     # Misc other sensors
     Sensor('anc_air_pressure'),
