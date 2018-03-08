@@ -733,7 +733,8 @@ class CBFIngest(object):
         utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)
         utils.set_telstate_entry(view, 'int_time', int_time, prefix)
         utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
-        utils.set_telstate_entry(view, 'stream_type', 'sdp.l0')
+        utils.set_telstate_entry(view, 'stream_type', 'sdp.vis')
+        utils.set_telstate_entry(view, 'calibrations_applied', [])
         self.tx[name] = tx
         self.l0_names.append(prefix)
 
