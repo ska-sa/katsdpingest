@@ -6,7 +6,7 @@ Cython
 dask==0.17.0
 decorator
 enum34
-fakenewsredis
+fakeredis
 funcsigs
 future
 futures
