@@ -372,8 +372,6 @@ class Receiver(object):
                 prev_ts = data_ts
                 # we have new data...
 
-                self._input_bytes.value += data_item.nbytes
-                self._input_heaps.value += 1
                 if self._frames is None:
                     self.timestamp_base = self._first_timestamp(data_ts)
                     self._frames = deque()
@@ -407,6 +405,8 @@ class Receiver(object):
                     ts0 = self._frames[0].timestamp
                 frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
+                self._input_bytes.value += data_item.nbytes
+                self._input_heaps.value += 1
                 yield From(self._flush_frames())
         finally:
             yield From(self._frames_complete.put(stream_idx))
