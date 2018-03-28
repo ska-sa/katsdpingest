@@ -7,7 +7,9 @@ import logging
 import mock
 import copy
 import numpy as np
-from nose.tools import *
+from nose.tools import (assert_in, assert_is_not_none, assert_is_instance, assert_true,
+                        assert_equal, assert_almost_equal, assert_regexp_matches,
+                        nottest)
 import tornado.gen
 from tornado.platform.asyncio import AsyncIOMainLoop
 import trollius
@@ -342,7 +344,7 @@ class TestIngestDeviceServer(object):
         vis = np.add.reduceat(vis, batch_edges, axis=0)
         vis /= batch_sizes[:, np.newaxis, np.newaxis]
         timestamps = self._timestamps[::time_ratio] / self.cbf_attr['scale_factor_timestamp'] \
-                + 0.5 * self._telstate['sdp_l0_int_time']
+            + 0.5 * self._telstate['sdp_l0_int_time']
         # Baseline permutation
         bls = BaselineOrdering(self.cbf_attr['bls_ordering'], self.user_args.antenna_mask)
         inv_permutation = np.empty(len(bls.sdp_bls_ordering), np.int)

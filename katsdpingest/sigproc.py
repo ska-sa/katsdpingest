@@ -1,5 +1,11 @@
 # coding: utf-8
 
+"""
+.. |CommandQueue| replace:: :class:`katsdpsigproc.cuda.CommandQueue` \
+        or :class:`katsdpsigproc.opencl.CommandQueue`
+.. |Context| replace:: :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+"""
+
 from __future__ import print_function, division, absolute_import
 import pkg_resources
 import numpy as np
@@ -41,7 +47,7 @@ class PrepareTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
@@ -119,7 +125,7 @@ class Prepare(accel.Operation):
     ----------
     template : :class:`PrepareTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels
@@ -144,11 +150,11 @@ class Prepare(accel.Operation):
         padded_in_baselines = accel.Dimension(in_baselines, tilex)
         complex_parts = accel.Dimension(2, exact=True)
         self.slots['vis_in'] = accel.IOSlot(
-                (padded_channels, padded_in_baselines, complex_parts), np.int32)
+            (padded_channels, padded_in_baselines, complex_parts), np.int32)
         # For output we do not need to pad the baselines, because the
         # permutation requires that we do range checks anyway.
         self.slots['vis_out'] = accel.IOSlot(
-                (out_baselines, padded_channels), np.complex64)
+            (out_baselines, padded_channels), np.complex64)
         self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
 
     def _run(self):
@@ -162,18 +168,18 @@ class Prepare(accel.Operation):
         xblocks = accel.divup(self.in_baselines, tilex)
         yblocks = accel.divup(self.channels, tiley)
         self.command_queue.enqueue_kernel(
-                self.template.kernel,
-                [
-                    vis_out.buffer,
-                    vis_in.buffer,
-                    permutation.buffer,
-                    np.int32(vis_out.padded_shape[1]),
-                    np.int32(vis_in.padded_shape[1]),
-                    np.int32(self.in_baselines),
-                    np.float32(1.0 / self.n_accs)
-                ],
-                global_size=(xblocks * block, yblocks * block),
-                local_size=(block, block))
+            self.template.kernel,
+            [
+                vis_out.buffer,
+                vis_in.buffer,
+                permutation.buffer,
+                np.int32(vis_out.padded_shape[1]),
+                np.int32(vis_in.padded_shape[1]),
+                np.int32(self.in_baselines),
+                np.float32(1.0 / self.n_accs)
+            ],
+            global_size=(xblocks * block, yblocks * block),
+            local_size=(block, block))
 
     def parameters(self):
         return {
@@ -192,7 +198,7 @@ class AutoWeightsTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
@@ -231,8 +237,8 @@ class AutoWeightsTemplate(object):
         input_auto_baseline.set(queue, h_input_auto_baseline)
 
         def generate(wgsx, wgsy):
-            fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(
-                queue, channels, Range(0, channels), inputs, baselines)
+            template = cls(context, {'wgsx': wgsx, 'wgsy': wgsy})
+            fn = template.instantiate(queue, channels, Range(0, channels), inputs, baselines)
             fn.bind(vis=vis, weights=weights, input_auto_baseline=input_auto_baseline)
             return tune.make_measure(queue, fn)
         return tune.autotune(
@@ -261,7 +267,7 @@ class AutoWeights(accel.Operation):
     ----------
     template : :class:`AutoWeightsTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels in **vis**
@@ -286,12 +292,12 @@ class AutoWeights(accel.Operation):
         vis_padded_channels = channel_range.start + accel.roundup(len(channel_range), template.wgsx)
         vis_padded_channels = max(channels, vis_padded_channels)
         self.slots['vis'] = accel.IOSlot(
-                (baselines, accel.Dimension(channels, min_padded_size=vis_padded_channels)),
-                np.complex64)
+            (baselines, accel.Dimension(channels, min_padded_size=vis_padded_channels)),
+            np.complex64)
         self.slots['weights'] = accel.IOSlot(
-                (inputs, accel.Dimension(len(channel_range), template.wgsx)), np.float32)
+            (inputs, accel.Dimension(len(channel_range), template.wgsx)), np.float32)
         self.slots['input_auto_baseline'] = accel.IOSlot(
-                (inputs,), np.uint16)
+            (inputs,), np.uint16)
 
     def _run(self):
         vis = self.buffer('vis')
@@ -328,7 +334,7 @@ class InitWeightsTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
@@ -392,14 +398,14 @@ class InitWeights(accel.Operation):
         Output weights
     **auto_weights** : inputs × channels, float32
         Input square roots of autocorrelation weights
-    **baseline_inputs : inputs × 2, uint16
+    **baseline_inputs** : inputs × 2, uint16
         The indices of the two inputs making up each baseline
 
     Parameters
     ----------
     template : :class:`InitWeightsTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels
@@ -416,11 +422,11 @@ class InitWeights(accel.Operation):
         self.inputs = inputs
         self.baselines = baselines
         self.slots['weights'] = accel.IOSlot(
-                (baselines, accel.Dimension(channels, template.wgsx)), np.float32)
+            (baselines, accel.Dimension(channels, template.wgsx)), np.float32)
         self.slots['auto_weights'] = accel.IOSlot(
-                (inputs, accel.Dimension(channels, template.wgsx)), np.float32)
+            (inputs, accel.Dimension(channels, template.wgsx)), np.float32)
         self.slots['baseline_inputs'] = accel.IOSlot(
-                (baselines, accel.Dimension(2, exact=True)), np.uint16)
+            (baselines, accel.Dimension(2, exact=True)), np.uint16)
 
     def _run(self):
         weights = self.buffer('weights')
@@ -455,7 +461,7 @@ class AccumTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     outputs : int
         Number of outputs in which to accumulate
@@ -574,7 +580,7 @@ class Accum(accel.Operation):
     ----------
     template : :class:`AccumTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels
@@ -599,22 +605,23 @@ class Accum(accel.Operation):
         padded_baselines = accel.Dimension(baselines, tiley)
         padded_channels = accel.Dimension(
             channels,
-            min_padded_size=max(channels, padded_kept_channels.min_padded_size + channel_range.start))
+            min_padded_size=max(channels,
+                                padded_kept_channels.min_padded_size + channel_range.start))
         self.slots['vis_in'] = accel.IOSlot(
-                (padded_baselines, padded_channels), np.complex64)
+            (padded_baselines, padded_channels), np.complex64)
         self.slots['weights_in'] = accel.IOSlot(
-                (padded_baselines, padded_kept_channels), np.float32)
+            (padded_baselines, padded_kept_channels), np.float32)
         self.slots['flags_in'] = accel.IOSlot(
-                (padded_baselines, padded_channels), np.uint8)
+            (padded_baselines, padded_channels), np.uint8)
         # The minimum padded size for channel_flags is tricky because it is
         # the kept-channels part that needs to be aligned to be a multiple of
         # tilex.
         channel_flags_size = max(channels, accel.roundup(kept_channels, tilex) +
                                  channel_range.start)
         self.slots['channel_flags'] = accel.IOSlot(
-                (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
+            (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot(
-                (accel.Dimension(baselines, tiley),), np.uint8)
+            (accel.Dimension(baselines, tiley),), np.uint8)
         for i in range(self.template.outputs):
             label = str(i)
             self.slots['vis_out' + label] = accel.IOSlot(
@@ -645,10 +652,10 @@ class Accum(accel.Operation):
         yblocks = accel.divup(self.baselines, tiley)
 
         self.command_queue.enqueue_kernel(
-                self.template.kernel,
-                args,
-                global_size=(xblocks * block, yblocks * block),
-                local_size=(block, block))
+            self.template.kernel,
+            args,
+            global_size=(xblocks * block, yblocks * block),
+            local_size=(block, block))
 
     def parameters(self):
         return {
@@ -671,7 +678,7 @@ class PostprocTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     unflagged_bit : int
         Flag value used to indicate that at least one sample was not flagged
@@ -732,8 +739,8 @@ class PostprocTemplate(object):
         flags.set(queue, rs.choice([0, 16], size=flags.shape, p=[0.95, 0.05]).astype(np.uint8))
 
         def generate(**tuning):
-            fn = cls(context, 128, excise, continuum, tuning=tuning).instantiate(
-                    queue, channels, baselines, cont_factor)
+            template = cls(context, 128, excise, continuum, tuning=tuning)
+            fn = template.instantiate(queue, channels, baselines, cont_factor)
             fn.bind(vis=vis, weights=weights, flags=flags)
             if continuum:
                 fn.bind(cont_vis=cont_vis, cont_weights=cont_weights, cont_flags=cont_flags)
@@ -772,7 +779,7 @@ class Postproc(accel.Operation):
     ----------
     template : :class:`PostprocTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels (must be a multiple of `cont_factor`)
@@ -845,7 +852,7 @@ class CompressWeightsTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     tuning : mapping, optional
         Kernel tuning parameters; if omitted, will autotune. The possible
@@ -896,14 +903,14 @@ class CompressWeights(accel.Operation):
         Input weights
     **weights_channel** : channels, float32
         Output per-channel weight
-    **weights_out : baselines × channels, uint8
+    **weights_out** : baselines × channels, uint8
         Output weights
 
     Parameters
     ----------
     template : class:`CompressWeightsTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels
@@ -915,7 +922,6 @@ class CompressWeights(accel.Operation):
         self.template = template
         self.channels = channels
         self.baselines = baselines
-        padded_channels = accel.Dimension(channels, template.wgsy)
         self.slots['weights_in'] = accel.IOSlot(
             (accel.Dimension(channels, template.wgsy), baselines), np.float32)
         self.slots['weights_channel'] = accel.IOSlot(
@@ -955,7 +961,7 @@ class FinaliseTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     unflagged_bit : int
         Flag value used to indicate that at least one sample was not flagged
@@ -1015,7 +1021,7 @@ class Finalise(accel.OperationSequence):
     ----------
     template : :class:`PostprocTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels (must be a multiple of `cont_factor`)
@@ -1068,7 +1074,7 @@ class IngestTemplate(object):
 
     Parameters
     ----------
-    context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
+    context : |Context|
         Context for which kernels will be compiled
     flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
         Template for RFI flagging. It must have transposed flag outputs.
@@ -1092,7 +1098,7 @@ class IngestTemplate(object):
         self.auto_weights = AutoWeightsTemplate(context)
         self.init_weights = InitWeightsTemplate(context)
         self.transpose_vis = transpose.TransposeTemplate(
-                context, np.complex64, 'float2')
+            context, np.complex64, 'float2')
         self.flagger = flagger
         # We need a spare bit that won't be present in any actual flags. Since
         # cal RFI detection happens later in the pipeline, it is definitely
@@ -1169,7 +1175,8 @@ class IngestOperation(accel.OperationSequence):
         Per-channel scale factor for **cont_weights**
     **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
         Continuum flags
-    **sd_spec_vis**, **sd_spec_weights**, **sd_spec_flags**, **sd_cont_vis**, **sd_cont_weights**, **sd_cont_flags**
+    **sd_spec_vis**, **sd_spec_weights**, **sd_spec_flags**, \
+    **sd_cont_vis**, **sd_cont_weights**, **sd_cont_flags**
         Signal display versions of the above
     **timeseries** : kept-channels, complex64
         Weights sum over channels of **sd_spec_vis**
@@ -1177,8 +1184,9 @@ class IngestOperation(accel.OperationSequence):
         Weights sum of abs over channels of **sd_spec_vis**
     **percentileN** : 5 × kept-channels, float32 (where *N* is 0, 1, ...)
         Percentiles for each selected set of baselines (see `katsdpsigproc.percentile.Percentile5`)
-    **percentileN**_flags : kept-channels, uint8 (where *N* is 0, 1, ...)
-        For each channel, the bitwise OR of the flags from the corresponding set of baselines in **percentileN**
+    **percentileN_flags** : kept-channels, uint8 (where *N* is 0, 1, ...)
+        For each channel, the bitwise OR of the flags from the corresponding
+        set of baselines in **percentileN**
 
     .. rubric:: Scratch slots
 
@@ -1188,7 +1196,7 @@ class IngestOperation(accel.OperationSequence):
     ----------
     template : :class:`IngestTemplate`
         Template containing the code
-    command_queue : :class:`katsdpsigproc.cuda.CommandQueue` or :class:`katsdpsigproc.opencl.CommandQueue`
+    command_queue : |CommandQueue|
         Command queue for the operation
     channels : int
         Number of channels
@@ -1232,37 +1240,37 @@ class IngestOperation(accel.OperationSequence):
         kept_channels = len(channel_range)
         self.template = template
         self.prepare = template.prepare.instantiate(
-                command_queue, channels, cbf_baselines, baselines)
+            command_queue, channels, cbf_baselines, baselines)
         self.auto_weights = template.auto_weights.instantiate(
-                command_queue, channels, channel_range, inputs, baselines)
+            command_queue, channels, channel_range, inputs, baselines)
         self.init_weights = template.init_weights.instantiate(
-                command_queue, kept_channels, inputs, baselines)
+            command_queue, kept_channels, inputs, baselines)
         self.zero_spec = Zero(command_queue, kept_channels, baselines)
         self.zero_sd_spec = Zero(command_queue, kept_channels, baselines)
         # TODO: a single transpose+absolute value kernel uses less memory
         self.transpose_vis = template.transpose_vis.instantiate(
-                command_queue, (baselines, channels))
+            command_queue, (baselines, channels))
         self.flagger = template.flagger.instantiate(
-                command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
+            command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
         self.accum = template.accum.instantiate(
-                command_queue, channels, channel_range, baselines)
+            command_queue, channels, channel_range, baselines)
         self.finalise = template.finalise.instantiate(
-                command_queue, kept_channels, baselines, cont_factor)
+            command_queue, kept_channels, baselines, cont_factor)
         self.sd_finalise = template.sd_finalise.instantiate(
-                command_queue, kept_channels, baselines, sd_cont_factor)
+            command_queue, kept_channels, baselines, sd_cont_factor)
         self.timeseries = template.timeseries.instantiate(
-                command_queue, (kept_channels, baselines))
+            command_queue, (kept_channels, baselines))
         self.timeseriesabs = template.timeseriesabs.instantiate(
-                command_queue, (kept_channels, baselines))
+            command_queue, (kept_channels, baselines))
         self.compress_weights_spec = template.compress_weights.instantiate(
-                command_queue, kept_channels, baselines)
+            command_queue, kept_channels, baselines)
         if template.continuum:
             self.compress_weights_cont = template.compress_weights.instantiate(
-                    command_queue, kept_channels // cont_factor, baselines)
+                command_queue, kept_channels // cont_factor, baselines)
         self.compress_weights_sd_spec = template.compress_weights.instantiate(
-                command_queue, kept_channels, baselines)
+            command_queue, kept_channels, baselines)
         self.compress_weights_sd_cont = template.compress_weights.instantiate(
-                command_queue, kept_channels // sd_cont_factor, baselines)
+            command_queue, kept_channels // sd_cont_factor, baselines)
         self.percentiles = []
         self.percentiles_flags = []
         for prange in percentile_ranges:
@@ -1293,18 +1301,18 @@ class IngestOperation(accel.OperationSequence):
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
         operations = [
-                ('prepare', self.prepare),
-                ('auto_weights', self.auto_weights),
-                ('init_weights', self.init_weights),
-                ('zero_spec', self.zero_spec),
-                ('zero_sd_spec', self.zero_sd_spec),
-                ('transpose_vis', self.transpose_vis),
-                ('flagger', self.flagger),
-                ('accum', self.accum),
-                ('finalise', self.finalise),
-                ('sd_finalise', self.sd_finalise),
-                ('timeseries', self.timeseries),
-                ('timeseriesabs', self.timeseriesabs)
+            ('prepare', self.prepare),
+            ('auto_weights', self.auto_weights),
+            ('init_weights', self.init_weights),
+            ('zero_spec', self.zero_spec),
+            ('zero_sd_spec', self.zero_sd_spec),
+            ('transpose_vis', self.transpose_vis),
+            ('flagger', self.flagger),
+            ('accum', self.accum),
+            ('finalise', self.finalise),
+            ('sd_finalise', self.sd_finalise),
+            ('timeseries', self.timeseries),
+            ('timeseriesabs', self.timeseriesabs)
         ]
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
@@ -1314,29 +1322,30 @@ class IngestOperation(accel.OperationSequence):
         # TODO: eliminate transposition of flags, which aren't further used
         assert 'flags_t' in self.flagger.slots
         compounds = {
-                'vis_in':       ['prepare:vis_in'],
-                'channel_flags': ['flagger:channel_flags', 'accum:channel_flags'],
-                'baseline_flags': ['accum:baseline_flags'],
-                'permutation':  ['prepare:permutation'],
-                'vis_t':        ['prepare:vis_out', 'auto_weights:vis',
-                                 'transpose_vis:src', 'accum:vis_in'],
-                'auto_weights': ['auto_weights:weights', 'init_weights:auto_weights'],
-                'input_auto_baseline': ['auto_weights:input_auto_baseline'],
-                'baseline_inputs': ['init_weights:baseline_inputs'],
-                'weights':      ['init_weights:weights', 'accum:weights_in'],
-                'vis_mid':      ['transpose_vis:dest', 'flagger:vis'],
-                'deviations':   ['flagger:deviations'],
-                'noise':        ['flagger:noise'],
-                'flags':        ['flagger:flags_t', 'accum:flags_in'],
-                'spec_vis':     ['accum:vis_out0', 'zero_spec:vis'],
-                'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
-                'spec_flags':   ['accum:flags_out0', 'zero_spec:flags'],
-                'sd_spec_vis':  ['accum:vis_out1', 'zero_sd_spec:vis', 'timeseries:src', 'timeseriesabs:src'],
-                'sd_spec_weights_fp32': ['accum:weights_out1', 'zero_sd_spec:weights'],
-                'sd_spec_flags': ['accum:flags_out1', 'zero_sd_spec:flags'],
-                'timeseries_weights': ['timeseries:mask', 'timeseriesabs:mask'],
-                'timeseries':   ['timeseries:dest'],
-                'timeseriesabs': ['timeseriesabs:dest']
+            'vis_in':         ['prepare:vis_in'],
+            'channel_flags':  ['flagger:channel_flags', 'accum:channel_flags'],
+            'baseline_flags': ['accum:baseline_flags'],
+            'permutation':    ['prepare:permutation'],
+            'vis_t':          ['prepare:vis_out', 'auto_weights:vis',
+                               'transpose_vis:src', 'accum:vis_in'],
+            'auto_weights':   ['auto_weights:weights', 'init_weights:auto_weights'],
+            'input_auto_baseline': ['auto_weights:input_auto_baseline'],
+            'baseline_inputs': ['init_weights:baseline_inputs'],
+            'weights':        ['init_weights:weights', 'accum:weights_in'],
+            'vis_mid':        ['transpose_vis:dest', 'flagger:vis'],
+            'deviations':     ['flagger:deviations'],
+            'noise':          ['flagger:noise'],
+            'flags':          ['flagger:flags_t', 'accum:flags_in'],
+            'spec_vis':       ['accum:vis_out0', 'zero_spec:vis'],
+            'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
+            'spec_flags':     ['accum:flags_out0', 'zero_spec:flags'],
+            'sd_spec_vis':    ['accum:vis_out1', 'zero_sd_spec:vis',
+                               'timeseries:src', 'timeseriesabs:src'],
+            'sd_spec_weights_fp32': ['accum:weights_out1', 'zero_sd_spec:weights'],
+            'sd_spec_flags':  ['accum:flags_out1', 'zero_sd_spec:flags'],
+            'timeseries_weights': ['timeseries:mask', 'timeseriesabs:mask'],
+            'timeseries':     ['timeseries:dest'],
+            'timeseriesabs':  ['timeseriesabs:dest']
         }
         for i in ['', 'sd_']:
             for j in ['spec', 'cont']:

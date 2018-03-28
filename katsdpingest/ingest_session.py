@@ -564,12 +564,12 @@ class CBFIngest(object):
 
         flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                context, width=13, use_flags=True)
+            context, width=13, use_flags=True)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, transposed=True, flag_value=flag_value)
+            context, transposed=True, flag_value=flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
-                background_template, noise_est_template, threshold_template)
+            background_template, noise_est_template, threshold_template)
         return sigproc.IngestTemplate(context, flagger_template,
                                       percentile_sizes=max_percentile_sizes,
                                       excise=excise, continuum=continuum)
@@ -626,15 +626,15 @@ class CBFIngest(object):
             context, percentile_sizes, len(self.channel_ranges.input), excise, continuum)
         self.command_queue = proc_template.context.create_command_queue()
         self.proc = proc_template.instantiate(
-                self.command_queue, len(self.channel_ranges.input),
-                self.channel_ranges.computed.relative_to(self.channel_ranges.input),
-                len(self.bls_ordering.input_auto_baseline),
-                len(self.cbf_attr['bls_ordering']),
-                len(self.bls_ordering.sdp_bls_ordering),
-                self.channel_ranges.cont_factor,
-                self.channel_ranges.sd_cont_factor,
-                self.bls_ordering.percentile_ranges,
-                threshold_args={'n_sigma': 11.0})
+            self.command_queue, len(self.channel_ranges.input),
+            self.channel_ranges.computed.relative_to(self.channel_ranges.input),
+            len(self.bls_ordering.input_auto_baseline),
+            len(self.cbf_attr['bls_ordering']),
+            len(self.bls_ordering.sdp_bls_ordering),
+            self.channel_ranges.cont_factor,
+            self.channel_ranges.sd_cont_factor,
+            self.bls_ordering.percentile_ranges,
+            threshold_args={'n_sigma': 11.0})
         self.proc.n_accs = self.cbf_attr['n_accs']
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(
@@ -697,7 +697,7 @@ class CBFIngest(object):
         baselines = len(self.bls_ordering.sdp_bls_ordering)
         if len(endpoints) % args.servers:
             raise ValueError('Number of endpoints ({}) not divisible by number of servers ({})'
-                .format(len(endpoints), args.servers))
+                             .format(len(endpoints), args.servers))
         endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
         endpoint_hi = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
@@ -797,7 +797,7 @@ class CBFIngest(object):
             dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
             name=('sd_timestamp'), id=0x3502,
-            description='Timestamp of this sd frame in centiseconds since epoch (40 bit limitation).',
+            description='Timestamp of this sd frame in centiseconds since epoch.',
             shape=(), dtype=None, format=inline_format)
         bls_ordering = np.asarray(self.bls_ordering.sdp_bls_ordering)
         self.ig_sd.add_item(
@@ -1030,9 +1030,9 @@ class CBFIngest(object):
         sd_input_a, host_sd_input_a = self.sd_input_resource.acquire()
         sd_output_a, host_sd_output_a = self.sd_output_resource.acquire()
         self.jobs.add(self._flush_sd_job(
-                proc_a, sd_input_a, host_sd_input_a,
-                sd_output_a, host_sd_output_a,
-                output_idx, custom_signals_indices, mask))
+            proc_a, sd_input_a, host_sd_input_a,
+            sd_output_a, host_sd_output_a,
+            output_idx, custom_signals_indices, mask))
 
     @trollius.coroutine
     def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
@@ -1043,9 +1043,11 @@ class CBFIngest(object):
                 host_sd_input_a as host_sd_input, \
                 sd_output_a as sd_output_buffers, \
                 host_sd_output_a as host_sd_output:
-            spec_channels = self.channel_ranges.sd_output.relative_to(self.channel_ranges.computed).asslice()
-            cont_channels = utils.Range(spec_channels.start // self.channel_ranges.sd_cont_factor,
-                                        spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
+            spec_channels = self.channel_ranges.sd_output.relative_to(
+                self.channel_ranges.computed).asslice()
+            cont_channels = utils.Range(
+                spec_channels.start // self.channel_ranges.sd_cont_factor,
+                spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             # Copy inputs to HostArrays
             yield From(host_sd_input_a.wait_events())
             host_sd_input['timeseries_weights'][:] = mask
@@ -1154,12 +1156,8 @@ class CBFIngest(object):
 
     @trollius.coroutine
     def _frame_job(self, proc_a, input_a, host_input_a, frame):
-        with proc_a as proc, \
-             input_a as input_buffers, \
-             host_input_a as host_input:
+        with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
-            channel_flags_buffer = input_buffers['channel_flags']
-            baseline_flags_buffer = input_buffers['baseline_flags']
             vis_in = host_input['vis_in']
             channel_flags = host_input['channel_flags']
             baseline_flags = host_input['baseline_flags']
@@ -1373,7 +1371,7 @@ class CBFIngest(object):
             sensors=self._my_sensors,
             cbf_attr=self.cbf_attr,
             telstates=telstates,
-            l0_int_time = self.cbf_attr['int_time'] * self._output_avg.ratio)
+            l0_int_time=self.cbf_attr['int_time'] * self._output_avg.ratio)
         # If stop() was called before we create self.rx, it won't have been able
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:

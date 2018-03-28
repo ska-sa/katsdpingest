@@ -15,6 +15,7 @@ except ImportError:
 
 tests_require = ['mock', 'nose']
 
+
 class get_include(object):
     """Helper class to defer importing a module until build time for fetching
     the include directory.

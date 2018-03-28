@@ -18,9 +18,9 @@ def generate_data(vis_in_device, channels, baselines):
 
 def create_flagger(context, args):
     background = rfi.BackgroundMedianFilterDeviceTemplate(
-            context, args.width)
+        context, args.width)
     noise_est = rfi.NoiseEstMADTDeviceTemplate(
-            context, args.channels + args.border)
+        context, args.channels + args.border)
     threshold = rfi.ThresholdSumDeviceTemplate(context)
     return rfi.FlaggerDeviceTemplate(background, noise_est, threshold)
 
@@ -28,23 +28,23 @@ def create_flagger(context, args):
 def create_percentile_ranges(antennas):
     n_cross = antennas * (antennas - 1) // 2
     sections = [
-            antennas,          # autohh
-            antennas,          # autovv
-            2 * antennas,      # autohv (each appears as hv and vh)
-            n_cross,           # crosshh
-            n_cross,           # crossvv
-            2 * n_cross        # crosshv
+        antennas,          # autohh
+        antennas,          # autovv
+        2 * antennas,      # autohv (each appears as hv and vh)
+        n_cross,           # crosshh
+        n_cross,           # crossvv
+        2 * n_cross        # crosshv
     ]
     cuts = np.cumsum([0] + sections)
     return [
-            (cuts[0], cuts[2]),  # autohhvv
-            (cuts[0], cuts[1]),  # autohh
-            (cuts[1], cuts[2]),  # autovv
-            (cuts[2], cuts[3]),  # autohv
-            (cuts[3], cuts[5]),  # crosshhvv
-            (cuts[3], cuts[4]),  # crosshh
-            (cuts[4], cuts[5]),  # crossvv
-            (cuts[5], cuts[6])   # crosshv
+        (cuts[0], cuts[2]),  # autohhvv
+        (cuts[0], cuts[1]),  # autohh
+        (cuts[1], cuts[2]),  # autovv
+        (cuts[2], cuts[3]),  # autohv
+        (cuts[3], cuts[5]),  # crosshhvv
+        (cuts[3], cuts[4]),  # crosshh
+        (cuts[4], cuts[5]),  # crossvv
+        (cuts[5], cuts[6])   # crosshv
     ]
 
 
@@ -58,21 +58,33 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument_group('Data selection')
-    parser.add_argument('--antennas', '-a', type=int, help='total number of antennas', default=7)
-    parser.add_argument('--mask-antennas', type=int, help='number of antennas in antenna mask', default=None)
-    parser.add_argument('--channels', '-c', type=int, help='number of frequency channels', default=1024)
+    parser.add_argument('--antennas', '-a', type=int, default=7,
+                        help='total number of antennas',)
+    parser.add_argument('--mask-antennas', type=int, default=None,
+                        help='number of antennas in antenna mask')
+    parser.add_argument('--channels', '-c', type=int, default=1024,
+                        help='number of frequency channels')
     parser.add_argument('--border', '-B', type=int, default=0, help='extra overlap channels')
 
     parser.add_argument_group('Parameters')
-    parser.add_argument('--time-avg', '-T', type=int, default=4, help='number of input dumps per output dump')
-    parser.add_argument('--freq-avg', '-F', type=int, default=16, help='number of input channels per continuum channel')
-    parser.add_argument('--sd-time-avg', type=int, default=4, help='number of input dumps per signal display dump')
-    parser.add_argument('--sd-freq-avg', type=int, default=128, help='number of input channels for signal display channel')
-    parser.add_argument('--width', '-w', type=int, help='median filter kernel size (must be odd)', default=13)
-    parser.add_argument('--sigmas', type=float, help='threshold for detecting RFI', default=11.0)
-    parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data')
-    parser.add_argument('--repeat', '-r', type=int, default=8, help='number of dumps to process')
-    parser.add_argument('--no-transfer', '-N', action='store_true', help='skip data transfers')
+    parser.add_argument('--time-avg', '-T', type=int, default=4,
+                        help='number of input dumps per output dump')
+    parser.add_argument('--freq-avg', '-F', type=int, default=16,
+                        help='number of input channels per continuum channel')
+    parser.add_argument('--sd-time-avg', type=int, default=4,
+                        help='number of input dumps per signal display dump')
+    parser.add_argument('--sd-freq-avg', type=int, default=128,
+                        help='number of input channels for signal display channel')
+    parser.add_argument('--width', '-w', type=int, default=13,
+                        help='median filter kernel size (must be odd)')
+    parser.add_argument('--sigmas', type=float, default=11.0,
+                        help='threshold for detecting RFI')
+    parser.add_argument('--no-excise', dest='excise', action='store_false',
+                        help='disable excision of flagged data')
+    parser.add_argument('--repeat', '-r', type=int, default=8,
+                        help='number of dumps to process')
+    parser.add_argument('--no-transfer', '-N', action='store_true',
+                        help='skip data transfers')
 
     args = parser.parse_args()
     channels = args.channels + args.border
@@ -86,10 +98,10 @@ def main():
     command_queue = context.create_command_queue(profile=True)
     template = create_template(context, args)
     proc = template.instantiate(
-            command_queue, channels, channel_range, 2 * args.mask_antennas,
-            cbf_baselines, baselines,
-            args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.mask_antennas),
-            threshold_args={'n_sigma': args.sigmas})
+        command_queue, channels, channel_range, 2 * args.mask_antennas,
+        cbf_baselines, baselines,
+        args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.mask_antennas),
+        threshold_args={'n_sigma': args.sigmas})
     print "{0} bytes required".format(proc.required_bytes())
     proc.ensure_all_bound()
 
@@ -124,7 +136,8 @@ def main():
     sd_buffers = [proc.buffer(name) for name in sd_names]
     sd_arrays = [buf.empty_like() for buf in sd_buffers]
 
-    dumps = [generate_data(vis_in_device, channels, cbf_baselines) for i in range(max(args.sd_time_avg, args.time_avg))]
+    dumps = [generate_data(vis_in_device, channels, cbf_baselines)
+             for i in range(max(args.sd_time_avg, args.time_avg))]
     # Push data before we start timing, to ensure everything is allocated
     for dump in dumps:
         proc.buffer('vis_in').set(command_queue, dump)
@@ -151,6 +164,7 @@ def main():
     elapsed_ms = end_event.time_since(start_event) * 1000.0
     dump_ms = elapsed_ms / args.repeat
     print "{0:.3f}ms ({1:.3f}ms per dump)".format(elapsed_ms, dump_ms)
+
 
 if __name__ == '__main__':
     main()

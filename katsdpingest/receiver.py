@@ -124,7 +124,8 @@ class Receiver(object):
         if not channel_range.isaligned(self._endpoint_channels):
             raise ValueError('channel_range is not aligned to the stream boundaries')
         if self._endpoint_channels % cbf_attr['n_chans_per_substream'] != 0:
-            raise ValueError('Number of channels in substream does not divide into per-endpoint channels')
+            raise ValueError('Number of channels in substream does not divide '
+                             'into per-endpoint channels')
         use_endpoints = endpoints[channel_range.start // self._endpoint_channels :
                                   channel_range.stop // self._endpoint_channels]
 
@@ -308,7 +309,7 @@ class Receiver(object):
                 if heap.is_end_of_stream():
                     n_stop += 1
                     _logger.debug("%d/%d endpoints stopped on stream %d",
-                                 n_stop, n_endpoints, stream_idx)
+                                  n_stop, n_endpoints, stream_idx)
                     if n_stop == n_endpoints:
                         stream.stop()
                         break
@@ -346,7 +347,8 @@ class Receiver(object):
                 heap_channel_range = Range(channel0, channel0 + heap_channels)
                 if not (heap_channel_range.isaligned(heap_channels) and
                         heap_channel_range.issubset(self.channel_range)):
-                    _logger.debug("CBF heap with invalid channel %d on stream %d", channel0, stream_idx)
+                    _logger.debug("CBF heap with invalid channel %d on stream %d",
+                                  channel0, stream_idx)
                     self._reject_heaps['bad-channel'].value += 1
                     continue
                 xeng_idx = (channel0 - self.channel_range.start) // heap_channels
@@ -368,7 +370,8 @@ class Receiver(object):
                     ts_wrap_offset -= ts_wrap_period
                     data_ts -= ts_wrap_period
                     _logger.warning('Data timestamps reverse wrapped')
-                _logger.debug('Received heap with timestamp %d on stream %d, channel %d', data_ts, stream_idx, channel0)
+                _logger.debug('Received heap with timestamp %d on stream %d, channel %d',
+                              data_ts, stream_idx, channel0)
                 prev_ts = data_ts
                 # we have new data...
 
@@ -378,7 +381,8 @@ class Receiver(object):
                     self.timestamp_base = self._first_timestamp(data_ts)
                     self._frames = deque()
                     for i in range(self.active_frames):
-                        self._frames.append(Frame(i, self.timestamp_base + self.interval * i, xengs))
+                        self._frames.append(
+                            Frame(i, self.timestamp_base + self.interval * i, xengs))
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
                     _logger.debug('Timestamp %d is too far in the past, discarding '
@@ -440,5 +444,6 @@ class Receiver(object):
                 _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
                 raise Return(frame)
             elif not frame.empty():
-                _logger.warning('Frame with timestamp %d is incomplete, discarding', frame.timestamp)
+                _logger.warning('Frame with timestamp %d is incomplete, discarding',
+                                frame.timestamp)
         raise spead2.Stopped('End of streams')

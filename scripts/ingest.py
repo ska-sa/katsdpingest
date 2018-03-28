@@ -33,36 +33,98 @@ def comma_list(type_):
 
 def parse_args():
     parser = katsdpservices.ArgumentParser()
-    parser.add_argument('--sdisp-spead', type=endpoint.endpoint_list_parser(7149), default='127.0.0.1:7149', help='signal display destination. Either single ip or comma separated list. [default=%(default)s]', metavar='ENDPOINT')
-    parser.add_argument('--cbf-spead', type=endpoint.endpoint_list_parser(7148), default=':7148', help='endpoints to listen for CBF SPEAD stream (including multicast IPs). [<ip>[+<count>]][:port]. [default=%(default)s]', metavar='ENDPOINTS')
-    parser.add_argument('--cbf-interface', help='interface to subscribe to for CBF SPEAD data. [default=auto]', metavar='INTERFACE')
-    parser.add_argument('--cbf-ibv', action='store_true', help='use ibverbs acceleration for CBF SPEAD data [default=no].')
-    parser.add_argument('--cbf-name', help='name of the baseline correlation products stream')
-    parser.add_argument('--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), help='destination for spectral L0 output. [default=do not send]', metavar='ENDPOINTS')
-    parser.add_argument('--l0-spectral-interface', help='interface on which to send spectral L0 output. [default=auto]', metavar='INTERFACE')
-    parser.add_argument('--l0-spectral-name', default='sdp_l0', help='telstate name of the spectral output stream', metavar='NAME')
-    parser.add_argument('--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), help='destination for continuum L0 output. [default=do not send]', metavar='ENDPOINTS')
-    parser.add_argument('--l0-continuum-interface', help='interface on which to send continuum L0 output. [default=auto]', metavar='INTERFACE')
-    parser.add_argument('--l0-continuum-name', default='sdp_l0_continuum', help='telstate name of the continuum output stream', metavar='NAME')
-    parser.add_argument('--output-int-time', default=2.0, type=float, help='seconds between output dumps (will be quantised). [default=%(default)s]')
-    parser.add_argument('--sd-int-time', default=2.0, type=float, help='seconds between signal display updates (will be quantised). [default=%(default)s]')
-    parser.add_argument('--antenna-mask', default=None, type=comma_list(str), help='comma-separated list of antennas to keep. [default=all]')
-    parser.add_argument('--output-channels', type=Range.parse, help='output spectral channels, in format A:B [default=all]')
-    parser.add_argument('--sd-output-channels', type=Range.parse, help='signal display channels, in format A:B [default=all]')
-    parser.add_argument('--continuum-factor', default=16, type=int, help='factor by which to reduce number of channels. [default=%(default)s]')
-    parser.add_argument('--sd-continuum-factor', default=128, type=int, help='factor by which to reduce number of channels for signal display. [default=%(default)s]')
-    parser.add_argument('--guard-channels', default=64, type=int, help='extra channels to use for RFI detection. [default=%(default)s]')
-    parser.add_argument('--input-streams', default=1, type=int, help='maximum separate streams for receive. [default=%(default)s]')
-    parser.add_argument('--input-max-packet-size', default=4608, type=int, help='maximum packet size to receive. [default=[%(default)s]')
-    parser.add_argument('--input-buffer', default=64 * 1024**2, type=int, help='network buffer size ofr input. [default=%(default)s]')
-    parser.add_argument('--sd-spead-rate', type=float, default=1000000000, help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
-    parser.add_argument('--no-excise', dest='excise', action='store_false', help='disable excision of flagged data [default=no]')
-    parser.add_argument('--servers', type=int, default=1, help='number of parallel servers producing the output [default=%(default)s]')
-    parser.add_argument('--server-id', type=int, default=1, help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
-    parser.add_argument('-p', '--port', type=int, default=2040, metavar='N', help='katcp host port. [default=%(default)s]')
-    parser.add_argument('-a', '--host', type=str, default="", metavar='HOST', help='katcp host address. [default=all hosts]')
-    parser.add_argument('-l', '--log-level', type=str, default=None, metavar='LEVEL',
-                        help='log level to use')
+    parser.add_argument(
+        '--sdisp-spead', type=endpoint.endpoint_list_parser(7149),
+        default='127.0.0.1:7149', metavar='ENDPOINT',
+        help=('signal display destination. Either single ip or comma-separated list. '
+              '[default=%(default)s]'))
+    parser.add_argument(
+        '--cbf-spead', type=endpoint.endpoint_list_parser(7148),
+        default=':7148', metavar='ENDPOINTS',
+        help=('endpoints to listen for CBF SPEAD stream (including multicast IPs). '
+              '[<ip>[+<count>]][:port]. [default=%(default)s]'))
+    parser.add_argument(
+        '--cbf-interface', metavar='INTERFACE',
+        help='interface to subscribe to for CBF SPEAD data. [default=auto]')
+    parser.add_argument(
+        '--cbf-ibv', action='store_true',
+        help='use ibverbs acceleration for CBF SPEAD data [default=no].')
+    parser.add_argument(
+        '--cbf-name',
+        help='name of the baseline correlation products stream')
+    parser.add_argument(
+        '--l0-spectral-spead', type=endpoint.endpoint_list_parser(7200), metavar='ENDPOINTS',
+        help='destination for spectral L0 output. [default=do not send]')
+    parser.add_argument(
+        '--l0-spectral-interface', metavar='INTERFACE',
+        help='interface on which to send spectral L0 output. [default=auto]')
+    parser.add_argument(
+        '--l0-spectral-name', default='sdp_l0', metavar='NAME',
+        help='telstate name of the spectral output stream')
+    parser.add_argument(
+        '--l0-continuum-spead', type=endpoint.endpoint_list_parser(7201), metavar='ENDPOINTS',
+        help='destination for continuum L0 output. [default=do not send]')
+    parser.add_argument(
+        '--l0-continuum-interface', metavar='INTERFACE',
+        help='interface on which to send continuum L0 output. [default=auto]')
+    parser.add_argument(
+        '--l0-continuum-name', default='sdp_l0_continuum', metavar='NAME',
+        help='telstate name of the continuum output stream')
+    parser.add_argument(
+        '--output-int-time', default=2.0, type=float,
+        help='seconds between output dumps (will be quantised). [default=%(default)s]')
+    parser.add_argument(
+        '--sd-int-time', default=2.0, type=float,
+        help='seconds between signal display updates (will be quantised). [default=%(default)s]')
+    parser.add_argument(
+        '--antenna-mask', default=None, type=comma_list(str),
+        help='comma-separated list of antennas to keep. [default=all]')
+    parser.add_argument(
+        '--output-channels', type=Range.parse,
+        help='output spectral channels, in format A:B [default=all]')
+    parser.add_argument(
+        '--sd-output-channels', type=Range.parse,
+        help='signal display channels, in format A:B [default=all]')
+    parser.add_argument(
+        '--continuum-factor', default=16, type=int,
+        help='factor by which to reduce number of channels. [default=%(default)s]')
+    parser.add_argument(
+        '--sd-continuum-factor', default=128, type=int,
+        help=('factor by which to reduce number of channels for signal display. '
+              '[default=%(default)s]'))
+    parser.add_argument(
+        '--guard-channels', default=64, type=int,
+        help='extra channels to use for RFI detection. [default=%(default)s]')
+    parser.add_argument(
+        '--input-streams', default=1, type=int,
+        help='maximum separate streams for receive. [default=%(default)s]')
+    parser.add_argument(
+        '--input-max-packet-size', default=4608, type=int,
+        help='maximum packet size to receive. [default=[%(default)s]')
+    parser.add_argument(
+        '--input-buffer', default=64 * 1024**2, type=int,
+        help='network buffer size ofr input. [default=%(default)s]')
+    parser.add_argument(
+        '--sd-spead-rate', type=float, default=1000000000,
+        help='rate (bits per second) to transmit signal display output. [default=%(default)s]')
+    parser.add_argument(
+        '--no-excise', dest='excise', action='store_false',
+        help='disable excision of flagged data [default=no]')
+    parser.add_argument(
+        '--servers', type=int, default=1,
+        help='number of parallel servers producing the output [default=%(default)s]')
+    parser.add_argument(
+        '--server-id', type=int, default=1,
+        help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
+    parser.add_argument(
+        '-p', '--port', type=int, default=2040, metavar='N',
+        help='katcp host port. [default=%(default)s]')
+    parser.add_argument(
+        '-a', '--host', type=str, default="", metavar='HOST',
+        help='katcp host address. [default=all hosts]')
+    parser.add_argument(
+        '-l', '--log-level', type=str, default=None, metavar='LEVEL',
+        help='log level to use')
     args = parser.parse_args()
     if args.telstate is None:
         parser.error('argument --telstate is required')

@@ -7,9 +7,8 @@ import trollius
 import tornado.gen
 from katsdpservices.asyncio import to_tornado_future
 from katcp import AsyncDeviceServer, Sensor
-from katcp.kattypes import request, return_reply, Str, Float
+from katcp.kattypes import request, return_reply, Str
 from katsdptelstate.endpoint import endpoint_parser
-from katsdpsigproc import accel
 
 import katsdpingest
 from .ingest_session import CBFIngest
@@ -160,7 +159,9 @@ class IngestDeviceServer(AsyncDeviceServer):
         the L0 output stream."""
         if self.cbf_ingest.capturing:
             raise tornado.gen.Return((
-                "fail", "Existing capture session found. If you really want to init, stop the current capture using capture-done."))
+                "fail",
+                "Existing capture session found. "
+                "If you really want to init, stop the current capture using capture-done."))
         if self._stopping:
             raise tornado.gen.Return((
                 "fail", "Cannot start a capture session while ingest is shutting down"))
@@ -181,10 +182,12 @@ class IngestDeviceServer(AsyncDeviceServer):
             yield to_tornado_future(trollius.async(self.cbf_ingest.drop_sdisp_ip(ip)))
         except KeyError:
             raise tornado.gen.Return(
-                    ("fail", "The IP address specified (%s) does not exist in the current list of recipients." % (ip)))
+                ("fail",
+                 "The IP address specified (%s) does not exist "
+                 "in the current list of recipients." % (ip)))
         else:
             raise tornado.gen.Return(
-                    ("ok", "The IP address has been dropped as a signal display recipient"))
+                ("ok", "The IP address has been dropped as a signal display recipient"))
 
     @request(Str())
     @return_reply(Str())

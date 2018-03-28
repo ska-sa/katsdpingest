@@ -10,7 +10,7 @@ from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
-from nose.tools import *
+from nose.tools import assert_equal, assert_raises
 
 
 UNFLAGGED_BIT = 128
@@ -146,7 +146,8 @@ class TestInitWeights(object):
         assert_equal((baselines, channels), weights.shape)
         expected = np.zeros_like(weights)
         for i in range(baselines):
-            expected[i, :] = auto_weights[baseline_inputs[i, 0], :] * auto_weights[baseline_inputs[i, 1], :]
+            expected[i, :] = (auto_weights[baseline_inputs[i, 0], :]
+                              * auto_weights[baseline_inputs[i, 1], :])
         np.testing.assert_allclose(expected, weights)
 
     @device_test
@@ -248,8 +249,8 @@ class TestAccum(object):
         # Perform the operation on the host
         kept_vis = vis_in[:, channel_range.start : channel_range.stop]
         kept_flags = flags_in[:, channel_range.start : channel_range.stop] \
-                | channel_flags[np.newaxis, channel_range.start : channel_range.stop] \
-                | baseline_flags[:, np.newaxis]
+            | channel_flags[np.newaxis, channel_range.start : channel_range.stop] \
+            | baseline_flags[:, np.newaxis]
         if excise:
             flagged_weights = weights_in * ((kept_flags == 0) + FLAG_SCALE)
             # unflagged inputs need the UNFLAGGED_BIT set
@@ -349,7 +350,9 @@ class TestPostproc(object):
         np.testing.assert_equal(expected_flags, fn.buffer('flags').get(queue))
         if continuum:
             np.testing.assert_allclose(cont_vis, fn.buffer('cont_vis').get(queue), rtol=1e-5)
-            np.testing.assert_allclose(cont_weights, fn.buffer('cont_weights').get(queue), rtol=1e-5)
+            np.testing.assert_allclose(cont_weights,
+                                       fn.buffer('cont_weights').get(queue),
+                                       rtol=1e-5)
             np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
 
     @device_test
@@ -396,7 +399,9 @@ class TestCompressWeights(object):
         expected_channel = np.max(weights_in, axis=1) * np.float32(1.0 / 255.0)
         scale = np.reciprocal(expected_channel)[..., np.newaxis]
         expected_out = (weights_in * scale).astype(np.uint8)
-        np.testing.assert_allclose(expected_channel, fn.buffer('weights_channel').get(queue), rtol=1e-5)
+        np.testing.assert_allclose(expected_channel,
+                                   fn.buffer('weights_channel').get(queue),
+                                   rtol=1e-5)
         np.testing.assert_equal(expected_out, fn.buffer('weights_out').get(queue))
 
     @device_test
@@ -421,49 +426,122 @@ class TestIngestOperation(object):
         context = mock.Mock()
         command_queue = mock.Mock()
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                context, width=13)
+            context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
-                context, 10240)
+            context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, transposed=True, flag_value=self.flag_value)
+            context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
-                background_template, noise_est_template, threshold_template)
+            background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12], True, True)
         fn = template.instantiate(
-                command_queue, channels, channel_range, inputs,
-                cbf_baselines, baselines,
-                8, 16, [(0, 8), (10, 22)],
-                threshold_args={'n_sigma': 11.0})
+            command_queue, channels, channel_range, inputs,
+            cbf_baselines, baselines,
+            8, 16, [(0, 8), (10, 22)],
+            threshold_args={'n_sigma': 11.0})
 
         expected = [
             ('ingest', {'class': 'katsdpingest.sigproc.IngestOperation'}),
-            ('ingest:prepare', {'channels': 128, 'class': 'katsdpingest.sigproc.Prepare', 'in_baselines': 220, 'out_baselines': 192, 'n_accs': 1}),
-            ('ingest:auto_weights', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.AutoWeights', 'inputs': 32, 'n_accs': 1}),
-            ('ingest:init_weights', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.InitWeights', 'inputs': 32}),
-            ('ingest:zero_spec', {'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'}),
-            ('ingest:zero_sd_spec', {'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'}),
-            ('ingest:transpose_vis', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'float2', 'dtype': 'complex64', 'shape': (192, 128)}),
+            ('ingest:prepare', {
+                'channels': 128, 'class': 'katsdpingest.sigproc.Prepare',
+                'in_baselines': 220, 'out_baselines': 192, 'n_accs': 1
+            }),
+            ('ingest:auto_weights', {
+                'baselines': 192, 'channel_range': (16, 96), 'channels': 128,
+                'class': 'katsdpingest.sigproc.AutoWeights', 'inputs': 32,
+                'n_accs': 1
+            }),
+            ('ingest:init_weights', {
+                'baselines': 192, 'channels': 80,
+                'class': 'katsdpingest.sigproc.InitWeights', 'inputs': 32
+            }),
+            ('ingest:zero_spec', {
+                'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'
+            }),
+            ('ingest:zero_sd_spec', {
+                'channels': 80, 'baselines': 192, 'class': 'katsdpingest.sigproc.Zero'
+            }),
+            ('ingest:transpose_vis', {
+                'class': 'katsdpsigproc.transpose.Transpose',
+                'ctype': 'float2', 'dtype': 'complex64', 'shape': (192, 128)
+            }),
             ('ingest:flagger', {'class': 'katsdpsigproc.rfi.device.FlaggerDevice'}),
-            ('ingest:flagger:background', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice', 'width': 13}),
-            ('ingest:flagger:transpose_deviations', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'float', 'dtype': 'float32', 'shape': (128, 192)}),
-            ('ingest:flagger:noise_est', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.NoiseEstMADTDevice', 'max_channels': 10240}),
-            ('ingest:flagger:threshold', {'baselines': 192, 'channels': 128, 'class': 'katsdpsigproc.rfi.device.ThresholdSimpleDevice', 'flag_value': 16, 'n_sigma': 11.0, 'transposed': True}),
-            ('ingest:flagger:transpose_flags', {'class': 'katsdpsigproc.transpose.Transpose', 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)}),
-            ('ingest:accum', {'baselines': 192, 'channel_range': (16, 96), 'channels': 128, 'class': 'katsdpingest.sigproc.Accum', 'excise': True, 'outputs': 2, 'unflagged_bit': 64}),
+            ('ingest:flagger:background', {
+                'baselines': 192, 'channels': 128,
+                'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice', 'width': 13
+            }),
+            ('ingest:flagger:transpose_deviations', {
+                'class': 'katsdpsigproc.transpose.Transpose',
+                'ctype': 'float', 'dtype': 'float32', 'shape': (128, 192)
+            }),
+            ('ingest:flagger:noise_est', {
+                'baselines': 192, 'channels': 128,
+                'class': 'katsdpsigproc.rfi.device.NoiseEstMADTDevice',
+                'max_channels': 10240
+            }),
+            ('ingest:flagger:threshold', {
+                'baselines': 192, 'channels': 128,
+                'class': 'katsdpsigproc.rfi.device.ThresholdSimpleDevice',
+                'flag_value': 16, 'n_sigma': 11.0, 'transposed': True
+            }),
+            ('ingest:flagger:transpose_flags', {
+                'class': 'katsdpsigproc.transpose.Transpose',
+                'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)
+            }),
+            ('ingest:accum', {
+                'baselines': 192, 'channel_range': (16, 96), 'channels': 128,
+                'class': 'katsdpingest.sigproc.Accum', 'excise': True,
+                'outputs': 2, 'unflagged_bit': 64
+            }),
             ('ingest:finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 8, 'continuum': True, 'excise': True, 'unflagged_bit': 64}),
-            ('ingest:finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
-            ('ingest:finalise:compress_weights_cont', {'baselines': 192, 'channels': 10, 'class': 'katsdpingest.sigproc.CompressWeights'}),
+            ('ingest:finalise:postproc', {
+                'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc',
+                'cont_factor': 8, 'continuum': True, 'excise': True, 'unflagged_bit': 64
+            }),
+            ('ingest:finalise:compress_weights_spec', {
+                'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'
+            }),
+            ('ingest:finalise:compress_weights_cont', {
+                'baselines': 192, 'channels': 10, 'class': 'katsdpingest.sigproc.CompressWeights'
+            }),
             ('ingest:sd_finalise', {'class': 'katsdpingest.sigproc.Finalise'}),
-            ('ingest:sd_finalise:postproc', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16, 'continuum': True, 'excise': True, 'unflagged_bit': 64}),
-            ('ingest:sd_finalise:compress_weights_spec', {'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'}),
-            ('ingest:sd_finalise:compress_weights_cont', {'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'}),
-            ('ingest:timeseries', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': False}),
-            ('ingest:timeseriesabs', {'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192), 'use_amplitudes': True}),
-            ('ingest:percentile0', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (0, 8), 'is_amplitude': False, 'max_columns': 8, 'shape': (80, 192)}),
-            ('ingest:percentile0_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (0, 8), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)}),
-            ('ingest:percentile1', {'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (10, 22), 'is_amplitude': False, 'max_columns': 12, 'shape': (80, 192)}),
-            ('ingest:percentile1_flags', {'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (10, 22), 'ctype': 'unsigned char', 'dtype': np.uint8, 'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)})
+            ('ingest:sd_finalise:postproc', {
+                'baselines': 192, 'channels': 80,
+                'class': 'katsdpingest.sigproc.Postproc', 'cont_factor': 16,
+                'continuum': True, 'excise': True, 'unflagged_bit': 64
+            }),
+            ('ingest:sd_finalise:compress_weights_spec', {
+                'baselines': 192, 'channels': 80, 'class': 'katsdpingest.sigproc.CompressWeights'
+            }),
+            ('ingest:sd_finalise:compress_weights_cont', {
+                'baselines': 192, 'channels': 5, 'class': 'katsdpingest.sigproc.CompressWeights'
+            }),
+            ('ingest:timeseries', {
+                'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192),
+                'use_amplitudes': False
+            }),
+            ('ingest:timeseriesabs', {
+                'class': 'katsdpsigproc.maskedsum.MaskedSum', 'shape': (80, 192),
+                'use_amplitudes': True
+            }),
+            ('ingest:percentile0', {
+                'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (0, 8),
+                'is_amplitude': False, 'max_columns': 8, 'shape': (80, 192)
+            }),
+            ('ingest:percentile0_flags', {
+                'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (0, 8),
+                'ctype': 'unsigned char', 'dtype': np.uint8,
+                'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)
+            }),
+            ('ingest:percentile1', {
+                'class': 'katsdpsigproc.percentile.Percentile5', 'column_range': (10, 22),
+                'is_amplitude': False, 'max_columns': 12, 'shape': (80, 192)
+            }),
+            ('ingest:percentile1_flags', {
+                'class': 'katsdpsigproc.reduce.HReduce', 'column_range': (10, 22),
+                'ctype': 'unsigned char', 'dtype': np.uint8,
+                'extra_code': '', 'identity': '0', 'op': 'a | b', 'shape': (80, 192)
+            })
         ]
         self.maxDiff = None
         assert_equal(expected, fn.descriptions())
@@ -720,19 +798,19 @@ class TestIngestOperation(object):
         baseline_flags = random_flags(rs, (dumps, baselines), 2, p=0.05)
 
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-                context, width=13)
+            context, width=13)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
-                context, 10240)
+            context, 10240)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-                context, transposed=True, flag_value=self.flag_value)
+            context, transposed=True, flag_value=self.flag_value)
         flagger_template = rfi.FlaggerDeviceTemplate(
-                background_template, noise_est_template, threshold_template)
+            background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12], excise, continuum)
         fn = template.instantiate(
-                queue, channels, channel_range, inputs,
-                cbf_baselines, baselines,
-                cont_factor, sd_cont_factor, percentile_ranges,
-                threshold_args={'n_sigma': n_sigma})
+            queue, channels, channel_range, inputs,
+            cbf_baselines, baselines,
+            cont_factor, sd_cont_factor, percentile_ranges,
+            threshold_args={'n_sigma': n_sigma})
         fn.ensure_all_bound()
         fn.n_accs = n_accs
         fn.buffer('permutation').set(queue, permutation)
@@ -770,16 +848,17 @@ class TestIngestOperation(object):
                     actual[name] = fn.buffer(name).get(queue)
 
         expected = self.run_host(
-                vis_in, channel_flags, baseline_flags,
-                dumps, sd_dumps, n_accs, permutation,
-                input_auto_baseline, baseline_inputs,
-                cont_factor, sd_cont_factor, channel_range, n_sigma, excise,
-                timeseries_weights, percentile_ranges)
+            vis_in, channel_flags, baseline_flags,
+            dumps, sd_dumps, n_accs, permutation,
+            input_auto_baseline, baseline_inputs,
+            cont_factor, sd_cont_factor, channel_range, n_sigma, excise,
+            timeseries_weights, percentile_ranges)
 
         for name in data_keys + sd_keys:
             err_msg = '{0} is not equal'.format(name)
             if expected[name].dtype in (np.dtype(np.float32), np.dtype(np.complex64)):
-                np.testing.assert_allclose(expected[name], actual[name], rtol=1e-5, atol=1e-5, err_msg=err_msg)
+                np.testing.assert_allclose(expected[name], actual[name],
+                                           rtol=1e-5, atol=1e-5, err_msg=err_msg)
             elif name.endswith('_weights'):
                 # Integer parts of weights can end up slightly different due to rounding
                 np.testing.assert_allclose(expected[name], actual[name], atol=1, err_msg=err_msg)

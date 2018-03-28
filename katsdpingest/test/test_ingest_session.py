@@ -1,10 +1,8 @@
 """Tests for the ingest_session module"""
 
-from collections import OrderedDict
-
 import numpy as np
 import mock
-from nose.tools import *
+from nose.tools import assert_equal, assert_is
 
 from katsdpsigproc.test.test_accel import device_test
 from katsdptelstate import TelescopeState
@@ -14,7 +12,7 @@ from katsdpingest.utils import Range
 
 
 def fake_cbf_attr(n_antennas, n_xengs=4):
-    cbf_attr=dict(
+    cbf_attr = dict(
         adc_sample_rate=1712000000.0,
         n_chans=4096,
         n_chans_per_substream=1024,
