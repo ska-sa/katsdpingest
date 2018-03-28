@@ -12,7 +12,7 @@ from katsdpingest.sigproc import Range
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
 from katsdpsigproc.test.test_resource import async_test
-from nose.tools import *
+from nose.tools import assert_equal, assert_is_none, assert_raises
 import mock
 import logging
 
@@ -119,12 +119,28 @@ class TestReceiver(object):
                    for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
-            ig.add_item(0x1600, 'timestamp', 'Timestamp of start of this integration. uint counting multiples of ADC samples since last sync (sync_time, id=0x1027). Divide this number by timestamp_scale (id=0x1046) to get back to seconds since last sync when this integration was actually started. Note that the receiver will need to figure out the centre timestamp of the accumulation (eg, by adding half of int_time, id 0x1016).',
-                (), None, format=[('u', 48)])
-            ig.add_item(0x4103, 'frequency', 'Identifies the first channel in the band of frequencies in the SPEAD heap. Can be used to reconstruct the full spectrum.',
-                (), format=[('u', 48)])
-            ig.add_item(0x1800, 'xeng_raw', 'Raw data stream from all the X-engines in the system. For KAT-7, this item represents a full spectrum (all frequency channels) assembled from lowest frequency to highest frequency. Each frequency channel contains the data for all baselines (n_bls given by SPEAD Id=0x1008). Each value is a complex number - two (real and imaginary) signed integers.',
-                (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
+            ig.add_item(0x1600, 'timestamp',
+                        'Timestamp of start of this integration. '
+                        'uint counting multiples of ADC samples since last sync '
+                        '(sync_time, id=0x1027). Divide this number by timestamp_scale '
+                        '(id=0x1046) to get back to seconds since last sync when this '
+                        'integration was actually started. Note that the receiver will need '
+                        'to figure out the centre timestamp of the accumulation '
+                        '(eg, by adding half of int_time, id 0x1016).',
+                        (), None, format=[('u', 48)])
+            ig.add_item(0x4103, 'frequency',
+                        'Identifies the first channel in the band of frequencies '
+                        'in the SPEAD heap. Can be used to reconstruct the full spectrum.',
+                        (), format=[('u', 48)])
+            ig.add_item(0x1800, 'xeng_raw',
+                        'Raw data stream from all the X-engines in the system. '
+                        'For KAT-7, this item represents a full spectrum '
+                        '(all frequency channels) assembled from lowest frequency '
+                        'to highest frequency. Each frequency channel contains the data '
+                        'for all baselines (n_bls given by SPEAD Id=0x1008). '
+                        'Each value is a complex number - '
+                        'two (real and imaginary) signed integers.',
+                        (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_heap())
 

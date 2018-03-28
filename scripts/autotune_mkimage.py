@@ -46,13 +46,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('image')
     parser.add_argument('base_image')
-    parser.add_argument('--copy', action='store_true', help='Copy old autotuning results from existing image')
+    parser.add_argument(
+        '--copy', action='store_true',
+        help='Copy old autotuning results from existing image')
     parser.add_argument(
         '--copy-from', type=str, metavar='IMAGE',
         help='Specify alternative image from which to obtain existing results (implies --copy)')
-    parser.add_argument('--skip', action='store_true', help='Only copy, do not run tuning check afterwards')
-    parser.add_argument('--host', '-H', type=str, default='unix:///var/run/docker.sock', help='Docker host')
-    parser.add_argument('--tls', action='store_true', help='Use TLS to connect to Docker daemon')
+    parser.add_argument(
+        '--skip', action='store_true',
+        help='Only copy, do not run tuning check afterwards')
+    parser.add_argument(
+        '--host', '-H', type=str, default='unix:///var/run/docker.sock',
+        help='Docker host')
+    parser.add_argument(
+        '--tls', action='store_true',
+        help='Use TLS to connect to Docker daemon')
     args = parser.parse_args()
 
     if args.tls:
@@ -94,10 +102,10 @@ def main():
     binds = ['nvidia_driver_' + driver_version + ':/usr/local/nvidia:ro']
     volumes = ['/usr/local/nvidia']
     container = cli.create_container(
-            image=args.base_image,
-            command=command,
-            user='root', volumes=volumes, volume_driver='nvidia-docker',
-            host_config=cli.create_host_config(devices=devices, binds=binds))
+        image=args.base_image,
+        command=command,
+        user='root', volumes=volumes, volume_driver='nvidia-docker',
+        host_config=cli.create_host_config(devices=devices, binds=binds))
     try:
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
@@ -128,6 +136,7 @@ def main():
             return 1
     finally:
         cli.remove_container(container_id)
+
 
 if __name__ == '__main__':
     sys.exit(main())

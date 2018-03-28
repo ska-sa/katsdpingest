@@ -67,7 +67,8 @@ class VisSender(object):
     def __init__(self, thread_pool, endpoint, interface_address,
                  flavour, int_time, channel_range, channel0, all_channels, baselines):
         channels = len(channel_range)
-        dump_size = channels * baselines * (np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize)
+        item_size = np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize
+        dump_size = channels * baselines * item_size
         dump_size += channels * np.dtype(np.float32).itemsize
         # Add a guess for SPEAD protocol overhead (including descriptors). This just needs
         # to be conservative, to make sure we don't try to send too slow.
@@ -87,19 +88,26 @@ class VisSender(object):
         self._ig = spead2.send.ItemGroup(descriptor_frequency=1, flavour=flavour)
         self._channel_range = channel_range
         self._channel0 = channel0
-        self._ig.add_item(id=None, name='correlator_data', description="Visibilities",
+        self._ig.add_item(id=None, name='correlator_data',
+                          description="Visibilities",
                           shape=(channels, baselines), dtype=np.complex64)
-        self._ig.add_item(id=None, name='flags', description="Flags for visibilities",
+        self._ig.add_item(id=None, name='flags',
+                          description="Flags for visibilities",
                           shape=(channels, baselines), dtype=np.uint8)
-        self._ig.add_item(id=None, name='weights', description="Detailed weights, to be scaled by weights_channel",
+        self._ig.add_item(id=None, name='weights',
+                          description="Detailed weights, to be scaled by weights_channel",
                           shape=(channels, baselines), dtype=np.uint8)
-        self._ig.add_item(id=None, name='weights_channel', description="Coarse (per-channel) weights",
+        self._ig.add_item(id=None, name='weights_channel',
+                          description="Coarse (per-channel) weights",
                           shape=(channels,), dtype=np.float32)
-        self._ig.add_item(id=None, name='timestamp', description="Seconds since CBF sync time",
+        self._ig.add_item(id=None, name='timestamp',
+                          description="Seconds since CBF sync time",
                           shape=(), dtype=None, format=[('f', 64)])
-        self._ig.add_item(id=None, name='dump_index', description='Index in time',
+        self._ig.add_item(id=None, name='dump_index',
+                          description='Index in time',
                           shape=(), dtype=None, format=[('u', 64)])
-        self._ig.add_item(id=0x4103, name='frequency', description="Channel index of first channel in the heap",
+        self._ig.add_item(id=0x4103, name='frequency',
+                          description="Channel index of first channel in the heap",
                           shape=(), dtype=np.uint32)
 
     @trollius.coroutine

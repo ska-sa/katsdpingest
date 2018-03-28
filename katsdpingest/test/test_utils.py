@@ -1,6 +1,7 @@
 """Tests for the util module."""
 from katsdpingest.utils import Range
-from nose.tools import *
+from nose.tools import (assert_equal, assert_raises,
+                        assert_true, assert_false, assert_in, assert_not_in)
 
 
 class TestRange(object):
