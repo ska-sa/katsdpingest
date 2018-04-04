@@ -20,7 +20,8 @@ import katsdptelstate
 import katsdpservices
 import katportalclient
 import katcp
-import katsdpingest
+
+import katsdpcam2telstate
 
 
 STATUS_KEY = 'sdp_cam2telstate_status'
@@ -230,7 +231,7 @@ def parse_args():
 
 class DeviceServer(katcp.AsyncDeviceServer):
     VERSION_INFO = ("cam2telstate", 1, 0)
-    BUILD_INFO = ("cam2telstate",) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
+    BUILD_INFO = ("cam2telstate",) + tuple(katsdpcam2telstate.__version__.split('.', 1)) + ('',)
 
     def __init__(self, host, port):
         super(DeviceServer, self).__init__(host, port)

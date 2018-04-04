@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 setup(
-    name="katsdpingest",
+    name="katsdpcam2telstate",
     description="Karoo Array Telescope Data Capture",
     author="Bruce Merry",
     author_email="bmerry@ska.ac.za",
+    packages=find_packages(),
     scripts=['cam2telstate.py'],
     setup_requires=['katversion'],
     install_requires=[
