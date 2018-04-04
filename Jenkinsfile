@@ -10,6 +10,7 @@ katsdp.setDependencies([
     'ska-sa/katsdptelstate/master'])
 
 katsdp.standardBuild(subdir: 'katsdpcam2telstate')
+katsdp.standardBuild(subdir: 'katsdpbfingest')
 
 catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])

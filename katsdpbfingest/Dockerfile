@@ -1,4 +1,4 @@
-FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu
+FROM sdp-docker-registry.kat.ac.za:5000/docker-base
 
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
@@ -29,17 +29,17 @@ USER kat
 
 # Install dependencies. We need to set library-dirs so that the new libhdf5
 # will be found. And we need to create /tmp/install and
-# /tmp/install/katsdpingest as user kat so that we can write to it later.
-RUN mkdir -p /tmp/install/katsdpingest
+# /tmp/install/katsdpbfingest as user kat so that we can write to it later.
+RUN mkdir -p /tmp/install/katsdpbfingest
 COPY requirements.txt /tmp/install/requirements.txt
 RUN cd /tmp/install && \
     /bin/echo -e '[build_ext]\nlibrary-dirs=/usr/local/lib' > setup.cfg && \
-    install-requirements.py -d ~/docker-base/base-requirements.txt -d ~/docker-base/gpu-requirements.txt -r /tmp/install/requirements.txt
+    install-requirements.py -d ~/docker-base/base-requirements.txt -r /tmp/install/requirements.txt
 
 # Install the current package
-COPY . /tmp/install/katsdpingest
-RUN cd /tmp/install/katsdpingest && cp ../setup.cfg . && \
+COPY . /tmp/install/katsdpbfingest
+RUN cd /tmp/install/katsdpbfingest && cp ../setup.cfg . && \
     python ./setup.py clean && pip install --no-deps . && pip check
 
-EXPOSE 2040
+EXPOSE 2050
 EXPOSE 7148/udp

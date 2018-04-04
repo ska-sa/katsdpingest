@@ -1,4 +1,5 @@
 [flake8]
+exclude = katsdpbfingest katsdpcam2telstate
 max-line-length = 100
 ignore =
     # whitespace before ':' - flake8 doesn't handle slices properly
@@ -10,4 +11,3 @@ ignore =
     E226,
     # line break before binary operator - that's what PEP8 recommends!
     W503
-
