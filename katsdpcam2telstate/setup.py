@@ -8,7 +8,7 @@ setup(
     author="Bruce Merry",
     author_email="bmerry@ska.ac.za",
     packages=find_packages(),
-    scripts=['cam2telstate.py'],
+    scripts=['scripts/cam2telstate.py'],
     setup_requires=['katversion'],
     install_requires=[
         'numpy',
