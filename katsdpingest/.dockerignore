@@ -8,6 +8,3 @@ doc/_build
 *.pyc
 __pycache__
 .git
-katsdpcam2telstate
-digitiser_capture
-katsdpbfingest
