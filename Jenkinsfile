@@ -9,6 +9,8 @@ katsdp.setDependencies([
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master'])
 
+katsdp.standardBuild(subdir: 'katsdpcam2telstate')
+
 catchError {
     katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)

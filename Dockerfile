@@ -39,7 +39,7 @@ RUN cd /tmp/install && \
 # Install the current package
 COPY . /tmp/install/katsdpingest
 RUN cd /tmp/install/katsdpingest && cp ../setup.cfg . && \
-    python ./setup.py clean && pip install --no-index .
+    python ./setup.py clean && pip install --no-deps . && pip check
 
 EXPOSE 2040
 EXPOSE 7147/udp

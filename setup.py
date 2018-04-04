@@ -84,8 +84,7 @@ setup(
     scripts=[
         "scripts/ingest.py",
         "scripts/bf_ingest.py",
-        "scripts/ingest_autotune.py",
-        "scripts/cam2telstate.py"
+        "scripts/ingest_autotune.py"
     ],
     setup_requires=['katversion', 'pkgconfig', 'pybind11'],
     install_requires=[
@@ -104,7 +103,6 @@ setup(
         'trollius'
     ],
     extras_require={
-        'cam2telstate': ['katportalclient', 'tornado>=4.0', 'six'],
         'test': tests_require
     },
     tests_require=tests_require,

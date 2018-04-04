@@ -519,7 +519,7 @@ def main():
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
-    logger = logging.getLogger("katsdpingest.cam2telstate")
+    logger = logging.getLogger("katsdpcam2telstate")
     loop = tornado.ioloop.IOLoop.instance()
     client = Client(args, logger)
     client.parse_streams()

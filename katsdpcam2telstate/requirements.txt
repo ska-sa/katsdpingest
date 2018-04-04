@@ -1,0 +1,22 @@
+backports-abc                # via tornado
+certifi                      # via tornado
+fakeredis                    # via katsdptelstate
+future                       # via katcp
+futures                      # via katcp
+hiredis                      # via katsdptelstate
+ipaddress                    # via katsdpservices
+katcp
+katversion
+netifaces                    # via katsdpservices
+numpy
+ply                          # via katcp
+pygelf                       # via katsdpservices
+omnijson==0.1.2              # via katportalclient
+redis                        # via katsdptelstate
+singledispatch               # via tornado
+six
+tornado
+ujson==1.35                  # via katportalclient
+git+ssh://git@github.com/ska-sa/katsdpservices#egg=katsdpservices
+git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
+git+ssh://git@github.com/ska-sa/katportalclient#egg=katportalclient

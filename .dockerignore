@@ -6,4 +6,8 @@ cover
 doc/_build
 katsdpingest/_bf_ingest_session.so
 *.egg-info
+*.pyc
+__pycache__
 .git
+katsdpcam2telstate
+digitiser_capture
