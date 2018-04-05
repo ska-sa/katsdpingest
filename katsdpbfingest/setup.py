@@ -13,7 +13,7 @@ except ImportError:
     hdf5 = collections.defaultdict(list)
 
 
-tests_require = ['mock', 'nose']
+tests_require = ['nose', 'spead2']
 
 
 class get_include(object):
@@ -57,7 +57,7 @@ extensions = [
         sources=(glob.glob('spead2/src/common_*.cpp') +
                  glob.glob('spead2/src/recv_*.cpp') +
                  glob.glob('spead2/src/send_*.cpp') +
-                 ['katsdpingest/bf_ingest_session.cpp']),
+                 ['katsdpbfingest/bf_ingest_session.cpp']),
         depends=glob.glob('spead2/include/spead2/*.h'),
         language='c++',
         include_dirs=[
@@ -72,42 +72,30 @@ extensions = [
 ]
 
 setup(
-    name="katsdpingest",
+    name="katsdpbfingest",
     description="Karoo Array Telescope Data Capture",
-    author="Simon Ratcliffe",
+    author="Bruce Merry",
+    author_email="bmerry@ska.ac.za",
     packages=find_packages(),
-    package_data={'': ['ingest_kernels/*.mako']},
-    include_package_data=True,
-    ext_package='katsdpingest',
+    ext_package='katsdpbfingest',
     ext_modules=extensions,
     cmdclass={'build_ext': BuildExt},
-    scripts=[
-        "scripts/ingest.py",
-        "scripts/bf_ingest.py",
-        "scripts/ingest_autotune.py",
-        "scripts/cam2telstate.py"
-    ],
+    scripts=["scripts/bf_ingest.py"],
     setup_requires=['katversion', 'pkgconfig', 'pybind11'],
     install_requires=[
         'h5py',
         'futures',
-        'manhole',
         'numpy',
-        'spead2>=1.5.0',   # Needed for stop_on_stop_item
-        'ipaddress',
         'katcp',
-        'katsdpsigproc',
         'katsdpfilewriter',
         'katsdpservices',
         'katsdptelstate',
-        'psutil',
+        'tornado',
         'trollius'
     ],
     extras_require={
-        'cam2telstate': ['katportalclient', 'tornado>=4.0', 'six'],
         'test': tests_require
     },
     tests_require=tests_require,
-    zip_safe=False,
     use_katversion=True
 )

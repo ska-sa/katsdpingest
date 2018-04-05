@@ -9,20 +9,23 @@ katsdp.setDependencies([
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master'])
 
-catchError {
-    katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
-    katsdp.stageNosetestsGpu(cuda: true, opencl: true)
-    katsdp.stageMakeDocker(venv: true)
+katsdp.standardBuild(subdir: 'katsdpcam2telstate')
+katsdp.standardBuild(subdir: 'katsdpbfingest')
 
-    stage('autotuning') {
-        if (currentBuild.result == null) {
+catchError {
+    katsdp.stagePrepare(subdir: 'katsdpingest', timeout: [time: 60, unit: 'MINUTES'])
+    katsdp.stageNosetestsGpu(subdir: 'katsdpingest', cuda: true, opencl: true)
+    katsdp.stageMakeDocker(subdir: 'katsdpingest', venv: true)
+
+    stage('katsdpingest/autotuning') {
+        if (katsdp.notYetFailed()) {
             katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
                 deleteDir()
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
                 katsdp.unpackKatsdpdockerbase()
                 katsdp.virtualenv('venv') {
-                    dir('git') {
+                    dir('git/katsdpingest') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
                             sh './jenkins-autotune.sh titanx'
                         }
@@ -32,7 +35,7 @@ catchError {
         }
     }
 
-    stage('digitiser capture') {
+    stage('digitiser_capture') {
         katsdp.simpleNode {
             deleteDir()
             katsdp.unpackGit()
