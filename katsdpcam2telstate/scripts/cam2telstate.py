@@ -24,9 +24,6 @@ import katcp
 import katsdpcam2telstate
 
 
-STATUS_KEY = 'sdp_cam2telstate_status'
-
-
 def comma_split(value):
     return value.split(',')
 
@@ -366,13 +363,10 @@ class Client(object):
         yield self._band
         yield self._portal_client.unsubscribe(self.namespace, sensor)
 
-    def set_status(self, status):
-        self._telstate.add(STATUS_KEY, status)
-
     @tornado.gen.coroutine
     def start(self):
         try:
-            self.set_status('connecting')
+            self._logger.info('Connecting')
             self._portal_client = katportalclient.KATPortalClient(
                 self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
             yield self._portal_client.connect()
@@ -386,7 +380,7 @@ class Client(object):
             self._sub_name = yield self._portal_client.sensor_subarray_lookup('sub', '')
             self._cbf_name = yield self._portal_client.sensor_subarray_lookup('cbf', '')
             self._sdp_name = yield self._portal_client.sensor_subarray_lookup('sdp', '')
-            self.set_status('initialising')
+            self._logger.info('Initialising')
             # First find out which resources are allocated to the subarray
             yield self.get_resources()
             # Now we can tell which sensors to subscribe to
@@ -492,7 +486,6 @@ class Client(object):
             finally:
                 if last:
                     self._logger.info('Initial values for all sensors seen, starting katcp server')
-                    self.set_status('ready')
                     self._device_server = DeviceServer(self._args.host, self._args.port)
                     self._device_server.start()
 
