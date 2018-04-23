@@ -24,7 +24,8 @@ REJECT_HEAP_TYPES = {
     'no-descriptor': 'descriptors not yet received',
     'bad-timestamp': 'timestamp not aligned to integration boundary',
     'too-old': 'timestamp is prior to the start time',
-    'bad-channel': 'channel offset is not aligned to the substreams'
+    'bad-channel': 'channel offset is not aligned to the substreams',
+    'missing': 'expected heap was not received'
 }
 
 
@@ -396,14 +397,15 @@ class Receiver(object):
                 while data_ts >= ts0 + self.interval * self.active_frames:
                     frame = self._frames[0]
                     self._pop_frame()
-                    if frame.empty():
-                        _logger.warning('Frame with timestamp %d is empty, discarding', ts0)
+                    expected = len(frame.items)
+                    actual = sum(item is not None for item in frame.items)
+                    if actual == 0:
+                        _logger.debug('Frame with timestamp %d is empty, discarding', ts0)
                     else:
-                        expected = len(frame.items)
-                        actual = sum(item is not None for item in frame.items)
-                        _logger.warning('Frame with timestamp %d is %d/%d complete', ts0,
-                                        actual, expected)
+                        _logger.debug('Frame with timestamp %d is %d/%d complete', ts0,
+                                      actual, expected)
                         yield From(self._put_frame(frame))
+                    self._reject_heaps['missing'].value += expected - actual
                     del frame   # Free it up, particularly if discarded
                     yield From(self._flush_frames())
                     ts0 = self._frames[0].timestamp
