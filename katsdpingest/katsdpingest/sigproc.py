@@ -491,7 +491,7 @@ class CountFlagsTemplate(object):
         baselines = 1024
         flags = accel.DeviceArray(context, (baselines, channels), np.uint8)
         rs = np.random.RandomState(seed=1)
-        flags.set(queue, rs.randint(0, 255, flags.shape).astype(np.uint8))
+        flags.set(queue, rs.randint(0, 256, flags.shape).astype(np.uint8))
         counts = accel.DeviceArray(context, (baselines, 8), np.uint32)
 
         def generate(wgs):
