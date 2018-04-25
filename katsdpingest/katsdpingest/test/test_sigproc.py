@@ -132,7 +132,7 @@ class TestInitWeights(object):
 
         rs = np.random.RandomState(seed=1)
         auto_weights = rs.uniform(1.0, 2.0, size=(inputs, channels)).astype(np.float32)
-        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs, size=(baselines, 2)).astype(np.uint16)
 
         template = sigproc.InitWeightsTemplate(context)
         fn = template.instantiate(queue, channels, inputs, baselines)
@@ -168,7 +168,7 @@ class TestCountFlags(object):
         mask = 255 - (1 << 6)
 
         rs = np.random.RandomState(seed=1)
-        flags = rs.randint(0, 255, size=(baselines, channels)).astype(np.uint8)
+        flags = rs.randint(0, 256, size=(baselines, channels)).astype(np.uint8)
         baseline_flags = random_flags(rs, (baselines,), 2, 0.05)
         channel_flags = random_flags(rs, (channels,), 3, 0.05)
         orig_counts = rs.randint(0, 10000, size=(baselines, 8)).astype(np.uint32)
@@ -843,7 +843,7 @@ class TestIngestOperation(object):
         permutation = rs.permutation(cbf_baselines).astype(np.int16)
         permutation[permutation >= baselines] = -1
         input_auto_baseline = rs.permutation(baselines)[:inputs].astype(np.uint16)
-        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs, size=(baselines, 2)).astype(np.uint16)
         # Make sure baseline_inputs is consistent with input_auto_baseline
         for i in range(inputs):
             baseline_inputs[input_auto_baseline, :] = i
