@@ -156,6 +156,39 @@ class TestInitWeights(object):
         sigproc.InitWeightsTemplate(context)
 
 
+class TestCountFlags(object):
+    """Test :class:`katsdpingest.sigproc.CountFlags`"""
+
+    @device_test
+    def test_random(self, context, queue):
+        """Basic test using random data"""
+        channels = 1243
+        channel_range = Range(64, 1235)
+        baselines = 97
+        rs = np.random.RandomState(seed=1)
+        flags = rs.randint(0, 255, size=(baselines, channels)).astype(np.uint8)
+
+        template = sigproc.CountFlagsTemplate(context)
+        fn = template.instantiate(queue, channels, channel_range, baselines)
+        fn.ensure_all_bound()
+        fn.buffer('flags').set(queue, flags)
+        fn.buffer('counts').set(queue, np.full((baselines, 8), 0xdeadbeef, np.uint32))
+        fn()
+        counts = fn.buffer('counts').get(queue)
+
+        assert_equal((baselines, 8), counts.shape)
+        expected = np.zeros_like(counts)
+        included_flags = flags[:, channel_range.asslice()]
+        for i in range(8):
+            expected[:, i] = np.count_nonzero(included_flags & (1 << i), axis=1)
+        np.testing.assert_equal(expected, counts)
+
+    @device_test
+    @force_autotune
+    def test_autotune(self, context, queue):
+        sigproc.CountFlagsTemplate(context)
+
+
 class TestAccum(object):
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
