@@ -1009,6 +1009,7 @@ class CBFIngest(object):
     def _flush_sd(self, output_idx):
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
+        all_channels = len(self.channel_ranges.all_sd_output)
         custom_signals_indices = None
         full_mask = None
         try:
@@ -1021,14 +1022,13 @@ class CBFIngest(object):
             full_mask = np.array(
                 self.telstate_sdisp['sdisp_timeseries_mask'],
                 dtype=np.float32, copy=False)
-        except KeyError:
+        except (KeyError, ValueError, TypeError):
             pass
 
         if custom_signals_indices is None:
             custom_signals_indices = np.array([], dtype=np.uint32)
-        if full_mask is None:
-            n_channels = len(self.channel_ranges.all_sd_output)
-            full_mask = np.ones(n_channels, np.float32) / n_channels
+        if full_mask is None or full_mask.shape != (all_channels,):
+            full_mask = np.ones(all_channels, np.float32) / all_channels
         # Create mask from full_mask. mask contains a weight for each channel
         # in computed, but those outside of sd_output are zero.
         mask = np.zeros(len(self.channel_ranges.computed), np.float32)
