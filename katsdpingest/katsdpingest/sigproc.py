@@ -471,6 +471,7 @@ class CountFlagsTemplate(object):
         - wgs: number of workitems per workgroup in channel dimension
     """
     autotune_version = 0
+
     def __init__(self, context, tuning=None):
         if tuning is None:
             tuning = self.autotune(context)
