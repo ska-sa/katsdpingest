@@ -161,7 +161,7 @@ class TestCBFIngest(object):
         """Test that an ingest processor can be created on the device"""
         template = ingest_session.CBFIngest.create_proc_template(context, [4, 12], 4096, True, True)
         template.instantiate(
-            queue, 1024, Range(96, 1024 - 96), 16, 544, 512,
+            queue, 1024, Range(96, 1024 - 96), Range(96, 1024 - 96), 16, 544, 512,
             8, 16, [(0, 4), (500, 512)],
             threshold_args={'n_sigma': 11.0})
 

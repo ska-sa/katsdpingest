@@ -628,6 +628,7 @@ class CBFIngest(object):
         self.proc = proc_template.instantiate(
             self.command_queue, len(self.channel_ranges.input),
             self.channel_ranges.computed.relative_to(self.channel_ranges.input),
+            self.channel_ranges.sd_output.relative_to(self.channel_ranges.input),
             len(self.bls_ordering.input_auto_baseline),
             len(self.cbf_attr['bls_ordering']),
             len(self.bls_ordering.sdp_bls_ordering),
@@ -660,7 +661,7 @@ class CBFIngest(object):
                         for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
         self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
         sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
-                           'timeseries', 'timeseriesabs']
+                           'timeseries', 'timeseriesabs', 'sd_flag_counts']
         for i in range(len(self.proc.percentiles)):
             base_name = 'percentile{}'.format(i)
             sd_output_names.append(base_name)
@@ -757,28 +758,28 @@ class CBFIngest(object):
         # If any items are added/changed here, update _timeplot_frame_size in
         # katsdpcontroller/generate.py as well.
         self.ig_sd.add_item(
-            name=('sd_data'), id=(0x3501), description="Combined raw data from all x engines.",
+            name='sd_data', id=0x3501, description="Combined raw data from all x engines.",
             format=[('f', 32)], shape=(n_spec_channels, None, 2))
         self.ig_sd.add_item(
-            name=('sd_data_index'), id=(0x3509), description="Indices for transmitted sd_data.",
+            name='sd_data_index', id=0x3509, description="Indices for transmitted sd_data.",
             format=[('u', 32)], shape=(None,))
         self.ig_sd.add_item(
-            name=('sd_blmxdata'), id=0x3507, description="Reduced data for baseline matrix.",
+            name='sd_blmxdata', id=0x3507, description="Reduced data for baseline matrix.",
             shape=(n_cont_channels, n_baselines, 2),
             dtype=np.float32)
         self.ig_sd.add_item(
-            name=('sd_flags'), id=(0x3503), description="8bit packed flags for each data point.",
+            name='sd_flags', id=0x3503, description="8bit packed flags for each data point.",
             format=[('u', 8)], shape=(n_spec_channels, None))
         self.ig_sd.add_item(
-            name=('sd_blmxflags'), id=(0x3508),
+            name='sd_blmxflags', id=0x3508,
             description="Reduced data flags for baseline matrix.",
             shape=(n_cont_channels, n_baselines), dtype=np.uint8)
         self.ig_sd.add_item(
-            name=('sd_timeseries'), id=(0x3504), description="Computed timeseries.",
+            name='sd_timeseries', id=0x3504, description="Computed timeseries.",
             shape=(n_baselines, 2), dtype=np.float32)
         self.ig_sd.add_item(
-            name=('sd_timeseriesabs'), id=(0x3510), description="Computed timeseries magnitude.",
-            shape=(n_baselines, ), dtype=np.float32)
+            name='sd_timeseriesabs', id=0x3510, description="Computed timeseries magnitude.",
+            shape=(n_baselines,), dtype=np.float32)
         n_perc_signals = 0
         perc_idx = 0
         while True:
@@ -788,20 +789,20 @@ class CBFIngest(object):
             except KeyError:
                 break
         self.ig_sd.add_item(
-            name=('sd_percspectrum'), id=(0x3505),
+            name='sd_percspectrum', id=0x3505,
             description="Percentiles of spectrum data.",
             dtype=np.float32, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
-            name=('sd_percspectrumflags'), id=(0x3506),
+            name='sd_percspectrumflags', id=0x3506,
             description="Flags for percentiles of spectrum.",
             dtype=np.uint8, shape=(n_spec_channels, n_perc_signals))
         self.ig_sd.add_item(
-            name=('sd_timestamp'), id=0x3502,
+            name='sd_timestamp', id=0x3502,
             description='Timestamp of this sd frame in centiseconds since epoch.',
             shape=(), dtype=None, format=inline_format)
         bls_ordering = np.asarray(self.bls_ordering.sdp_bls_ordering)
         self.ig_sd.add_item(
-            name=('bls_ordering'), id=0x100C,
+            name='bls_ordering', id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         # Determine bandwidth and centre frequency of the signal display product
@@ -828,6 +829,10 @@ class CBFIngest(object):
             description="The total number of frequency channels in the baseline matrix product.",
             shape=(), dtype=None, format=inline_format,
             value=all_cont_channels)
+        self.ig_sd.add_item(
+            name='sd_flag_fraction', id=0x350B,
+            description="Fraction of channels having each flag bit, per baseline",
+            shape=(n_baselines, 8), dtype=np.float32)
         self.ig_sd.add_item(
             name="frequency", id=0x4103,
             description="The frequency channel of the data in this heap.",
@@ -1093,6 +1098,10 @@ class CBFIngest(object):
             spec_flags = host_sd_output['sd_spec_flags']
             timeseries = host_sd_output['timeseries']
             timeseriesabs = host_sd_output['timeseriesabs']
+            flag_counts = host_sd_output['sd_flag_counts']
+            flag_counts_scale = self._sd_avg.ratio * len(self.channel_ranges.sd_output)
+            flag_fraction = flag_counts.astype(np.float32) / np.float32(flag_counts_scale)
+            assert flag_fraction.dtype == np.float32
             percentiles = []
             percentiles_flags = []
             for i in range(len(proc.percentiles)):
@@ -1122,6 +1131,7 @@ class CBFIngest(object):
             self.ig_sd['sd_timeseriesabs'].value = timeseriesabs
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
+            self.ig_sd['sd_flag_fraction'].value = flag_fraction
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()

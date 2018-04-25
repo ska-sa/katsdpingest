@@ -511,6 +511,10 @@ class CountFlags(accel.Operation):
 
     **flags** : baselines × channels, uint8
         Input flags
+    **channel_flags** : channels, uint8
+        Extra flags applied per channel
+    **baseline_flags** : baselines, uint8
+        Extra flags applied per baseline
     **counts** : baselines × 8, uint32
         Number of times each bit is set per baseline. Bits are counted
         from the LSB. Note that this is *incremented* by the count i.e.
@@ -528,15 +532,20 @@ class CountFlags(accel.Operation):
         Interval of channels that will be counted
     baselines : int
         Number of baselines
+    mask : int
+        Mask of flag bits to count
     """
-    def __init__(self, template, command_queue, channels, channel_range, baselines):
+    def __init__(self, template, command_queue, channels, channel_range, baselines, mask=0xff):
         super(CountFlags, self).__init__(command_queue)
         self.template = template
         self.channels = channels
         self.channel_range = channel_range
         self.baselines = baselines
+        self.mask = mask
         bits = accel.Dimension(8, exact=True)
         self.slots['flags'] = accel.IOSlot((baselines, channels), np.uint8)
+        self.slots['channel_flags'] = accel.IOSlot((channels,), np.uint8)
+        self.slots['baseline_flags'] = accel.IOSlot((baselines,), np.uint8)
         self.slots['counts'] = accel.IOSlot((baselines, bits), np.uint32)
 
     def _run(self):
@@ -546,9 +555,12 @@ class CountFlags(accel.Operation):
             self.template.kernel, [
                 counts.buffer,
                 flags.buffer,
+                self.buffer('channel_flags').buffer,
+                self.buffer('baseline_flags').buffer,
                 np.int32(flags.padded_shape[1]),
                 np.int32(len(self.channel_range)),
-                np.int32(self.channel_range.start)
+                np.int32(self.channel_range.start),
+                np.uint8(self.mask)
             ],
             global_size=(self.template.wgs, self.baselines),
             local_size=(self.template.wgs, 1)
@@ -558,7 +570,8 @@ class CountFlags(accel.Operation):
         return {
             'channels': self.channels,
             'channel_range': (self.channel_range.start, self.channel_range.stop),
-            'baselines': self.baselines
+            'baselines': self.baselines,
+            'mask': self.mask
         }
 
 
@@ -1269,8 +1282,6 @@ class IngestOperation(accel.OperationSequence):
     The **cont_** slots are only present if continuum averaging is enabled
     (but **sd_cont_** slots are always present).
 
-    **flag_counts** : baselines × 8, uint32
-        Number of times each flag bit was encountered (before time averaging)
     **spec_vis** : kept-channels × baselines, complex64
         Spectral visibilities
     **spec_weights** : kept-channels × baselines, uint8
@@ -1299,6 +1310,8 @@ class IngestOperation(accel.OperationSequence):
     **percentileN_flags** : kept-channels, uint8 (where *N* is 0, 1, ...)
         For each channel, the bitwise OR of the flags from the corresponding
         set of baselines in **percentileN**
+    **sd_flag_counts** : baselines × 8, uint32
+        Number of times each flag bit was encountered (before time averaging)
 
     .. rubric:: Scratch slots
 
@@ -1314,6 +1327,8 @@ class IngestOperation(accel.OperationSequence):
         Number of channels
     channel_range : :class:`.Range`
         Range of channels that will be written to **weights**
+    count_flags_channel_range : :class:`.Range`
+        Range of channels for which flags are counted
     inputs : int
         Number of input signals, after antenna masking
     cbf_baselines : int
@@ -1341,7 +1356,7 @@ class IngestOperation(accel.OperationSequence):
         `cont_factor` and `sd_cont_factor`
     """
     def __init__(
-            self, template, command_queue, channels, channel_range,
+            self, template, command_queue, channels, channel_range, count_flags_channel_range,
             inputs, cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             background_args={}, noise_est_args={}, threshold_args={}):
@@ -1365,7 +1380,8 @@ class IngestOperation(accel.OperationSequence):
         self.flagger = template.flagger.instantiate(
             command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
         self.count_flags = template.count_flags.instantiate(
-            command_queue, channels, channel_range, baselines)
+            command_queue, channels, count_flags_channel_range, baselines,
+            0xff - self.template.accum.unflagged_bit)
         self.accum = template.accum.instantiate(
             command_queue, channels, channel_range, baselines)
         self.finalise = template.finalise.instantiate(
@@ -1438,8 +1454,9 @@ class IngestOperation(accel.OperationSequence):
         assert 'flags_t' in self.flagger.slots
         compounds = {
             'vis_in':         ['prepare:vis_in'],
-            'channel_flags':  ['flagger:channel_flags', 'accum:channel_flags'],
-            'baseline_flags': ['accum:baseline_flags'],
+            'channel_flags':  ['flagger:channel_flags', 'accum:channel_flags',
+                               'count_flags:channel_flags'],
+            'baseline_flags': ['accum:baseline_flags', 'count_flags:baseline_flags'],
             'permutation':    ['prepare:permutation'],
             'vis_t':          ['prepare:vis_out', 'auto_weights:vis',
                                'transpose_vis:src', 'accum:vis_in'],
@@ -1451,7 +1468,7 @@ class IngestOperation(accel.OperationSequence):
             'deviations':     ['flagger:deviations'],
             'noise':          ['flagger:noise'],
             'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags'],
-            'flag_counts':    ['count_flags:counts'],
+            'sd_flag_counts': ['count_flags:counts'],
             'spec_vis':       ['accum:vis_out0', 'zero_spec:vis'],
             'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
             'spec_flags':     ['accum:flags_out0', 'zero_spec:flags'],
@@ -1506,6 +1523,7 @@ class IngestOperation(accel.OperationSequence):
         self.init_weights()
         self.transpose_vis()
         self.flagger()
+        self.count_flags()
         self.accum()
 
     def start_sum(self, **kwargs):
@@ -1527,7 +1545,7 @@ class IngestOperation(accel.OperationSequence):
         self.ensure_all_bound()
 
         self.zero_sd_spec()
-        self.buffer('flag_counts').zero(self.command_queue)
+        self.buffer('sd_flag_counts').zero(self.command_queue)
 
     def end_sd_sum(self):
         """Perform postprocessing for a signal display dump. This only does
