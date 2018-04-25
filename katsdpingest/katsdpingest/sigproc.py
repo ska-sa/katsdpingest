@@ -512,8 +512,9 @@ class CountFlags(accel.Operation):
     **flags** : baselines × channels, uint8
         Input flags
     **counts** : baselines × 8, uint32
-        Output number of times each bit is set per baseline. Bits are counted
-        from the LSB.
+        Number of times each bit is set per baseline. Bits are counted
+        from the LSB. Note that this is *incremented* by the count i.e.
+        results accumulate across multiple calls.
 
     Parameters
     ----------
@@ -1208,6 +1209,7 @@ class IngestTemplate(object):
         self.transpose_vis = transpose.TransposeTemplate(
             context, np.complex64, 'float2')
         self.flagger = flagger
+        self.count_flags = CountFlagsTemplate(context)
         # We need a spare bit that won't be present in any actual flags. Since
         # cal RFI detection happens later in the pipeline, it is definitely
         # safe to use (unlike reserved flags, which might have new meanings
@@ -1267,6 +1269,8 @@ class IngestOperation(accel.OperationSequence):
     The **cont_** slots are only present if continuum averaging is enabled
     (but **sd_cont_** slots are always present).
 
+    **flag_counts** : baselines × 8, uint32
+        Number of times each flag bit was encountered (before time averaging)
     **spec_vis** : kept-channels × baselines, complex64
         Spectral visibilities
     **spec_weights** : kept-channels × baselines, uint8
@@ -1360,6 +1364,8 @@ class IngestOperation(accel.OperationSequence):
             command_queue, (baselines, channels))
         self.flagger = template.flagger.instantiate(
             command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
+        self.count_flags = template.count_flags.instantiate(
+            command_queue, channels, channel_range, baselines)
         self.accum = template.accum.instantiate(
             command_queue, channels, channel_range, baselines)
         self.finalise = template.finalise.instantiate(
@@ -1416,6 +1422,7 @@ class IngestOperation(accel.OperationSequence):
             ('zero_sd_spec', self.zero_sd_spec),
             ('transpose_vis', self.transpose_vis),
             ('flagger', self.flagger),
+            ('count_flags', self.count_flags),
             ('accum', self.accum),
             ('finalise', self.finalise),
             ('sd_finalise', self.sd_finalise),
@@ -1443,7 +1450,8 @@ class IngestOperation(accel.OperationSequence):
             'vis_mid':        ['transpose_vis:dest', 'flagger:vis'],
             'deviations':     ['flagger:deviations'],
             'noise':          ['flagger:noise'],
-            'flags':          ['flagger:flags_t', 'accum:flags_in'],
+            'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags'],
+            'flag_counts':    ['count_flags:counts'],
             'spec_vis':       ['accum:vis_out0', 'zero_spec:vis'],
             'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
             'spec_flags':     ['accum:flags_out0', 'zero_spec:flags'],
@@ -1519,6 +1527,7 @@ class IngestOperation(accel.OperationSequence):
         self.ensure_all_bound()
 
         self.zero_sd_spec()
+        self.buffer('flag_counts').zero(self.command_queue)
 
     def end_sd_sum(self):
         """Perform postprocessing for a signal display dump. This only does

@@ -51,6 +51,6 @@ KERNEL REQD_WORK_GROUP_SIZE(WGS, 1, 1) void count_flags(
     {
         counts += baseline * BITS;
         for (int i = 0; i < BITS; i++)
-            counts[i] = sums[i];
+            counts[i] += sums[i];
     }
 }

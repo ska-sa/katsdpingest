@@ -167,20 +167,21 @@ class TestCountFlags(object):
         baselines = 97
         rs = np.random.RandomState(seed=1)
         flags = rs.randint(0, 255, size=(baselines, channels)).astype(np.uint8)
+        orig_counts = rs.randint(0, 10000, size=(baselines, 8)).astype(np.uint32)
 
         template = sigproc.CountFlagsTemplate(context)
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         fn.buffer('flags').set(queue, flags)
-        fn.buffer('counts').set(queue, np.full((baselines, 8), 0xdeadbeef, np.uint32))
+        fn.buffer('counts').set(queue, orig_counts)
         fn()
         counts = fn.buffer('counts').get(queue)
 
         assert_equal((baselines, 8), counts.shape)
-        expected = np.zeros_like(counts)
+        expected = orig_counts[:]
         included_flags = flags[:, channel_range.asslice()]
         for i in range(8):
-            expected[:, i] = np.count_nonzero(included_flags & (1 << i), axis=1)
+            expected[:, i] += np.count_nonzero(included_flags & (1 << i), axis=1).astype(np.uint32)
         np.testing.assert_equal(expected, counts)
 
     @device_test
@@ -520,6 +521,10 @@ class TestIngestOperation(object):
             ('ingest:flagger:transpose_flags', {
                 'class': 'katsdpsigproc.transpose.Transpose',
                 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)
+            }),
+            ('ingest:count_flags', {
+                'channels': 128, 'baselines': 192, 'channel_range': (16, 96),
+                'class': 'katsdpingest.sigproc.CountFlags'
             }),
             ('ingest:accum', {
                 'baselines': 192, 'channel_range': (16, 96), 'channels': 128,
