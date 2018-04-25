@@ -622,7 +622,7 @@ class TestIngestOperation(object):
             bl2 = input_auto_baseline[baseline_inputs[i][1]]
             with np.errstate(divide='ignore'):
                 weights[..., i] = np.float32(n_accs) / ((vis[..., bl1].real * vis[..., bl2].real))
-                weights = np.where(np.isfinite(weights), weights, np.float32(2**-64))
+                weights = np.where(np.isfinite(weights), weights, np.float32(2**-32))
         # Compute flags
         flags = np.empty(vis.shape, dtype=np.uint8)
         for i in range(len(vis)):

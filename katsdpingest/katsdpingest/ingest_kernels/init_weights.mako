@@ -21,9 +21,9 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void init_weights(
         /* Most likely cause is that one (or both) of the autocorrelations
          * had zero power. This is assumed to be something wrong in the
          * system, so we set the weight to something very close to 0
-         * (2^-64).
+         * (2^-32).
          */
-        w = 5.42101086e-20f;
+        w = 2.3283064e-10;
     }
     weights[baseline * weights_stride + channel] = w;
 }
