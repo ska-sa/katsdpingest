@@ -758,6 +758,17 @@ class TestIngestOperation(object):
 
         return expected
 
+    def _make_flagger_template(self, context):
+        background_template = rfi.BackgroundMedianFilterDeviceTemplate(
+            context, width=13)
+        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
+            context, 10240)
+        threshold_template = rfi.ThresholdSimpleDeviceTemplate(
+            context, transposed=True, flag_value=self.flag_value)
+        flagger_template = rfi.FlaggerDeviceTemplate(
+            background_template, noise_est_template, threshold_template)
+        return flagger_template
+
     def _test_random(self, context, queue, excise, continuum):
         """Test with random data against a CPU implementation"""
         channels = 128
@@ -797,14 +808,7 @@ class TestIngestOperation(object):
         channel_flags = random_flags(rs, (dumps, channels), 2, p=0.05)
         baseline_flags = random_flags(rs, (dumps, baselines), 2, p=0.05)
 
-        background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-            context, width=13)
-        noise_est_template = rfi.NoiseEstMADTDeviceTemplate(
-            context, 10240)
-        threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-            context, transposed=True, flag_value=self.flag_value)
-        flagger_template = rfi.FlaggerDeviceTemplate(
-            background_template, noise_est_template, threshold_template)
+        flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12], excise, continuum)
         fn = template.instantiate(
             queue, channels, channel_range, inputs,
@@ -879,3 +883,44 @@ class TestIngestOperation(object):
     def test_random_no_continuum(self, context, queue):
         """Test with random data against a CPU implementation (without continuum averaging)"""
         self._test_random(context, queue, True, False)
+
+    @device_test
+    def test_zero_antenna(self, context, queue):
+        """If all data for an antenna is zero, it must not cause NaNs in the output."""
+        channels = 4
+        dumps = 2
+        inputs = 2
+        baselines = 4
+
+        flagger_template = self._make_flagger_template(context)
+        template = sigproc.IngestTemplate(context, flagger_template, [0, 2, 4], True, True)
+        fn = template.instantiate(
+            queue, channels, Range(0, channels),
+            2, 4, 4, 2, 2, [(0, 1), (1, 2), (2, 4)],
+            threshold_args={'n_sigma': 3.0})
+        fn.ensure_all_bound()
+        fn.n_accs = 1
+        fn.buffer('permutation').set(queue, np.array([0, 1, 2, 3], dtype=np.int16))
+        fn.buffer('input_auto_baseline').set(queue, np.array([0, 1], dtype=np.uint16))
+        fn.buffer('baseline_inputs').set(
+            queue, np.array([[0, 0], [1, 1], [0, 1], [1, 0]], dtype=np.uint16))
+        fn.buffer('timeseries_weights').set(queue, np.full(channels, 1 / channels, np.float32))
+
+        fn.start_sum()
+        fn.start_sd_sum()
+        for i in range(dumps):
+            fn.buffer('vis_in').zero(queue)
+            fn.buffer('channel_flags').zero(queue)
+            fn.buffer('baseline_flags').zero(queue)
+            fn()
+        fn.end_sum()
+        fn.end_sd_sum()
+
+        spec_vis = fn.buffer('spec_vis').get(queue)
+        spec_flags = fn.buffer('spec_flags').get(queue)
+        cont_vis = fn.buffer('cont_vis').get(queue)
+        cont_flags = fn.buffer('cont_flags').get(queue)
+        np.testing.assert_equal(0 + 0j, spec_vis)
+        np.testing.assert_equal(0, spec_flags)
+        np.testing.assert_equal(0 + 0j, cont_vis)
+        np.testing.assert_equal(0, cont_flags)
