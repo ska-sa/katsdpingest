@@ -830,14 +830,9 @@ class CBFIngest(object):
             shape=(), dtype=None, format=inline_format,
             value=all_cont_channels)
         self.ig_sd.add_item(
-            name='sd_flag_counts', id=0x350B,
-            description="Count of visibilities having each flag bit, per baseline",
-            shape=(n_baselines, 8), dtype=np.uint32)
-        self.ig_sd.add_item(
-            name='sd_flag_counts_scale', id=0x350C,
-            description="Total number of visibilities represented by each entry of sd_flag_counts",
-            shape=(), dtype=np.uint32,
-            value=self._sd_avg.ratio * len(self.channel_ranges.sd_output))
+            name='sd_flag_fraction', id=0x350B,
+            description="Fraction of channels having each flag bit, per baseline",
+            shape=(n_baselines, 8), dtype=np.float32)
         self.ig_sd.add_item(
             name="frequency", id=0x4103,
             description="The frequency channel of the data in this heap.",
@@ -1104,6 +1099,9 @@ class CBFIngest(object):
             timeseries = host_sd_output['timeseries']
             timeseriesabs = host_sd_output['timeseriesabs']
             flag_counts = host_sd_output['sd_flag_counts']
+            flag_counts_scale = self._sd_avg.ratio * len(self.channel_ranges.sd_output)
+            flag_fraction = flag_counts.astype(np.float32) / np.float32(flag_counts_scale)
+            assert flag_fraction.dtype == np.float32
             percentiles = []
             percentiles_flags = []
             for i in range(len(proc.percentiles)):
@@ -1133,7 +1131,7 @@ class CBFIngest(object):
             self.ig_sd['sd_timeseriesabs'].value = timeseriesabs
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
-            self.ig_sd['sd_flag_counts'].value = flag_counts
+            self.ig_sd['sd_flag_fraction'].value = flag_fraction
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()
