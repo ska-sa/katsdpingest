@@ -132,7 +132,7 @@ class TestInitWeights(object):
 
         rs = np.random.RandomState(seed=1)
         auto_weights = rs.uniform(1.0, 2.0, size=(inputs, channels)).astype(np.float32)
-        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs, size=(baselines, 2)).astype(np.uint16)
 
         template = sigproc.InitWeightsTemplate(context)
         fn = template.instantiate(queue, channels, inputs, baselines)
@@ -154,6 +154,48 @@ class TestInitWeights(object):
     @force_autotune
     def test_autotune(self, context, queue):
         sigproc.InitWeightsTemplate(context)
+
+
+class TestCountFlags(object):
+    """Test :class:`katsdpingest.sigproc.CountFlags`"""
+
+    @device_test
+    def test_random(self, context, queue):
+        """Basic test using random data"""
+        channels = 1243
+        channel_range = Range(64, 1235)
+        baselines = 97
+        mask = 255 - (1 << 6)
+
+        rs = np.random.RandomState(seed=1)
+        flags = rs.randint(0, 256, size=(baselines, channels)).astype(np.uint8)
+        baseline_flags = random_flags(rs, (baselines,), 2, 0.05)
+        channel_flags = random_flags(rs, (channels,), 3, 0.05)
+        orig_counts = rs.randint(0, 10000, size=(baselines, 8)).astype(np.uint32)
+
+        template = sigproc.CountFlagsTemplate(context)
+        fn = template.instantiate(queue, channels, channel_range, baselines, mask)
+        fn.ensure_all_bound()
+        fn.buffer('flags').set(queue, flags)
+        fn.buffer('counts').set(queue, orig_counts)
+        fn.buffer('baseline_flags').set(queue, baseline_flags)
+        fn.buffer('channel_flags').set(queue, channel_flags)
+        fn()
+        counts = fn.buffer('counts').get(queue)
+
+        assert_equal((baselines, 8), counts.shape)
+        expected = orig_counts[:]
+        combined_flags = flags | baseline_flags[:, np.newaxis] | channel_flags[np.newaxis, :]
+        combined_flags &= mask
+        included_flags = combined_flags[:, channel_range.asslice()]
+        for i in range(8):
+            expected[:, i] += np.count_nonzero(included_flags & (1 << i), axis=1).astype(np.uint32)
+        np.testing.assert_equal(expected, counts)
+
+    @device_test
+    @force_autotune
+    def test_autotune(self, context, queue):
+        sigproc.CountFlagsTemplate(context)
 
 
 class TestAccum(object):
@@ -419,6 +461,7 @@ class TestIngestOperation(object):
     def test_descriptions(self, *args):
         channels = 128
         channel_range = Range(16, 96)
+        count_flags_channel_range = Range(8, 104)
         cbf_baselines = 220
         inputs = 32
         baselines = 192
@@ -435,7 +478,7 @@ class TestIngestOperation(object):
             background_template, noise_est_template, threshold_template)
         template = sigproc.IngestTemplate(context, flagger_template, [8, 12], True, True)
         fn = template.instantiate(
-            command_queue, channels, channel_range, inputs,
+            command_queue, channels, channel_range, count_flags_channel_range, inputs,
             cbf_baselines, baselines,
             8, 16, [(0, 8), (10, 22)],
             threshold_args={'n_sigma': 11.0})
@@ -487,6 +530,10 @@ class TestIngestOperation(object):
             ('ingest:flagger:transpose_flags', {
                 'class': 'katsdpsigproc.transpose.Transpose',
                 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)
+            }),
+            ('ingest:count_flags', {
+                'channels': 128, 'baselines': 192, 'channel_range': (8, 104),
+                'class': 'katsdpingest.sigproc.CountFlags', 'mask': 191
             }),
             ('ingest:accum', {
                 'baselines': 192, 'channel_range': (16, 96), 'channels': 128,
@@ -561,11 +608,12 @@ class TestIngestOperation(object):
 
     def run_host_basic(self, vis, channel_flags, baseline_flags, n_accs, permutation,
                        input_auto_baseline, baseline_inputs,
-                       cont_factor, channel_range, n_sigma, excise):
+                       cont_factor, channel_range, count_flags_channel_range, n_sigma, excise):
         """Simple CPU implementation. All inputs and outputs are channel-major.
         There is no support for separate cadences for main and signal display
         products; instead, call the function twice with different time slices.
-        No signal display calculations are performed.
+        No signal display calculations are performed, with the exception of
+        flag counting.
 
         Parameters
         ----------
@@ -587,6 +635,9 @@ class TestIngestOperation(object):
             Number of spectral channels per continuum channel
         channel_range: :class:`katsdpingest.utils.Range`
             Range of channels to retain in the output
+        count_flags_channel_range: :class:`katsdpingest.utils.Range`
+            Range of channels for which to count flags. May be ``None`` if flag
+            counting is not required.
         n_sigma : float
             Significance level for flagger
         excise : bool
@@ -634,6 +685,12 @@ class TestIngestOperation(object):
             weights *= (flags == 0).astype(np.float32) + 2**-64
             # Mark unflagged visibilities
             flags |= np.where(flags == 0, self.unflagged_bit, 0).astype(np.uint8)
+        # Count flags
+        if count_flags_channel_range is not None:
+            flag_counts = np.empty((new_baselines, 8), np.uint32)
+            flags_to_count = flags[:, count_flags_channel_range.asslice(), :] & ~self.unflagged_bit
+            for i in range(8):
+                flag_counts[:, i] = np.count_nonzero(flags_to_count & (1 << i), axis=(0, 1))
 
         # Time accumulation
         vis = np.sum(vis * weights, axis=0)
@@ -657,7 +714,7 @@ class TestIngestOperation(object):
             self.finalise_host(vis, flags, weights, excise)
         cont_vis, cont_flags, cont_weights, cont_weights_channel = \
             self.finalise_host(cont_vis, cont_flags, cont_weights, excise)
-        return {
+        ans = {
             'spec_vis': spec_vis,
             'spec_flags': spec_flags,
             'spec_weights': spec_weights,
@@ -667,12 +724,15 @@ class TestIngestOperation(object):
             'cont_weights': cont_weights,
             'cont_weights_channel': cont_weights_channel
         }
+        if count_flags_channel_range is not None:
+            ans['flag_counts'] = flag_counts
+        return ans
 
     def run_host(
             self, vis, channel_flags, baseline_flags,
             n_vis, n_sd_vis, n_accs, permutation,
             input_auto_baseline, baseline_inputs,
-            cont_factor, sd_cont_factor, channel_range,
+            cont_factor, sd_cont_factor, channel_range, count_flags_channel_range,
             n_sigma, excise, timeseries_weights, percentile_ranges):
         """Simple CPU implementation. All inputs and outputs are channel-major.
         There is no support for separate cadences for main and signal display
@@ -727,11 +787,11 @@ class TestIngestOperation(object):
         expected = self.run_host_basic(
             vis[:n_vis], channel_flags[:n_vis], baseline_flags[:n_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
-            cont_factor, channel_range, n_sigma, excise)
+            cont_factor, channel_range, None, n_sigma, excise)
         sd_expected = self.run_host_basic(
             vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
-            sd_cont_factor, channel_range, n_sigma, excise)
+            sd_cont_factor, channel_range, count_flags_channel_range, n_sigma, excise)
         for (name, value) in sd_expected.iteritems():
             expected['sd_' + name] = value
 
@@ -773,6 +833,7 @@ class TestIngestOperation(object):
         """Test with random data against a CPU implementation"""
         channels = 128
         channel_range = Range(16, 96)
+        count_flags_channel_range = Range(8, 104)
         kept_channels = len(channel_range)
         cbf_baselines = 220
         baselines = 192
@@ -793,7 +854,7 @@ class TestIngestOperation(object):
         permutation = rs.permutation(cbf_baselines).astype(np.int16)
         permutation[permutation >= baselines] = -1
         input_auto_baseline = rs.permutation(baselines)[:inputs].astype(np.uint16)
-        baseline_inputs = rs.randint(0, inputs - 1, size=(baselines, 2)).astype(np.uint16)
+        baseline_inputs = rs.randint(0, inputs, size=(baselines, 2)).astype(np.uint16)
         # Make sure baseline_inputs is consistent with input_auto_baseline
         for i in range(inputs):
             baseline_inputs[input_auto_baseline, :] = i
@@ -811,7 +872,7 @@ class TestIngestOperation(object):
         flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 8, 12], excise, continuum)
         fn = template.instantiate(
-            queue, channels, channel_range, inputs,
+            queue, channels, channel_range, count_flags_channel_range, inputs,
             cbf_baselines, baselines,
             cont_factor, sd_cont_factor, percentile_ranges,
             threshold_args={'n_sigma': n_sigma})
@@ -827,7 +888,7 @@ class TestIngestOperation(object):
             data_keys.extend(['cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags'])
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
-                   'timeseries', 'timeseriesabs']
+                   'timeseries', 'timeseriesabs', 'sd_flag_counts']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))
@@ -855,8 +916,8 @@ class TestIngestOperation(object):
             vis_in, channel_flags, baseline_flags,
             dumps, sd_dumps, n_accs, permutation,
             input_auto_baseline, baseline_inputs,
-            cont_factor, sd_cont_factor, channel_range, n_sigma, excise,
-            timeseries_weights, percentile_ranges)
+            cont_factor, sd_cont_factor, channel_range, count_flags_channel_range,
+            n_sigma, excise, timeseries_weights, percentile_ranges)
 
         for name in data_keys + sd_keys:
             err_msg = '{0} is not equal'.format(name)
@@ -895,7 +956,7 @@ class TestIngestOperation(object):
         flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 2, 4], True, True)
         fn = template.instantiate(
-            queue, channels, Range(0, channels),
+            queue, channels, Range(0, channels), Range(0, channels),
             2, 4, 4, 2, 2, [(0, 1), (1, 2), (2, 4)],
             threshold_args={'n_sigma': 3.0})
         fn.ensure_all_bound()
