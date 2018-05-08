@@ -2,6 +2,6 @@ backports.ssl-match-hostname    # via docker
 docker-pycreds==0.2.3     # via docker
 docker==3.3.0
 ipaddress                 # via docker
-requests                  # via docker
+requests==2.18.4          # via docker
 six                       # via docker, docker-pycreds
 websocket-client==0.47.0  # via docker
