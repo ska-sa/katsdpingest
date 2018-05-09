@@ -22,7 +22,7 @@ def get_existing(cli, image):
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
         data, _ = cli.get_archive(container['Id'], '/home/kat/.cache/katsdpsigproc')
-        return data.read()
+        b''.join(data)
     finally:
         cli.remove_container(container_id)
 
@@ -83,29 +83,15 @@ def main():
     # put_archive makes the cache owned by root. To deal with this, we run as
     # root, then fix up permissions afterwards.
     command = ['sh', '-c', 'HOME=/home/kat ingest_autotune.py && chown -R kat:kat /home/kat/.cache']
-    # It's tempting to use the nvidia-docker REST API to get the appropriate
-    # options, but that has two drawbacks:
-    # 1. This script is run inside a Docker container as part of CI, and
-    # there is no access from that container to the host's nvidia-docker-plugin
-    # daemon.
-    # 2. If that was fixed, the REST API would enumerate all GPUs in the
-    # system, instead of just those assigned to the particular Jenkins slave.
-    #
-    # So instead, we fall back on working out the appropriate options
-    # by hand.
-    devices = glob.glob('/dev/nvidia*')
-    driver_version = subprocess.check_output(
-        ['nvidia-smi', '--query-gpu=driver_version', '--id=0', '--format=csv,noheader'])
-    driver_version = driver_version.strip()
-    if not driver_version:
-        raise RuntimeError('Could not determine NVIDIA driver version')
-    binds = ['nvidia_driver_' + driver_version + ':/usr/local/nvidia:ro']
-    volumes = ['/usr/local/nvidia']
+    # If we're running inside a Docker container, expose the same devices
+    # to our child container.
+    environment = ['NVIDIA_VISIBLE_DEVICES=' + os.environ.get('NVIDIA_VISIBLE_DEVICES', 'all')]
     container = cli.create_container(
         image=args.base_image,
         command=command,
-        user='root', volumes=volumes, volume_driver='nvidia-docker',
-        host_config=cli.create_host_config(devices=devices, binds=binds))
+        environment=environment,
+        user='root',
+        runtime='nvidia')
     try:
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
@@ -122,8 +108,8 @@ def main():
                 cli.stop(container_id, timeout=2)
                 raise
         else:
-            result = 0
-        if result == 0:
+            result = {u'StatusCode': 0, u'Error': None}
+        if result['StatusCode'] == 0:
             msg = 'Autotuning run at {}'.format(datetime.datetime.now().isoformat())
             image, tag = split_tag(args.image)
             # Passing 'USER kat' sets the user back to kat, since we
@@ -132,7 +118,7 @@ def main():
             print('Committed to', args.image)
             return 0
         else:
-            print('Autotuning failed with status', result)
+            print('Autotuning failed with status {0[Error]} ({0[StatusCode]})', result)
             return 1
     finally:
         cli.remove_container(container_id)
