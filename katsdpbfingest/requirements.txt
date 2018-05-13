@@ -1,6 +1,6 @@
 backports-abc             # via tornado
 certifi                   # via tornado
-dask==0.17.0              # via katsdpfilewriter
+dask                      # via katsdpfilewriter
 fakeredis                 # via katsdptelstate
 future                    # via katcp, katpoint
 futures
@@ -22,7 +22,7 @@ redis                     # via katsdptelstate
 singledispatch            # via tornado
 six                       # via h5py, singledispatch, spead2, trollius
 spead2                    # via katsdpfilewriter
-toolz==0.9.0              # via dask
+toolz                     # via dask
 tornado
 trollius
 git+ssh://git@github.com/ska-sa/katsdpdata#egg=katsdpfilewriter&subdirectory=katsdpfilewriter
