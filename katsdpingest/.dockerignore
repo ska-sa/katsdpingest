@@ -8,3 +8,4 @@ doc/_build
 *.pyc
 __pycache__
 .git
+Dockerfile
