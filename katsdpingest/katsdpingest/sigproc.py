@@ -458,7 +458,7 @@ class CountFlagsTemplate(object):
 
     A single count is made per baseline, summing over all channels. Note that
     a single flag byte can contain multiple flags, which are counted towards
-    all of them.
+    all of them. A separate count is made of values with any flag bit set.
 
     Parameters
     ----------
@@ -470,7 +470,7 @@ class CountFlagsTemplate(object):
 
         - wgs: number of workitems per workgroup in channel dimension
     """
-    autotune_version = 0
+    autotune_version = 1
 
     def __init__(self, context, tuning=None):
         if tuning is None:
@@ -493,11 +493,12 @@ class CountFlagsTemplate(object):
         rs = np.random.RandomState(seed=1)
         flags.set(queue, rs.randint(0, 256, flags.shape).astype(np.uint8))
         counts = accel.DeviceArray(context, (baselines, 8), np.uint32)
+        any_counts = accel.DeviceArray(context, (baselines,), np.uint32)
 
         def generate(wgs):
             template = cls(context, tuning={'wgs': wgs})
             fn = template.instantiate(queue, channels, Range(0, channels), baselines)
-            fn.bind(flags=flags, counts=counts)
+            fn.bind(flags=flags, counts=counts, any_counts=any_counts)
             return tune.make_measure(queue, fn)
         return tune.autotune(generate, wgs=[64, 128, 256, 512])
 
@@ -510,6 +511,9 @@ class CountFlags(accel.Operation):
 
     .. rubric:: Slots
 
+    Note that **counts** and **any_counts** are incremented i.e., results
+    accumulate across multiple calls.
+
     **flags** : baselines × channels, uint8
         Input flags
     **channel_flags** : channels, uint8
@@ -518,8 +522,9 @@ class CountFlags(accel.Operation):
         Extra flags applied per baseline
     **counts** : baselines × 8, uint32
         Number of times each bit is set per baseline. Bits are counted
-        from the LSB. Note that this is *incremented* by the count i.e.
-        results accumulate across multiple calls.
+        from the LSB.
+    **any_counts** : baselines, uint32
+        Number of times any bit is set, per baseline.
 
     Parameters
     ----------
@@ -548,13 +553,16 @@ class CountFlags(accel.Operation):
         self.slots['channel_flags'] = accel.IOSlot((channels,), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot((baselines,), np.uint8)
         self.slots['counts'] = accel.IOSlot((baselines, bits), np.uint32)
+        self.slots['any_counts'] = accel.IOSlot((baselines,), np.uint32)
 
     def _run(self):
         flags = self.buffer('flags')
         counts = self.buffer('counts')
+        any_counts = self.buffer('any_counts')
         self.command_queue.enqueue_kernel(
             self.template.kernel, [
                 counts.buffer,
+                any_counts.buffer,
                 flags.buffer,
                 self.buffer('channel_flags').buffer,
                 self.buffer('baseline_flags').buffer,
@@ -1313,6 +1321,8 @@ class IngestOperation(accel.OperationSequence):
         set of baselines in **percentileN**
     **sd_flag_counts** : baselines × 8, uint32
         Number of times each flag bit was encountered (before time averaging)
+    **sd_flag_any_counts** : baselines, uint32
+        Number of times any flag bit was encountered (before time averaging)
 
     .. rubric:: Scratch slots
 
@@ -1470,6 +1480,7 @@ class IngestOperation(accel.OperationSequence):
             'noise':          ['flagger:noise'],
             'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags'],
             'sd_flag_counts': ['count_flags:counts'],
+            'sd_flag_any_counts': ['count_flags:any_counts'],
             'spec_vis':       ['accum:vis_out0', 'zero_spec:vis'],
             'spec_weights_fp32': ['accum:weights_out0', 'zero_spec:weights'],
             'spec_flags':     ['accum:flags_out0', 'zero_spec:flags'],
@@ -1524,6 +1535,10 @@ class IngestOperation(accel.OperationSequence):
         self.init_weights()
         self.transpose_vis()
         self.flagger()
+        # The per-bit flags are sent to the signal displays, so are
+        # accumulated across signal display intervals. The overall flagged
+        # count is done at CBF cadence so they're reset here immediately
+        # before being incremented.
         self.count_flags()
         self.accum()
 
@@ -1547,6 +1562,7 @@ class IngestOperation(accel.OperationSequence):
 
         self.zero_sd_spec()
         self.buffer('sd_flag_counts').zero(self.command_queue)
+        self.buffer('sd_flag_any_counts').zero(self.command_queue)
 
     def end_sd_sum(self):
         """Perform postprocessing for a signal display dump. This only does
