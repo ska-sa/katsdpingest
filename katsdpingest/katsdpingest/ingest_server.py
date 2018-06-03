@@ -93,6 +93,14 @@ class IngestDeviceServer(AsyncDeviceServer):
                    "Number of payload dumps sent on L0 in this session "
                    " (prometheus: counter)",
                    initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "output-vis-total",
+                   "Number of spectral visibilities computed for signal displays in this session "
+                   " (prometheus: counter)",
+                   initial_status=Sensor.NOMINAL),
+            Sensor(Sensor.INTEGER, "output-flagged-total",
+                   "Number of flagged visibilities (out of output-vis-total) "
+                   " (prometheus: counter)",
+                   initial_status=Sensor.NOMINAL),
             Sensor(Sensor.BOOLEAN, "descriptors-received",
                    "Whether the SPEAD descriptors have been received "
                    " (prometheus: gauge)",
