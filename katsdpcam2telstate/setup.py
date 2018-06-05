@@ -16,7 +16,7 @@ setup(
         'katsdpservices',
         'katsdptelstate',
         'katportalclient',
-        'tornado>=4.0',
+        'tornado>=4.0, <5',
         'six'
     ],
     use_katversion=True
