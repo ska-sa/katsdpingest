@@ -26,7 +26,7 @@ setup(
         'katsdpservices',
         'katsdptelstate',
         'trollius',
-        'tornado'
+        'tornado<5'
     ],
     extras_require={
         'test': tests_require
