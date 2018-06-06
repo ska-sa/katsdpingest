@@ -205,11 +205,17 @@ class SensorWrapper(object):
 
     @value.setter
     def value(self, new_value):
+        self.set_value(new_value)
+
+    def set_value(self, new_value, timestamp=None):
         new_status = self._status_func(new_value)
         if new_value != self._value or new_status != self._status:
             self._value = new_value
             self._status = new_status
-            self._sensor.set_value(new_value, status=new_status)
+            self._sensor.set_value(new_value, status=new_status, timestamp=timestamp)
+
+    def increment(self, delta, timestamp=None):
+        self.set_value(self.value + delta, timestamp)
 
 
 __all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'SensorWrapper']

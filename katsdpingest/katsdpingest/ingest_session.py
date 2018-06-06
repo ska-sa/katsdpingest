@@ -27,6 +27,7 @@ import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
 from . import utils, receiver, sender, sigproc
+from .utils import SensorWrapper
 
 
 logger = logging.getLogger(__name__)
@@ -575,12 +576,12 @@ class CBFIngest(object):
                                       excise=excise, continuum=continuum)
 
     def _zero_counters(self):
-        self.output_bytes = 0
-        self.output_bytes_sensor.set_value(0)
-        self.output_heaps = 0
-        self.output_heaps_sensor.set_value(0)
-        self.output_dumps = 0
-        self.output_dumps_sensor.set_value(0)
+        now = time.time()
+        self.output_bytes_sensor.set_value(0, now)
+        self.output_heaps_sensor.set_value(0, now)
+        self.output_dumps_sensor.set_value(0, now)
+        self.output_flagged_sensor.set_value(0, now)
+        self.output_vis_sensor.set_value(0, now)
 
     def _init_baselines(self, antenna_mask):
         # Configure the masking and reordering of baselines
@@ -613,9 +614,11 @@ class CBFIngest(object):
         my_sensors['output-n-chans'].set_value(len(self.channel_ranges.output))
         my_sensors['output-int-time'].set_value(
             self.cbf_attr['int_time'] * self._output_avg.ratio)
-        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
-        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
-        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
+        self.output_bytes_sensor = SensorWrapper(self._my_sensors['output-bytes-total'])
+        self.output_heaps_sensor = SensorWrapper(self._my_sensors['output-heaps-total'])
+        self.output_dumps_sensor = SensorWrapper(self._my_sensors['output-dumps-total'])
+        self.output_flagged_sensor = SensorWrapper(self._my_sensors['output-flagged-total'])
+        self.output_vis_sensor = SensorWrapper(self._my_sensors['output-vis-total'])
         self.status_sensor = self._my_sensors['status']
         self.status_sensor.set_value("init")
         self._zero_counters()
@@ -661,7 +664,8 @@ class CBFIngest(object):
                         for suffix in ['vis', 'flags', 'weights', 'weights_channel']], 2)
         self.sd_input_resource = _ResourceSet(self.proc, ['timeseries_weights'], 2)
         sd_output_names = ['sd_cont_vis', 'sd_cont_flags', 'sd_spec_vis', 'sd_spec_flags',
-                           'timeseries', 'timeseriesabs', 'sd_flag_counts']
+                           'timeseries', 'timeseriesabs',
+                           'sd_flag_counts', 'sd_flag_any_counts']
         for i in range(len(self.proc.percentiles)):
             base_name = 'percentile{}'.format(i)
             sd_output_names.append(base_name)
@@ -988,16 +992,22 @@ class CBFIngest(object):
             ts_rel = _mid_timestamp_rel(self._output_avg, self.rx, output_idx)
             yield From(resource.async_wait_for_events([transfer_done]))
             futures = []
+            # Compute deltas before updating the sensors, so that only a single
+            # update is observed.
+            inc_bytes = 0
+            inc_heaps = 0
+            inc_dumps = 0
             for (name, tx) in self.tx.iteritems():
                 part = data[name]
-                self.output_bytes += part.nbytes
-                self.output_heaps += tx.size
-                self.output_dumps += 1
+                inc_bytes += part.nbytes
+                inc_heaps += tx.size
+                inc_dumps += 1
                 futures.append(tx.send(part, output_idx, ts_rel))
             yield From(trollius.gather(*futures))
-            self.output_bytes_sensor.set_value(self.output_bytes)
-            self.output_heaps_sensor.set_value(self.output_heaps)
-            self.output_dumps_sensor.set_value(self.output_dumps)
+            now = time.time()
+            self.output_bytes_sensor.increment(inc_bytes, timestamp=now)
+            self.output_heaps_sensor.increment(inc_heaps, timestamp=now)
+            self.output_dumps_sensor.increment(inc_dumps, timestamp=now)
             host_output_a.ready()
             logger.debug("Finished dump group with index %d", output_idx)
 
@@ -1132,6 +1142,13 @@ class CBFIngest(object):
             self.ig_sd['sd_percspectrum'].value = np.vstack(percentiles).transpose()
             self.ig_sd['sd_percspectrumflags'].value = np.vstack(percentiles_flags).transpose()
             self.ig_sd['sd_flag_fraction'].value = flag_fraction
+
+            # Update sensors
+            flag_any_count = np.sum(host_sd_output['sd_flag_any_counts'])
+            n_baselines = len(self.bls_ordering.sdp_bls_ordering)
+            now = time.time()
+            self.output_flagged_sensor.increment(flag_any_count, now)
+            self.output_vis_sensor.increment(flag_counts_scale * n_baselines, now)
 
             yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()

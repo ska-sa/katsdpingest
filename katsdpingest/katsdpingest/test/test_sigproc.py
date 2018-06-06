@@ -172,16 +172,19 @@ class TestCountFlags(object):
         baseline_flags = random_flags(rs, (baselines,), 2, 0.05)
         channel_flags = random_flags(rs, (channels,), 3, 0.05)
         orig_counts = rs.randint(0, 10000, size=(baselines, 8)).astype(np.uint32)
+        orig_any_counts = rs.randint(0, 10000, size=baselines).astype(np.uint32)
 
         template = sigproc.CountFlagsTemplate(context)
         fn = template.instantiate(queue, channels, channel_range, baselines, mask)
         fn.ensure_all_bound()
         fn.buffer('flags').set(queue, flags)
         fn.buffer('counts').set(queue, orig_counts)
+        fn.buffer('any_counts').set(queue, orig_any_counts)
         fn.buffer('baseline_flags').set(queue, baseline_flags)
         fn.buffer('channel_flags').set(queue, channel_flags)
         fn()
         counts = fn.buffer('counts').get(queue)
+        any_counts = fn.buffer('any_counts').get(queue)
 
         assert_equal((baselines, 8), counts.shape)
         expected = orig_counts[:]
@@ -191,6 +194,11 @@ class TestCountFlags(object):
         for i in range(8):
             expected[:, i] += np.count_nonzero(included_flags & (1 << i), axis=1).astype(np.uint32)
         np.testing.assert_equal(expected, counts)
+
+        assert_equal((baselines,), any_counts.shape)
+        expected = orig_any_counts[:]
+        expected += np.count_nonzero(included_flags, axis=1).astype(np.uint32)
+        np.testing.assert_equal(expected, any_counts)
 
     @device_test
     @force_autotune
@@ -688,9 +696,11 @@ class TestIngestOperation(object):
         # Count flags
         if count_flags_channel_range is not None:
             flag_counts = np.empty((new_baselines, 8), np.uint32)
+            flag_any_counts = np.empty((new_baselines,), np.uint32)
             flags_to_count = flags[:, count_flags_channel_range.asslice(), :] & ~self.unflagged_bit
             for i in range(8):
                 flag_counts[:, i] = np.count_nonzero(flags_to_count & (1 << i), axis=(0, 1))
+            flag_any_counts[:] = np.count_nonzero(flags_to_count, axis=(0, 1))
 
         # Time accumulation
         vis = np.sum(vis * weights, axis=0)
@@ -726,6 +736,7 @@ class TestIngestOperation(object):
         }
         if count_flags_channel_range is not None:
             ans['flag_counts'] = flag_counts
+            ans['flag_any_counts'] = flag_any_counts
         return ans
 
     def run_host(
@@ -888,7 +899,7 @@ class TestIngestOperation(object):
             data_keys.extend(['cont_vis', 'cont_weights', 'cont_weights_channel', 'cont_flags'])
         sd_keys = ['sd_spec_vis', 'sd_spec_weights', 'sd_spec_flags',
                    'sd_cont_vis', 'sd_cont_weights', 'sd_cont_flags',
-                   'timeseries', 'timeseriesabs', 'sd_flag_counts']
+                   'timeseries', 'timeseriesabs', 'sd_flag_counts', 'sd_flag_any_counts']
         for i in range(len(percentile_ranges)):
             sd_keys.append('percentile{0}'.format(i))
             sd_keys.append('percentile{0}_flags'.format(i))
