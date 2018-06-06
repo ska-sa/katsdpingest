@@ -87,9 +87,9 @@ setup(
         'futures',
         'numpy',
         'katcp',
-        'katsdpfilewriter',
         'katsdpservices',
         'katsdptelstate',
+        'spead2',
         'tornado<5',
         'trollius'
     ],
