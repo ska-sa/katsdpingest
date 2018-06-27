@@ -203,6 +203,7 @@ SENSORS = [
     Sensor('anc_wind_direction'),
     Sensor('anc_mean_wind_speed'),
     Sensor('anc_siggen_ku_frequency'),
+    Sensor('anc_tfr_ktt_gnss'),
     Sensor('mcp_dmc_version_list', immutable=True)
 ]
 
