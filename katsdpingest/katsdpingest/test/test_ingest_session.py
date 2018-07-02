@@ -1,9 +1,9 @@
 """Tests for the ingest_session module"""
 
 import numpy as np
-import mock
-from nose.tools import assert_equal, assert_is
+from unittest import mock
 
+from nose.tools import assert_equal, assert_is
 from katsdpsigproc.test.test_accel import device_test
 from katsdptelstate import TelescopeState
 

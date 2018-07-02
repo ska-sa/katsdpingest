@@ -1,7 +1,5 @@
+async_timeout
+asynctest
 coverage
-linecache2               # via traceback2
-mock
 nose
 pbr                      # via mock
-traceback2               # via unittest2
-unittest2

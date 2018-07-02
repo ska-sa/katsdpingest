@@ -1,9 +1,10 @@
 """Miscellaneous ingest utilities"""
 
 import logging
+from typing import TypeVar
 
 import katsdptelstate
-import katcp
+import aiokatcp
 
 
 _logger = logging.getLogger(__name__)
@@ -179,43 +180,28 @@ class Range(object):
                      self.start + (chunk_id + 1) * chunk_size)
 
 
-class SensorWrapper(object):
-    """Convenience wrapper around a sensor.
+_T = TypeVar('_T')
 
-    It
-    - Provides property access to the value
-    - Caches the value of the sensor (removes the need for locking)
-    - Filters out updates that don't change the value
-    - Allows the status to be computed from the value
 
-    Because of the caching, it is important that the sensor is not modified
-    other than through the wrapper.
+class Sensor(aiokatcp.Sensor[_T]):
+    """Wrapper around :class:`aiokatcp.Sensor` that suppresses redundant updates.
+
+    A value update that doesn't change the value or the status is hidden from
+    the base class, so that observers using the AUTO strategy don't see
+    redundant updates.
+
+    It also provides a helper function to increment the value and set an
+    explicit timestamp.
     """
-    def __init__(self, sensor, initial_value=None, status_func=lambda x: katcp.Sensor.NOMINAL):
-        self._sensor = sensor
-        self._status = sensor.status()
-        self._value = sensor.value()
-        self._status_func = status_func
-        if initial_value is not None:
-            self.value = initial_value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, new_value):
-        self.set_value(new_value)
-
-    def set_value(self, new_value, timestamp=None):
-        new_status = self._status_func(new_value)
-        if new_value != self._value or new_status != self._status:
-            self._value = new_value
-            self._status = new_status
-            self._sensor.set_value(new_value, status=new_status, timestamp=timestamp)
+    def set_value(self, value: _T, status: aiokatcp.Sensor.Status = None,
+                  timestamp: float = None) -> None:
+        if status is None:
+            status = self.status_func(value)
+        if value != self.value or status != self.status:
+            super().set_value(value, status, timestamp)
 
     def increment(self, delta, timestamp=None):
         self.set_value(self.value + delta, timestamp)
 
 
-__all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'SensorWrapper']
+__all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'Sensor']

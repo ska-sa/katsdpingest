@@ -4,15 +4,14 @@ import logging
 from collections import deque
 import asyncio
 
-import katcp
 import spead2
 import spead2.recv
-import spead2.recv.trollius
+import spead2.recv.asyncio
 
 import numpy as np
 from katsdptelstate.endpoint import endpoints_to_str
 
-from .utils import Range, SensorWrapper
+from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -27,10 +26,6 @@ REJECT_HEAP_TYPES = {
     'missing': 'expected heap was not received',
     'metadata': 'heap without payload e.g. descriptor or start-of-stream'
 }
-
-
-def _warn_if_positive(value):
-    return katcp.Sensor.WARN if value > 0 else katcp.Sensor.NOMINAL
 
 
 class Frame(object):
@@ -81,7 +76,7 @@ class Receiver(object):
         Dictionary mapping CBF attribute names to value
     active_frames : int, optional
         Maximum number of incomplete frames to keep at one time
-    loop : :class:`trollius.BaseEventLoop`, optional
+    loop : :class:`asyncio.AbstractEventLoop`, optional
         I/O loop used for asynchronous operations
 
     Attributes
@@ -101,14 +96,14 @@ class Receiver(object):
         Deque of :class:`Frame` objects representing incomplete frames. After
         initialization, it always contains exactly `active_frames`
         elements, with timestamps separated by the inter-dump interval.
-    _frames_complete : :class:`trollius.Queue`
+    _frames_complete : :class:`asyncio.Queue`
         Queue of complete frames of type :class:`Frame`. It may also contain
         integers, which are the numbers of finished streams.
     _running : int
         Number of streams still running
-    _futures : list of :class:`trollius.Future`
+    _futures : list of :class:`asyncio.Future`
         Futures associated with each call to :meth:`_read_stream`
-    _streams : list of :class:`spead2.recv.trollius.Stream`
+    _streams : list of :class:`spead2.recv.asyncio.Stream`
         Individual SPEAD streams
     _stopping : bool
         Set to try by stop(). Note that some streams may still be running
@@ -148,13 +143,19 @@ class Receiver(object):
         self._loop = loop
         self._ig_cbf = spead2.ItemGroup()
 
-        self._input_bytes = SensorWrapper(sensors['input-bytes-total'], 0)
-        self._input_heaps = SensorWrapper(sensors['input-heaps-total'], 0)
-        self._input_dumps = SensorWrapper(sensors['input-dumps-total'], 0)
-        self._descriptors_received = SensorWrapper(sensors['descriptors-received'], False)
-        self._reject_heaps = {name: SensorWrapper(sensors['input-' + name + '-heaps-total'], 0,
-                                                  _warn_if_positive)
-                              for name in REJECT_HEAP_TYPES}
+        self._input_bytes = sensors['input-bytes-total']
+        self._input_bytes.value = 0
+        self._input_heaps = sensors['input-heaps-total']
+        self._input_heaps.value = 0
+        self._input_dumps = sensors['input-dumps-total']
+        self._input_dumps.value = 0
+        self._descriptors_received = sensors['descriptors-received']
+        self._descriptors_received.value = False
+        self._reject_heaps = {
+            name: sensors['input-' + name + '-heaps-total'] for name in REJECT_HEAP_TYPES
+        }
+        for sensor in self._reject_heaps.values():
+            sensor.value = 0
 
         n_streams = min(max_streams, len(use_endpoints))
         stream_buffer_size = buffer_size // n_streams
@@ -163,8 +164,8 @@ class Receiver(object):
             last = len(use_endpoints) * (i + 1) // n_streams
             self._streams.append(self._make_stream(use_endpoints[first:last],
                                                    max_packet_size, stream_buffer_size))
-            self._futures.append(asyncio.ensure_future(
-                self._read_stream(self._streams[-1], i, last - first), loop=loop))
+            self._futures.append(loop.create_task(
+                self._read_stream(self._streams[-1], i, last - first)))
         self._running = n_streams
 
     def stop(self):
@@ -174,17 +175,16 @@ class Receiver(object):
             if stream is not None:
                 stream.stop()
 
-    @asyncio.coroutine
-    def join(self):
+    async def join(self):
         """Wait for all the individual streams to stop. This must not
         be called concurrently with :meth:`get`.
 
         This is a coroutine.
         """
         while self._running > 0:
-            frame = yield from(self._frames_complete.get())
+            frame = await self._frames_complete.get()
             if isinstance(frame, int):
-                yield from(self._futures[frame])
+                await self._futures[frame]
                 self._futures[frame] = None
                 self._running -= 1
 
@@ -198,14 +198,12 @@ class Receiver(object):
         self._frames.popleft()
         self._frames.append(Frame(next_idx, next_timestamp, xengs))
 
-    @asyncio.coroutine
-    def _put_frame(self, frame):
+    async def _put_frame(self, frame):
         """Put a frame onto :attr:`_frames_complete` and update the sensor."""
         self._input_dumps.value += 1
-        yield from(self._frames_complete.put(frame))
+        await self._frames_complete.put(frame)
 
-    @asyncio.coroutine
-    def _flush_frames(self):
+    async def _flush_frames(self):
         """Remove any completed frames from the head of :attr:`_frames`."""
         while self._frames[0].ready():
             # Note: _pop_frame must be done *before* trying to put the
@@ -215,7 +213,7 @@ class Receiver(object):
             frame = self._frames[0]
             _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
             self._pop_frame()
-            yield from(self._put_frame(frame))
+            await self._put_frame(frame)
 
     def _add_readers(self, stream, endpoints, max_packet_size, buffer_size):
         """Subscribe a stream to a list of endpoints."""
@@ -264,7 +262,7 @@ class Receiver(object):
         #   - frame being processed by ingest_session (which could be several, depending on
         #     latency of the pipeline, but assume 3 to be on the safe side)
         memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
-        stream = spead2.recv.trollius.Stream(
+        stream = spead2.recv.asyncio.Stream(
             spead2.ThreadPool(),
             max_heaps=max_heaps,
             ring_heaps=ring_heaps, loop=self._loop,
@@ -291,8 +289,7 @@ class Receiver(object):
         """
         return candidate
 
-    @asyncio.coroutine
-    def _read_stream(self, stream, stream_idx, n_endpoints):
+    async def _read_stream(self, stream, stream_idx, n_endpoints):
         """Co-routine that sucks data from a single stream and populates
         :attr:`_frames_complete`."""
         try:
@@ -304,7 +301,7 @@ class Receiver(object):
             n_stop = 0
             while True:
                 try:
-                    heap = yield from(stream.get())
+                    heap = await stream.get()
                 except spead2.Stopped:
                     break
                 if heap.is_end_of_stream():
@@ -406,21 +403,20 @@ class Receiver(object):
                     else:
                         _logger.debug('Frame with timestamp %d is %d/%d complete', ts0,
                                       actual, expected)
-                        yield from(self._put_frame(frame))
+                        await self._put_frame(frame)
                     self._reject_heaps['missing'].value += expected - actual
                     del frame   # Free it up, particularly if discarded
-                    yield from(self._flush_frames())
+                    await self._flush_frames()
                     ts0 = self._frames[0].timestamp
                 frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
                 self._input_bytes.value += data_item.nbytes
                 self._input_heaps.value += 1
-                yield from(self._flush_frames())
+                await self._flush_frames()
         finally:
-            yield from(self._frames_complete.put(stream_idx))
+            await self._frames_complete.put(stream_idx)
 
-    @asyncio.coroutine
-    def get(self):
+    async def get(self):
         """Return the next frame.
 
         This is a coroutine.
@@ -431,11 +427,11 @@ class Receiver(object):
             if all the streams have stopped
         """
         while self._running > 0:
-            frame = yield from(self._frames_complete.get())
+            frame = await self._frames_complete.get()
             if isinstance(frame, int):
                 # It's actually the index of a finished stream
                 self._streams[frame].stop()   # In case the co-routine exited with an exception
-                yield from(self._futures[frame])
+                await self._futures[frame]
                 self._futures[frame] = None
                 self._running -= 1
             else:

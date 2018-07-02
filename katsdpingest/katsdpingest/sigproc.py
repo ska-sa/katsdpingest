@@ -15,7 +15,7 @@ from .utils import Range
 class Zero(accel.Operation):
     """Zeros out a set of visibilities, flags and weights with the same shape"""
     def __init__(self, command_queue, channels, baselines):
-        super(Zero, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.slots['vis'] = accel.IOSlot((channels, baselines), np.complex64)
         self.slots['weights'] = accel.IOSlot((channels, baselines), np.float32)
         self.slots['flags'] = accel.IOSlot((channels, baselines), np.uint8)
@@ -137,7 +137,7 @@ class Prepare(accel.Operation):
                  in_baselines, out_baselines):
         if in_baselines < out_baselines:
             raise ValueError('Baselines can only be discarded, not amplified')
-        super(Prepare, self).__init__(command_queue)
+        super().__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
@@ -278,7 +278,7 @@ class AutoWeights(accel.Operation):
         Number of baselines in the visibilities
     """
     def __init__(self, template, command_queue, channels, channel_range, inputs, baselines):
-        super(AutoWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.kernel = template.program.get_kernel('auto_weights')
         self.template = template
         self.channels = channels
@@ -414,7 +414,7 @@ class InitWeights(accel.Operation):
         Number of baselines
     """
     def __init__(self, template, command_queue, channels, inputs, baselines):
-        super(InitWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.kernel = template.program.get_kernel('init_weights')
         self.template = template
         self.channels = channels
@@ -541,7 +541,7 @@ class CountFlags(accel.Operation):
         Mask of flag bits to count
     """
     def __init__(self, template, command_queue, channels, channel_range, baselines, mask=0xff):
-        super(CountFlags, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.channel_range = channel_range
@@ -721,7 +721,7 @@ class Accum(accel.Operation):
     """
 
     def __init__(self, template, command_queue, channels, channel_range, baselines):
-        super(Accum, self).__init__(command_queue)
+        super().__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
@@ -925,7 +925,7 @@ class Postproc(accel.Operation):
         If `channels` is not a multiple of `cont_factor`
     """
     def __init__(self, template, command_queue, channels, baselines, cont_factor):
-        super(Postproc, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
@@ -1048,7 +1048,7 @@ class CompressWeights(accel.Operation):
         Number of baselines
     """
     def __init__(self, template, command_queue, channels, baselines):
-        super(CompressWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
@@ -1196,7 +1196,7 @@ class Finalise(accel.OperationSequence):
                 'cont_weights': ['compress_weights_cont:weights_out']
             })
 
-        super(Finalise, self).__init__(command_queue, operations, compounds)
+        super().__init__(command_queue, operations, compounds)
 
 
 class IngestTemplate(object):
@@ -1516,7 +1516,7 @@ class IngestOperation(accel.OperationSequence):
         if template.continuum:
             aliases['scratch1'].append('cont_weights_fp32')
 
-        super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
+        super().__init__(command_queue, operations, compounds, aliases)
 
     @property
     def n_accs(self):

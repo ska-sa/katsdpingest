@@ -1,7 +1,7 @@
 """Helper classes encapsulating the details of sending SPEAD streams."""
 
 import numpy as np
-import spead2.send.trollius
+import spead2.send.asyncio
 import logging
 import asyncio
 
@@ -30,12 +30,11 @@ class Data(object):
                 self.weights.nbytes + self.weights_channel.nbytes)
 
 
-@asyncio.coroutine
-def async_send_heap(stream, heap):
+async def async_send_heap(stream, heap):
     """Send a heap on a stream and wait for it to complete, but log and
     suppress exceptions."""
     try:
-        yield from(stream.async_send_heap(heap))
+        await stream.async_send_heap(heap)
     except Exception:
         _logger.warn("Error sending heap", exc_info=True)
 
@@ -80,7 +79,7 @@ class VisSender(object):
         if interface_address is not None:
             kwargs['interface_address'] = interface_address
             kwargs['ttl'] = 1
-        self._stream = spead2.send.trollius.UdpStream(
+        self._stream = spead2.send.asyncio.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
             spead2.send.StreamConfig(max_packet_size=8872, rate=rate), **kwargs)
         self._stream.set_cnt_sequence(channel0, all_channels)
@@ -109,23 +108,19 @@ class VisSender(object):
                           description="Channel index of first channel in the heap",
                           shape=(), dtype=np.uint32)
 
-    @asyncio.coroutine
-    def start(self):
+    async def start(self):
         """Send a start packet to the stream."""
-        yield from(async_send_heap(self._stream, self._ig.get_start()))
+        await async_send_heap(self._stream, self._ig.get_start())
 
-    @asyncio.coroutine
-    def stop(self):
+    async def stop(self):
         """Send a stop packet to the stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
-        yield from(self._stream.async_flush())
-        yield from(self._stream.async_send_heap(self._ig.get_end()))
+        await self._stream.async_flush()
+        await self._stream.async_send_heap(self._ig.get_end())
 
-    @asyncio.coroutine
-    def send(self, data, idx, ts_rel):
-        """Asynchronously send visibilities to the receiver, returning a
-        future."""
+    async def send(self, data, idx, ts_rel):
+        """Asynchronously send visibilities to the receiver"""
         data = data[self._channel_range.asslice()]
         self._ig['correlator_data'].value = data.vis
         self._ig['flags'].value = data.flags
@@ -134,7 +129,7 @@ class VisSender(object):
         self._ig['timestamp'].value = ts_rel
         self._ig['dump_index'].value = idx
         self._ig['frequency'].value = self._channel0
-        return asyncio.ensure_future(async_send_heap(self._stream, self._ig.get_heap()))
+        await async_send_heap(self._stream, self._ig.get_heap())
 
 
 class VisSenderSet(object):
@@ -161,18 +156,15 @@ class VisSenderSet(object):
     def size(self):
         return len(self._senders)
 
-    @asyncio.coroutine
-    def start(self):
+    async def start(self):
         """Send a start heap to all streams."""
-        return asyncio.gather(*(asyncio.ensure_future(sender.start()) for sender in self._senders))
+        await asyncio.gather(*(sender.start() for sender in self._senders))
 
-    @asyncio.coroutine
-    def stop(self):
+    async def stop(self):
         """Send a stop heap to all streams."""
-        return asyncio.gather(*(asyncio.ensure_future(sender.stop()) for sender in self._senders))
+        await asyncio.gather(*(sender.stop() for sender in self._senders))
 
-    @asyncio.coroutine
-    def send(self, data, idx, ts_rel):
+    async def send(self, data, idx, ts_rel):
         """Send a data heap to all streams, splitting the data between them."""
-        return asyncio.gather(*(asyncio.ensure_future(sender.send(data, idx, ts_rel))
-                                for sender in self._senders))
+        await asyncio.gather(*(sender.send(data, idx, ts_rel)
+                               for sender in self._senders))

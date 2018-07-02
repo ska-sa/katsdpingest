@@ -1,15 +1,17 @@
 # coding: utf-8
-"""Test for the sigproc module."""
+"""Tests for the sigproc module."""
 
-import mock
+from unittest import mock
+
 import numpy as np
-from katsdpingest import sigproc
-from katsdpingest.utils import Range
 from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
 from nose.tools import assert_equal, assert_raises
+
+from katsdpingest import sigproc
+from katsdpingest.utils import Range
 
 
 UNFLAGGED_BIT = 128

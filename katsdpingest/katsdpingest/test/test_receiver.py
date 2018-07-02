@@ -1,19 +1,21 @@
 """Tests for receiver module"""
 
+import logging
+from unittest import mock
+import asyncio
+
 import numpy as np
 import spead2
 import spead2.send
 import spead2.recv.trollius
-import asyncio
+import asynctest
+import async_timeout
 
 from katsdpingest.receiver import Receiver
 from katsdpingest.sigproc import Range
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
-from katsdpsigproc.test.test_resource import async_test
 from nose.tools import assert_equal, assert_is_none, assert_raises
-import mock
-import logging
 
 
 class QueueStream(object):
@@ -27,9 +29,8 @@ class QueueStream(object):
     def __init__(self, loop=None):
         self._queue = asyncio.Queue(loop=loop)
 
-    @asyncio.coroutine
-    def get(self):
-        heap = yield from(self._queue.get())
+    async def get(self):
+        heap = await self._queue.get()
         if heap is None:
             self._queue.put_nowait(None)
             raise spead2.Stopped()
@@ -77,9 +78,8 @@ class QueueRecvStream(object):
             raise RuntimeError('QueueRecvStream only supports one reader')
         self._stream = QueueStream.get_instance(multicast_group, port, self._loop)
 
-    @asyncio.coroutine
-    def get(self):
-        heap = yield from(self._stream.get())
+    async def get(self):
+        heap = await self._stream.get()
         return heap
 
     def stop(self):
@@ -98,11 +98,12 @@ class QueueRecvStream(object):
         pass
 
 
-class TestReceiver(object):
-    def setup(self):
-        self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
-        self.patcher.start()
-        self.loop = asyncio.get_event_loop_policy().new_event_loop()
+class TestReceiver(asynctest.TestCase):
+    def setUp(self):
+        patcher = mock.patch('spead2.recv.asyncio.Stream', QueueRecvStream)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.n_streams = 2
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)(
             '239.0.0.1+{}'.format(self.n_streams - 1))
@@ -116,6 +117,7 @@ class TestReceiver(object):
                            sensors, self.cbf_attr, active_frames=3, loop=self.loop)
         self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
                    for i in range(self.n_streams)]
+        self.addCleanup(QueueStream.clear_instances)
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
             ig.add_item(0x1600, 'timestamp',
@@ -143,21 +145,16 @@ class TestReceiver(object):
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_heap())
 
-    def teardown(self):
-        self.patcher.stop()
-        QueueStream.clear_instances()
-        self.loop.close()
-
-    @async_test
-    def test_stop(self):
+    async def test_stop(self):
         """The receiver must stop once all streams stop"""
-        data_future = asyncio.ensure_future(self.rx.get(), loop=self.loop)
+        data_future = self.loop.create_task(self.rx.get())
         for i, tx in enumerate(self.tx):
             tx.send_heap(self.tx_ig[i].get_end())
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
         with assert_raises(spead2.Stopped):
-            yield from(asyncio.wait_for(data_future, 30, loop=self.loop))
+            with async_timeout.timeout(30, loop=self.loop):
+                await data_future
 
     def _make_data(self, n_frames):
         """Generates made-up timestamps and correlator data
@@ -186,8 +183,7 @@ class TestReceiver(object):
         timestamps = indices * interval + 1234567890123
         return xeng_raw, indices, timestamps
 
-    @asyncio.coroutine
-    def _send_in_order(self, xeng_raw, timestamps):
+    async def _send_in_order(self, xeng_raw, timestamps):
         for t in range(len(xeng_raw)):
             for i in range(self.n_xengs):
                 stream_idx = i * self.n_streams // self.n_xengs
@@ -195,30 +191,29 @@ class TestReceiver(object):
                 self.tx_ig[stream_idx]['frequency'].value = i * self.n_chans // self.n_xengs
                 self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
                 self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
-            yield from(asyncio.sleep(0.02, loop=self.loop))
+            await asyncio.sleep(0.02, loop=self.loop)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
-    @async_test
-    def test_in_order(self):
+    async def test_in_order(self):
         """Test normal case with data arriving in the expected order"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
         send_future = asyncio.ensure_future(self._send_in_order(xeng_raw, timestamps),
                                             loop=self.loop)
         for t in range(n_frames):
-            frame = yield from(asyncio.wait_for(self.rx.get(), 3, loop=self.loop))
+            frame = await asyncio.wait_for(self.rx.get(), 3, loop=self.loop)
             assert_equal(indices[t], frame.idx)
             assert_equal(timestamps[t], frame.timestamp)
             assert_equal(self.n_xengs, len(frame.items))
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
-            yield from(asyncio.wait_for(self.rx.get(), 3, loop=self.loop))
-        yield from(send_future)
+            with async_timeout.timeout(3, loop=self.loop):
+                await self.rx.get()
+        await send_future
 
-    @asyncio.coroutine
-    def _send_out_of_order(self, xeng_raw, timestamps):
+    async def _send_out_of_order(self, xeng_raw, timestamps):
         order = [
             # Send parts of frames 0, 1
             (0, 0), (0, 1), (0, 3),
@@ -246,20 +241,19 @@ class TestReceiver(object):
             self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
             self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
             # Longish sleep to ensure the ordering is respected
-            yield from(asyncio.sleep(0.02, loop=self.loop))
+            await asyncio.sleep(0.02, loop=self.loop)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
-    @async_test
-    def test_out_of_order(self):
+    async def test_out_of_order(self):
         """Test various edge behaviour for out-of-order data"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
-        send_future = asyncio.ensure_future(self._send_out_of_order(xeng_raw, timestamps),
-                                            loop=self.loop)
+        send_future = self.loop.create_task(self._send_out_of_order(xeng_raw, timestamps))
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []), (8, [])]:
-                frame = yield from(asyncio.wait_for(self.rx.get(), 3, loop=self.loop))
+                with async_timeout.timeout(3, loop=self.loop):
+                    frame = await self.rx.get()
                 assert_equal(indices[t], frame.idx)
                 assert_equal(timestamps[t], frame.timestamp)
                 assert_equal(self.n_xengs, len(frame.items))
@@ -269,6 +263,7 @@ class TestReceiver(object):
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
-                yield from(asyncio.wait_for(self.rx.get(), 3, loop=self.loop))
+                with async_timeout.timeout(3, loop=self.loop):
+                    await self.rx.get()
         finally:
-            yield from(send_future)
+            await send_future

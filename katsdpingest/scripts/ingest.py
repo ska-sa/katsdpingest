@@ -4,13 +4,11 @@
 
 import logging
 import sys
-import katsdpservices
-
-import manhole
 import signal
-import trollius
-from trollius import From
-from tornado.platform.asyncio import AsyncIOMainLoop, to_asyncio_future
+import asyncio
+
+import katsdpservices
+import manhole
 
 from katsdpingest.ingest_session import ChannelRanges, get_cbf_attr
 from katsdpingest.utils import Range
@@ -139,15 +137,14 @@ def parse_args():
     return args
 
 
-def on_shutdown(server):
+async def on_shutdown(server):
     # Disable the signal handlers, to avoid being unable to kill if there
     # is an exception in the shutdown path.
     for sig in [signal.SIGINT, signal.SIGTERM]:
-        trollius.get_event_loop().remove_signal_handler(sig)
+        asyncio.get_event_loop().remove_signal_handler(sig)
     logger.info("Shutting down katsdpingest server...")
-    yield From(to_asyncio_future(server.handle_interrupt()))
-    yield From(to_asyncio_future(server.stop()))
-    trollius.get_event_loop().stop()
+    await server.handle_interrupt()
+    server.halt()
 
 
 def main():
@@ -157,8 +154,7 @@ def main():
     if args.log_level is not None:
         logging.root.setLevel(args.log_level.upper())
 
-    ioloop = AsyncIOMainLoop()
-    ioloop.install()
+    loop = asyncio.get_event_loop()
     try:
         cbf_attr = get_cbf_attr(args.telstate, args.cbf_name)
     except KeyError as error:
@@ -182,14 +178,13 @@ def main():
     # allow remote debug connections and expose server and args
     manhole.install(oneshot_on='USR1', locals={'server': server, 'args': args})
 
-    trollius.get_event_loop().add_signal_handler(
-        signal.SIGINT, lambda: trollius.async(on_shutdown(server)))
-    trollius.get_event_loop().add_signal_handler(
-        signal.SIGTERM, lambda: trollius.async(on_shutdown(server)))
-    ioloop.add_callback(server.start)
+    loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(on_shutdown(server)))
+    loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
+    loop.run_until_complete(server.start())
     logger.info("Started katsdpingest server.")
-    trollius.get_event_loop().run_forever()
+    loop.run_until_complete(server.join())
     logger.info("Shutdown complete")
+    loop.close()
 
 
 if __name__ == '__main__':

@@ -2,23 +2,36 @@
 
 import time
 import logging
-import asyncio
 
-import tornado.gen
-from tornado.platform.asyncio import to_tornado_future
-from katcp import AsyncDeviceServer, Sensor
-from katcp.kattypes import request, return_reply, Str
+import aiokatcp
+from aiokatcp import FailReply
 from katsdptelstate.endpoint import endpoint_parser
 
 import katsdpingest
-from .ingest_session import CBFIngest
+from .ingest_session import CBFIngest, Status, DeviceStatus
 from . import receiver
+from .utils import Sensor
 
 
 logger = logging.getLogger(__name__)
 
 
-class IngestDeviceServer(AsyncDeviceServer):
+def _warn_if_positive(value):
+    """Status function for sensors that count problems"""
+    return Sensor.Status.WARN if value > 0 else Sensor.Status.NOMINAL
+
+
+def _device_status_status(value):
+    """Sets katcp status for device-status sensor from value"""
+    if value == DeviceStatus.OK:
+        return Sensor.Status.NOMINAL
+    elif value == DeviceStatus.DEGRADED:
+        return Sensor.Status.WARN
+    else:
+        return Sensor.Status.ERROR
+
+
+class IngestDeviceServer(aiokatcp.DeviceServer):
     """Serves the ingest katcp interface.
     Top level holder of the ingest session.
 
@@ -34,114 +47,108 @@ class IngestDeviceServer(AsyncDeviceServer):
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context in which to compile device code and allocate resources
     args, kwargs
-        Passed to :class:`katcp.DeviceServer`
+        Passed to :class:`aiokatcp.DeviceServer`
     """
 
-    VERSION_INFO = ("sdp-ingest", 0, 2)
-    BUILD_INFO = ('katsdpingest',) + tuple(katsdpingest.__version__.split('.', 1)) + ('',)
+    VERSION = "sdp-ingest-0.2"
+    BUILD_STATE = 'katsdpingest-' + katsdpingest.__version__
 
     def __init__(self, user_args, channel_ranges, cbf_attr, context, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._stopping = False
 
         sensors = [
-            Sensor(Sensor.INTEGER, "output-n-ants",
+            Sensor(int, "output-n-ants",
                    "Number of antennas in L0 stream (prometheus: gauge)"),
-            Sensor(Sensor.INTEGER, "output-n-inputs",
+            Sensor(int, "output-n-inputs",
                    "Number of single-pol signals in L0 stream (prometheus: gauge)"),
-            Sensor(Sensor.INTEGER, "output-n-bls",
+            Sensor(int, "output-n-bls",
                    "Number of baseline products in L0 stream (prometheus: gauge)"),
-            Sensor(Sensor.INTEGER, "output-n-chans",
+            Sensor(int, "output-n-chans",
                    "Number of channels this server contributes to L0 spectral stream "
                    "(prometheus: gauge)"),
-            Sensor(Sensor.FLOAT, "output-int-time",
+            Sensor(float, "output-int-time",
                    "Integration time of L0 stream (prometheus: gauge)", "s"),
-            Sensor(Sensor.BOOLEAN, "capture-active",
+            Sensor(bool, "capture-active",
                    "Is there a currently active capture session (prometheus: gauge)",
-                   default=False, initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.DISCRETE, "status",
-                   "The current status of the capture session.", "",
-                   ["init", "wait-data", "capturing", "complete"],
-                   default="init", initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.FLOAT, "last-dump-timestamp",
+                   default=False, initial_status=Sensor.Status.NOMINAL),
+            Sensor(Status, "status",
+                   "The current status of the capture session.",
+                   default=Status.INIT, initial_status=Sensor.Status.NOMINAL),
+            Sensor(float, "last-dump-timestamp",
                    "Timestamp of most recently received correlator dump in Unix seconds "
                    " (prometheus: gauge)", "s",
-                   default=0.0, initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.DISCRETE,
-                   "device-status", "Health status", "", ["ok", "degraded", "fail"],
-                   default="ok", initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "input-bytes-total",
+                   default=0.0, initial_status=Sensor.Status.NOMINAL),
+            Sensor(DeviceStatus, "device-status",
+                   "Health status",
+                   default=DeviceStatus.OK, initial_status=Sensor.Status.NOMINAL,
+                   status_func=_device_status_status),
+            Sensor(int, "input-bytes-total",
                    "Number of payload bytes received from CBF in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "input-heaps-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "input-heaps-total",
                    "Number of payload heaps received from CBF in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "input-dumps-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "input-dumps-total",
                    "Number of CBF dumps received in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "output-bytes-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "output-bytes-total",
                    "Number of payload bytes sent on L0 in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "output-heaps-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "output-heaps-total",
                    "Number of payload heaps sent on L0 in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "output-dumps-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "output-dumps-total",
                    "Number of payload dumps sent on L0 in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "output-vis-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "output-vis-total",
                    "Number of spectral visibilities computed for signal displays in this session "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.INTEGER, "output-flagged-total",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "output-flagged-total",
                    "Number of flagged visibilities (out of output-vis-total) "
                    " (prometheus: counter)",
-                   initial_status=Sensor.NOMINAL),
-            Sensor(Sensor.BOOLEAN, "descriptors-received",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(bool, "descriptors-received",
                    "Whether the SPEAD descriptors have been received "
                    " (prometheus: gauge)",
-                   initial_status=Sensor.NOMINAL)
+                   initial_status=Sensor.Status.NOMINAL)
         ]
         for key, value in receiver.REJECT_HEAP_TYPES.items():
             sensors.append(Sensor(
-                Sensor.INTEGER, "input-" + key + "-heaps-total",
+                int, "input-" + key + "-heaps-total",
                 "Number of heaps rejected because {} (prometheus: counter)".format(value),
-                initial_status=Sensor.NOMINAL))
-        self._my_sensors = {sensor.name: sensor for sensor in sensors}
+                initial_status=Sensor.Status.NOMINAL,
+                status_func=_warn_if_positive))
+        for sensor in sensors:
+            self.sensors.add(sensor)
 
         # create the device resources
         self.cbf_ingest = CBFIngest(
             user_args, cbf_attr, channel_ranges, context,
-            self._my_sensors, user_args.telstate)
+            self.sensors, user_args.telstate)
         # add default or user specified endpoints
         for sdisp_endpoint in user_args.sdisp_spead:
             self.cbf_ingest.add_sdisp_ip(sdisp_endpoint)
 
-        super(IngestDeviceServer, self).__init__(*args, **kwargs)
-
-    def setup_sensors(self):
-        for sensor in self._my_sensors:
-            self.add_sensor(self._my_sensors[sensor])
-
-    @return_reply(Str())
-    def request_enable_debug(self, req, msg):
+    async def request_enable_debug(self, ctx) -> str:
         """Enable debugging of the ingest process."""
         self.cbf_ingest.enable_debug(True)
-        return("ok", "Debug logging enabled.")
+        return "Debug logging enabled."
 
-    @return_reply(Str())
-    def request_disable_debug(self, req, msg):
+    async def request_disable_debug(self, ctx):
         """Disable debugging of the ingest process."""
         self.cbf_ingest.enable_debug(False)
-        return ("ok", "Debug logging disabled.")
+        return "Debug logging disabled."
 
-    @request(Str(optional=True), Str(optional=True))
-    @return_reply(Str())
-    def request_internal_log_level(self, req, component, level):
+    async def request_internal_log_level(self, ctx,
+                                         component: str = None, level: str = None) -> None:
         """
         Set the log level of an internal component to the specified value.
         ?internal-log-level <component> <level>
@@ -154,66 +161,51 @@ class IngestDeviceServer(AsyncDeviceServer):
                    if isinstance(logger, logging.Logger)}
         loggers[''] = logging.getLogger()   # Not kept in loggerDict
         if component is None:
-            for name, logger in sorted(loggers.items()):
-                req.inform(name, logging.getLevelName(logger.level))
-            return ('ok', '{} logger(s) reported'.format(len(loggers)))
+            ctx.informs((name, logging.getLevelName(logger.level))
+                        for name, logger in sorted(loggers.items()))
         elif level is None:
             logger = loggers.get(component)
             if logger is None:
-                return ('fail', 'Unknown logger component {}'.format(component))
+                raise FailReply('Unknown logger component {}'.format(component))
             else:
-                req.inform(component, logging.getLevelName(logger.level))
-                return ('ok', '1 logger reported')
+                ctx.informs([(component, logging.getLevelName(logger.level))])
         else:
             level = level.upper()
             logger = logging.getLogger(component)
             try:
                 logger.setLevel(level)
             except ValueError:
-                return ("fail", "Unknown log level specified {}".format(level))
-            return ("ok", "Log level set to {}".format(level))
+                raise FailReply("Unknown log level specified {}".format(level))
 
-    @request(Str())
-    @return_reply(Str())
-    @tornado.gen.coroutine
-    def request_capture_init(self, req, capture_block_id):
+    async def request_capture_init(self, ctx, capture_block_id: str) -> str:
         """Spawns ingest session to capture suitable data to produce
         the L0 output stream."""
         if self.cbf_ingest.capturing:
-            raise tornado.gen.Return((
-                "fail",
+            raise FailReply(
                 "Existing capture session found. "
-                "If you really want to init, stop the current capture using capture-done."))
+                "If you really want to init, stop the current capture using capture-done.")
         if self._stopping:
-            raise tornado.gen.Return((
-                "fail", "Cannot start a capture session while ingest is shutting down"))
+            raise FailReply("Cannot start a capture session while ingest is shutting down")
 
         self.cbf_ingest.start(capture_block_id)
 
-        self._my_sensors["capture-active"].set_value(1)
+        self.sensors["capture-active"].value = True
         smsg = "Capture initialised at %s" % time.ctime()
         logger.info(smsg)
-        raise tornado.gen.Return(("ok", smsg))
+        return smsg
 
-    @request(Str())
-    @return_reply(Str())
-    @tornado.gen.coroutine
-    def request_drop_sdisp_ip(self, req, ip):
+    async def request_drop_sdisp_ip(self, req, ip: str) -> str:
         """Drop an IP address from the internal list of signal display data recipients."""
         try:
-            yield to_tornado_future(asyncio.ensure_future(self.cbf_ingest.drop_sdisp_ip(ip)))
+            await self.cbf_ingest.drop_sdisp_ip(ip)
         except KeyError:
-            raise tornado.gen.Return(
-                ("fail",
-                 "The IP address specified (%s) does not exist "
-                 "in the current list of recipients." % (ip)))
+            raise FailReply(
+                "The IP address specified ({}) does not exist "
+                "in the current list of recipients.".format(ip))
         else:
-            raise tornado.gen.Return(
-                ("ok", "The IP address has been dropped as a signal display recipient"))
+            return "The IP address has been dropped as a signal display recipient"
 
-    @request(Str())
-    @return_reply(Str())
-    def request_add_sdisp_ip(self, req, ip):
+    async def request_add_sdisp_ip(self, req, ip: str) -> str:
         """Add the supplied ip and port (ip[:port]) to the list of signal
         display data recipients.If not port is supplied default of 7149 is
         used."""
@@ -221,34 +213,31 @@ class IngestDeviceServer(AsyncDeviceServer):
         try:
             self.cbf_ingest.add_sdisp_ip(endpoint)
         except ValueError:
-            return ("ok", "The supplied IP is already in the active list of recipients.")
+            return "The supplied IP is already in the active list of recipients."
         else:
-            return ("ok", "Added {} to list of signal display data recipients.".format(endpoint))
+            return "Added {} to list of signal display data recipients.".format(endpoint)
 
-    @tornado.gen.coroutine
-    def handle_interrupt(self):
+    async def handle_interrupt(self) -> None:
         """Used to attempt a graceful resolution to external
         interrupts. Basically calls capture done."""
         self._stopping = True   # Prevent a capture-init during shutdown
         if self.cbf_ingest.capturing:
-            yield self.request_capture_done("", "")
+            await self.request_capture_done(None)
         self.cbf_ingest.close()
 
-    @return_reply(Str())
-    @tornado.gen.coroutine
-    def request_capture_done(self, req, msg):
+    async def request_capture_done(self, ctx) -> str:
         """Stops the current capture."""
         if not self.cbf_ingest.capturing:
-            raise tornado.gen.Return(("fail", "No existing capture session."))
+            raise FailReply("fail", "No existing capture session.")
 
-        stopped = yield to_tornado_future(asyncio.ensure_future(self.cbf_ingest.stop()))
+        stopped = await self.cbf_ingest.stop()
 
         # In the case of concurrent connections, we need to ensure that we
         # were the one that actually did the stop, as another connection may
         # have raced us to stop and then started a new session.
         if stopped:
-            self._my_sensors["capture-active"].set_value(0)
+            self.sensors["capture-active"].value = 0
             # Error states were associated with the session, which is now dead.
-            self._my_sensors["device-status"].set_value("ok")
+            self.sensors["device-status"].value = DeviceStatus.OK
             logger.info("capture complete")
-        raise tornado.gen.Return(("ok", "capture complete"))
+        return "capture complete"

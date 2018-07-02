@@ -1,23 +1,22 @@
 """Tests for :mod:`katsdpingest.ingest_server`."""
 
 import argparse
-import functools
 import logging
-import mock
+import asyncio
 import copy
+from unittest import mock
+from typing import List
+
+import asynctest
+import async_timeout
 import numpy as np
 from nose.tools import (assert_in, assert_is_not_none, assert_is_instance, assert_true,
-                        assert_equal, assert_almost_equal, assert_regexp_matches,
-                        nottest)
-import tornado.gen
-from tornado.platform.asyncio import AsyncIOMainLoop
-import asyncio
-
+                        assert_equal, assert_almost_equal, assert_raises_regex)
 
 import spead2
 import spead2.recv
 import spead2.send
-import katcp
+import aiokatcp
 import katsdptelstate
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
@@ -96,16 +95,7 @@ class MockReceiver(object):
 class DeepCopyMock(mock.MagicMock):
     """Mock that takes deep copies of its arguments when called."""
     def __call__(self, *args, **kwargs):
-        return super(DeepCopyMock, self).__call__(*copy.deepcopy(args), **copy.deepcopy(kwargs))
-
-
-@nottest
-def async_test(func):
-    """Decorator to run a test inside the Tornado event loop"""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return tornado.ioloop.IOLoop.current().run_sync(lambda: func(*args, **kwargs))
-    return wrapper
+        return super().__call__(*copy.deepcopy(args), **copy.deepcopy(kwargs))
 
 
 def decode_heap(heap):
@@ -143,7 +133,7 @@ def is_stop(heap):
     return heap is None
 
 
-class TestIngestDeviceServer(object):
+class TestIngestDeviceServer(asynctest.TestCase):
     """Tests for :class:`katsdpingest.ingest_server.IngestDeviceServer.
 
     This does not test all the intricacies of flagging, timeseries masking,
@@ -151,8 +141,9 @@ class TestIngestDeviceServer(object):
     function and that the correct channels are sent to the correct places.
     """
     def _patch(self, *args, **kwargs):
-        self._patchers.append(mock.patch(*args, **kwargs))
-        mock_obj = self._patchers[-1].start()
+        patcher = mock.patch(*args, **kwargs)
+        mock_obj = patcher.start()
+        self.addCleanup(patcher.stop)
         return mock_obj
 
     def _get_tx(self, thread_pool, endpoints, interface_address, flavour,
@@ -165,7 +156,7 @@ class TestIngestDeviceServer(object):
             raise KeyError('VisSenderSet created with unrecognised endpoints')
 
     def _get_sd_tx(self, thread_pool, host, port, config):
-        done_future = asyncio.Future()
+        done_future = asyncio.Future(loop=self.loop)
         done_future.set_result(None)
         tx = mock.MagicMock()
         tx.async_send_heap.return_value = done_future
@@ -198,14 +189,11 @@ class TestIngestDeviceServer(object):
         return channel_mask
 
     @device_test
-    def setup(self, context, command_queue):
-        done_future = asyncio.Future()
+    async def setUp(self, context, command_queue):
+        done_future = asyncio.Future(loop=self.loop)
         done_future.set_result(None)
         self._patchers = []
         self._telstate = katsdptelstate.TelescopeState()
-        self._telstate.clear()   # Prevent state leaks from other tests
-        self._ioloop = AsyncIOMainLoop()
-        self._ioloop.install()
         n_xengs = 16
         self.user_args = user_args = argparse.Namespace(
             sdisp_spead=[Endpoint('127.0.0.2', 7149)],
@@ -272,34 +260,21 @@ class TestIngestDeviceServer(object):
         self._VisSenderSet = self._patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
         self._sd_tx = {}
-        self._UdpStream = self._patch('spead2.send.trollius.UdpStream',
+        self._UdpStream = self._patch('spead2.send.asyncio.UdpStream',
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1])
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
-        self._server.start()
-        self._client = katcp.AsyncClient(user_args.host, user_args.port, timeout=15)
-        self._client.set_ioloop(self._ioloop)
-        self._client.start()
-        self._ioloop.run_sync(self._client.until_protocol)
+        await self._server.start()
+        self.addCleanup(self._server.stop)
+        self._client = await aiokatcp.Client.connect(user_args.host, user_args.port, loop=self.loop)
+        self.addCleanup(self._client.wait_closed)
+        self.addCleanup(self._client.close)
 
-    @tornado.gen.coroutine
-    def _teardown(self):
-        self._client.disconnect()
-        self._client.stop()
-        self._server.stop()
-
-    def teardown(self):
-        self._ioloop.run_sync(self._teardown)
-        for patcher in reversed(self._patchers):
-            patcher.stop()
-        tornado.ioloop.IOLoop.clear_instance()
-
-    @tornado.gen.coroutine
-    def make_request(self, name, *args):
-        """Issue a request to the server, and check that the result is an ok.
+    async def make_request(self, name: str, *args) -> List[aiokatcp.Message]:
+        """Issue a request to the server, timing out if it takes too long.
 
         Parameters
         ----------
@@ -313,18 +288,16 @@ class TestIngestDeviceServer(object):
         informs : list
             Informs returned with the reply
         """
-        reply, informs = yield self._client.future_request(katcp.Message.request(name, *args))
-        assert_true(reply.reply_ok(), str(reply))
-        raise tornado.gen.Return(informs)
+        with async_timeout.timeout(15):
+            reply, informs = await self._client.request(name, *args)
+        return informs
 
-    @tornado.gen.coroutine
-    def assert_request_fails(self, msg_re, name, *args):
+    async def assert_request_fails(self, msg_re, name, *args):
         """Assert that a request fails, and test the error message against
         a regular expression."""
-        reply, informs = yield self._client.future_request(katcp.Message.request(name, *args))
-        assert_equal(2, len(reply.arguments))
-        assert_equal('fail', reply.arguments[0])
-        assert_regexp_matches(reply.arguments[1], msg_re)
+        with assert_raises_regex(aiokatcp.FailReply, msg_re):
+            with async_timeout.timeout(15):
+                await self._client.request(name, *args)
 
     def _get_expected(self):
         """Return expected visibilities, flags and timestamps.
@@ -409,12 +382,10 @@ class TestIngestDeviceServer(object):
             assert_equal(8 * self.cbf_attr['int_time'], get_ts('int_time'))
             assert_equal((464, 1744), get_ts('channel_range'))
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_capture(self):
+    async def test_capture(self):
         """Test the core data capture process."""
-        yield self.make_request('capture-init', 'cb1')
-        yield self.make_request('capture-done')
+        await self.make_request('capture-init', 'cb1')
+        await self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48)
         l0_int_time = 8 * self.cbf_attr['int_time']
         expected_vis, expected_flags, expected_ts = self._get_expected()
@@ -467,40 +438,32 @@ class TestIngestDeviceServer(object):
         # Final call must send a stop
         assert_true(is_stop(calls[-1][1][0]))
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_done_when_not_capturing(self):
+    async def test_done_when_not_capturing(self):
         """Calling capture-stop when not capturing fails"""
-        yield self.assert_request_fails(r'No existing capture session', 'capture-done')
+        await self.assert_request_fails(r'No existing capture session', 'capture-done')
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_init_when_capturing(self):
+    async def test_init_when_capturing(self):
         """Calling capture-init when capturing fails"""
-        yield self.make_request('capture-init', 'cb1')
-        yield self.assert_request_fails(r'Existing capture session found', 'capture-init', 'cb2')
-        yield self.make_request('capture-done')
+        await self.make_request('capture-init', 'cb1')
+        await self.assert_request_fails(r'Existing capture session found', 'capture-init', 'cb2')
+        await self.make_request('capture-done')
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_enable_disable_debug(self):
+    async def test_enable_disable_debug(self):
         """?enable-debug and ?disable-debug change the log level of session logger"""
         assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
-        yield self.make_request('enable-debug')
+        await self.make_request('enable-debug')
         assert_equal(logging.DEBUG, logging.getLogger('katsdpingest.ingest_session').level)
-        yield self.make_request('disable-debug')
+        await self.make_request('disable-debug')
         assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_add_sdisp_ip(self):
+    async def test_add_sdisp_ip(self):
         """Add additional addresses with add-sdisp-ip."""
-        yield self.make_request('add-sdisp-ip', '127.0.0.3:8000')
-        yield self.make_request('add-sdisp-ip', '127.0.0.4')
+        await self.make_request('add-sdisp-ip', '127.0.0.3:8000')
+        await self.make_request('add-sdisp-ip', '127.0.0.4')
         # A duplicate
-        yield self.make_request('add-sdisp-ip', '127.0.0.3:8001')
-        yield self.make_request('capture-init', 'cb1')
-        yield self.make_request('capture-done')
+        await self.make_request('add-sdisp-ip', '127.0.0.3:8001')
+        await self.make_request('capture-init', 'cb1')
+        await self.make_request('capture-done')
         assert_equal([('127.0.0.2', 7149), ('127.0.0.3', 8000), ('127.0.0.4', 7149)],
                      list(sorted(self._sd_tx.keys())))
         # We won't check the contents, since that is tested elsewhere. Just
@@ -508,35 +471,31 @@ class TestIngestDeviceServer(object):
         for tx in self._sd_tx.values():
             assert_equal(5, len(tx.async_send_heap.mock_calls))
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_drop_sdisp_ip_not_capturing(self):
+    async def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
-        yield self.make_request('drop-sdisp-ip', '127.0.0.2')
-        yield self.make_request('capture-init', 'cb1')
-        yield self.make_request('capture-done')
+        await self.make_request('drop-sdisp-ip', '127.0.0.2')
+        await self.make_request('capture-init', 'cb1')
+        await self.make_request('capture-done')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         sd_tx.async_send_heap.assert_not_called()
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_drop_sdisp_ip_capturing(self):
+    async def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
         self._pauses = {10: asyncio.Future()}
-        yield self.make_request('capture-init', 'cb1')
+        await self.make_request('capture-init', 'cb1')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for
         # the signal display data to be sent.
         for i in range(1000):
             if len(sd_tx.async_send_heap.mock_calls) >= 2:
                 break
-            yield tornado.gen.sleep(0.01)
+            await asyncio.sleep(0.01, loop=self.loop)
         else:
-            raise tornado.gen.TimeoutError(
+            raise asyncio.TimeoutError(
                 'Timed out waiting for signal display tx call to be made')
-        yield self.make_request('drop-sdisp-ip', '127.0.0.2')
+        await self.make_request('drop-sdisp-ip', '127.0.0.2')
         self._pauses[10].set_result(None)
-        yield self.make_request('capture-done')
+        await self.make_request('capture-done')
         calls = sd_tx.async_send_heap.mock_calls
         assert_equal(3, len(calls))     # start, one data, and stop heaps
         assert_true(is_start(calls[0][1][0]))
@@ -544,47 +503,37 @@ class TestIngestDeviceServer(object):
         assert_in('sd_blmxdata', ig)
         assert_true(is_stop(calls[2][1][0]))
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_drop_sdisp_ip_missing(self):
+    async def test_drop_sdisp_ip_missing(self):
         """Dropping an unregistered IP address fails"""
-        yield self.assert_request_fails('does not exist', 'drop-sdisp-ip', '127.0.0.3')
+        await self.assert_request_fails('does not exist', 'drop-sdisp-ip', '127.0.0.3')
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_internal_log_level_query_all(self):
+    async def test_internal_log_level_query_all(self):
         """Test internal-log-level query with no parameters"""
-        informs = yield self.make_request('internal-log-level')
+        informs = await self.make_request('internal-log-level')
         levels = {}
         for inform in informs:
             levels[inform.arguments[0]] = inform.arguments[1]
         # Check that some known logger appears in the list
-        assert_in('katcp.server', levels)
-        assert_equal('NOTSET', levels['katcp.server'])
+        assert_in(b'aiokatcp.connection', levels)
+        assert_equal(b'NOTSET', levels[b'aiokatcp.connection'])
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_internal_log_level_query_one(self):
+    async def test_internal_log_level_query_one(self):
         """Test internal-log-level query with one parameter"""
-        informs = yield self.make_request('internal-log-level', 'katcp.server')
+        informs = await self.make_request('internal-log-level', 'aiokatcp.connection')
         assert_equal(1, len(informs))
-        assert_equal(katcp.Message.inform('internal-log-level', 'katcp.server', 'NOTSET',
-                                          mid=informs[0].mid),
+        assert_equal(aiokatcp.Message.inform('internal-log-level', b'aiokatcp.connection',
+                                             b'NOTSET', mid=informs[0].mid),
                      informs[0])
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_internal_log_level_query_one_missing(self):
+    async def test_internal_log_level_query_one_missing(self):
         """Querying internal-log-level with a non-existent logger fails"""
-        self.assert_request_fails('Unknown logger', 'internal-log-level', 'notalogger')
+        await self.assert_request_fails('Unknown logger', 'internal-log-level', 'notalogger')
 
-    @async_test
-    @tornado.gen.coroutine
-    def test_internal_log_level_set(self):
+    async def test_internal_log_level_set(self):
         """Set a logger level via internal-log-level"""
-        yield self.make_request('internal-log-level', 'katcp.server', 'INFO')
+        await self.make_request('internal-log-level', 'katcp.server', 'INFO')
         assert_equal(logging.INFO, logging.getLogger('katcp.server').level)
-        yield self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
+        await self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
         assert_equal(logging.NOTSET, logging.getLogger('katcp.server').level)
-        yield self.assert_request_fails(
+        await self.assert_request_fails(
             'Unknown log level', 'internal-log-level', 'katcp.server', 'DUMMY')

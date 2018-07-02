@@ -1,14 +1,8 @@
+aiokatcp
 appdirs                   # via katsdpsigproc
-backports-abc             # via tornado
-certifi                   # via tornado
 decorator                 # via katsdpsigproc
-enum34                    # via numba
 fakeredis                 # via katsdptelstate
 funcsigs                  # via numba
-future                    # via katcp
-futures                   # via katcp, tornado, trollius
-ipaddress                 # via katsdptelstate
-katcp
 katversion
 hiredis                   # via katsdptelstate
 llvmlite                  # via numba
@@ -19,7 +13,6 @@ netifaces                 # via katsdptelstate
 numba                     # via katsdpsigproc
 numpy
 pandas                    # via katsdpsigproc
-ply                       # via katcp
 py                        # via pytest
 pycuda
 pygelf                    # via katsdpservices
@@ -29,11 +22,8 @@ pytools                   # via pycuda
 pytz                      # via pandas
 redis                     # via katsdptelstate
 scipy                     # via katsdpsigproc
-singledispatch            # via numba, tornado
-six                       # via spead2, trollius, etc.
+six                       # via spead2 (and probably others)
 spead2
-tornado
-trollius
 git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpservices#egg=katsdpservices
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate

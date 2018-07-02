@@ -3,21 +3,18 @@
 import time
 import fractions
 import logging
+import asyncio
+import enum
 
 import numpy as np
-
-import asyncio
-
 
 import spead2
 import spead2.send
 import spead2.recv
-import spead2.send.trollius
-import spead2.recv.trollius
+import spead2.send.asyncio
+import spead2.recv.asyncio
 
-from katcp import Sensor
-
-from katsdpsigproc import resource
+from katsdpsigproc.asyncio import resource
 import katsdpsigproc.rfi.device as rfi
 
 import katsdpservices
@@ -26,7 +23,6 @@ import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
 from . import utils, receiver, sender, sigproc
-from .utils import SensorWrapper
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +31,21 @@ CBF_CRITICAL_ATTRS = frozenset([
     'adc_sample_rate', 'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
+
+
+class Status(enum.Enum):
+    """State of the ingest state machine"""
+    INIT = 0
+    WAIT_DATA = 1
+    CAPTURING = 2
+    COMPLETE = 3
+
+
+class DeviceStatus(enum.Enum):
+    """Standard katcp device status"""
+    OK = 0
+    DEGRADED = 1
+    FAIL = 2
 
 
 class _TimeAverage(object):
@@ -256,9 +267,9 @@ class _ResourceSet(object):
     """Collection of device buffers with host staging areas.
 
     A resource set groups together
-    - a :class:`katsdpsigproc.resource.Resource` containing a dict mapping
+    - a :class:`katsdpsigproc.asyncio.resource.Resource` containing a dict mapping
       names to :class:`katsdpsigproc.accel.DeviceArray`s.
-    - N :class:`katsdpsigproc.resource.Resource`s containing dicts mapping
+    - N :class:`katsdpsigproc.asyncio.resource.Resource`s containing dicts mapping
       names to :class:`katsdpsigproc.accel.HostArray`s.
     This provides N-buffered staging of data into or out of the device buffers.
 
@@ -464,7 +475,7 @@ class TelstateReceiver(receiver.Receiver):
     def __init__(self, *args, **kwargs):
         self._telstates = kwargs.pop('telstates')
         self._l0_int_time = kwargs.pop('l0_int_time')
-        super(TelstateReceiver, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def _first_timestamp(self, candidate):
         scaled = candidate / self.cbf_attr['scale_factor_timestamp'] + 0.5 * self._l0_int_time
@@ -498,7 +509,7 @@ class CBFIngest(object):
         processing (currently `timeseries_weights`).
     sd_output_resource : :class:`_ResourceSet`
         Wrapper of the signal display output device buffers.
-    proc_resource : :class:`katsdpsigproc.resource.Resource`
+    proc_resource : :class:`katsdpsigproc.asyncio.resource.Resource`
         The proc object, and the contents of all its buffers except for those
         covered by other resources above.
     rx : :class:`katsdpingest.receiver.Receiver`
@@ -607,19 +618,18 @@ class CBFIngest(object):
         # input from each pair to get all inputs.
         inputs = set(bl[0] for bl in self.bls_ordering.sdp_bls_ordering)
         antennas = set(input[:-1] for input in inputs)
-        my_sensors['output-n-inputs'].set_value(len(inputs))
-        my_sensors['output-n-ants'].set_value(len(antennas))
-        my_sensors['output-n-bls'].set_value(len(self.bls_ordering.sdp_bls_ordering))
-        my_sensors['output-n-chans'].set_value(len(self.channel_ranges.output))
-        my_sensors['output-int-time'].set_value(
-            self.cbf_attr['int_time'] * self._output_avg.ratio)
-        self.output_bytes_sensor = SensorWrapper(self._my_sensors['output-bytes-total'])
-        self.output_heaps_sensor = SensorWrapper(self._my_sensors['output-heaps-total'])
-        self.output_dumps_sensor = SensorWrapper(self._my_sensors['output-dumps-total'])
-        self.output_flagged_sensor = SensorWrapper(self._my_sensors['output-flagged-total'])
-        self.output_vis_sensor = SensorWrapper(self._my_sensors['output-vis-total'])
+        my_sensors['output-n-inputs'].value = len(inputs)
+        my_sensors['output-n-ants'].value = len(antennas)
+        my_sensors['output-n-bls'].value = len(self.bls_ordering.sdp_bls_ordering)
+        my_sensors['output-n-chans'].value = len(self.channel_ranges.output)
+        my_sensors['output-int-time'].value = self.cbf_attr['int_time'] * self._output_avg.ratio
+        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
+        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
+        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
+        self.output_flagged_sensor = self._my_sensors['output-flagged-total']
+        self.output_vis_sensor = self._my_sensors['output-vis-total']
         self.status_sensor = self._my_sensors['status']
-        self.status_sensor.set_value("init")
+        self.status_sensor.value = Status.INIT
         self._zero_counters()
 
     def _init_proc(self, context, excise, continuum):
@@ -896,22 +906,20 @@ class CBFIngest(object):
 
         Returns
         -------
-        future : `trollius.Future`
+        future : `asyncio.Future`
             A future that is completed when the heap has been sent to all receivers.
         """
-        return asyncio.gather(*(asyncio.ensure_future(sender.async_send_heap(tx, data))
+        return asyncio.gather(*(sender.async_send_heap(tx, data)
                                 for tx in self._sdisp_ips.values()))
 
-    @asyncio.coroutine
-    def _stop_stream(self, stream, ig):
+    async def _stop_stream(self, stream, ig):
         """Send a stop packet to a stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
-        yield from(stream.async_flush())
-        yield from(stream.async_send_heap(ig.get_end()))
+        await stream.async_flush()
+        await stream.async_send_heap(ig.get_end())
 
-    @asyncio.coroutine
-    def drop_sdisp_ip(self, ip):
+    async def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
         Raises
@@ -923,7 +931,7 @@ class CBFIngest(object):
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
         if self.capturing:
-            yield from(self._stop_stream(stream, self.ig_sd))
+            await self._stop_stream(stream, self.ig_sd)
 
     def add_sdisp_ip(self, endpoint):
         """Add a new server to the signal display list.
@@ -942,7 +950,7 @@ class CBFIngest(object):
             raise ValueError('{0} is already in the active list of recipients'.format(endpoint))
         config = spead2.send.StreamConfig(max_packet_size=8872, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s to signal display list. Starting stream...", endpoint)
-        stream = spead2.send.trollius.UdpStream(
+        stream = spead2.send.asyncio.UdpStream(
             spead2.ThreadPool(), endpoint.host, endpoint.port, config)
         # Ensure that signal display streams that form the full band between
         # them always have unique heap cnts. The first output channel is used
@@ -957,12 +965,11 @@ class CBFIngest(object):
         output_a, host_output_a = self.output_resource.acquire()
         self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, output_idx))
 
-    @asyncio.coroutine
-    def _flush_output_job(self, proc_a, output_a, host_output_a, output_idx):
+    async def _flush_output_job(self, proc_a, output_a, host_output_a, output_idx):
         with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
-            events = yield from(proc_a.wait())
-            events += yield from(output_a.wait())
+            events = await proc_a.wait()
+            events += await output_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
 
             # Compute
@@ -970,7 +977,7 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Wait for the host output buffers to be available
-            events = yield from(host_output_a.wait())
+            events = await host_output_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
 
             # Transfer
@@ -989,7 +996,7 @@ class CBFIngest(object):
             output_a.ready([proc_done])
 
             ts_rel = _mid_timestamp_rel(self._output_avg, self.rx, output_idx)
-            yield from(resource.async_wait_for_events([transfer_done]))
+            await resource.async_wait_for_events([transfer_done])
             futures = []
             # Compute deltas before updating the sensors, so that only a single
             # update is observed.
@@ -1002,7 +1009,7 @@ class CBFIngest(object):
                 inc_heaps += tx.size
                 inc_dumps += 1
                 futures.append(tx.send(part, output_idx, ts_rel))
-            yield from(asyncio.gather(*futures))
+            await asyncio.gather(*futures)
             now = time.time()
             self.output_bytes_sensor.increment(inc_bytes, timestamp=now)
             self.output_heaps_sensor.increment(inc_heaps, timestamp=now)
@@ -1048,10 +1055,9 @@ class CBFIngest(object):
             sd_output_a, host_sd_output_a,
             output_idx, custom_signals_indices, mask))
 
-    @asyncio.coroutine
-    def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
-                      sd_output_a, host_sd_output_a,
-                      output_idx, custom_signals_indices, mask):
+    async def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
+                            sd_output_a, host_sd_output_a,
+                            output_idx, custom_signals_indices, mask):
         with proc_a as proc, \
                 sd_input_a as sd_input_buffers, \
                 host_sd_input_a as host_sd_input, \
@@ -1063,11 +1069,11 @@ class CBFIngest(object):
                 spec_channels.start // self.channel_ranges.sd_cont_factor,
                 spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             # Copy inputs to HostArrays
-            yield from(host_sd_input_a.wait_events())
+            await host_sd_input_a.wait_events()
             host_sd_input['timeseries_weights'][:] = mask
 
             # Transfer to device
-            events = yield from(sd_input_a.wait())
+            events = await sd_input_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
             for name in host_sd_input:
                 sd_input_buffers[name].set_async(self.command_queue, host_sd_input[name])
@@ -1076,15 +1082,15 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Compute
-            events = yield from(proc_a.wait())
-            events += yield from(sd_output_a.wait())
+            events = await proc_a.wait()
+            events += await sd_output_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
             proc.end_sd_sum()
             sd_input_a.ready([self.command_queue.enqueue_marker()])
             self.command_queue.flush()
 
             # Transfer back to host
-            events = yield from(host_sd_output_a.wait())
+            events = await host_sd_output_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
             for name in host_sd_output:
                 sd_output_buffers[name].get_async(self.command_queue, host_sd_output[name])
@@ -1098,7 +1104,7 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Mangle and transmit the retrieved values
-            yield from(resource.async_wait_for_events([transfer_out_done]))
+            await resource.async_wait_for_events([transfer_out_done])
             ts_rel = _mid_timestamp_rel(self._sd_avg, self.rx, output_idx)
             ts = self.cbf_attr['sync_time'] + ts_rel
             cont_vis = host_sd_output['sd_cont_vis']
@@ -1149,7 +1155,7 @@ class CBFIngest(object):
             self.output_flagged_sensor.increment(flag_any_count, now)
             self.output_vis_sensor.increment(flag_counts_scale * n_baselines, now)
 
-            yield from(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
+            await self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
@@ -1180,15 +1186,14 @@ class CBFIngest(object):
                     cache[antenna] = value
             baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
 
-    @asyncio.coroutine
-    def _frame_job(self, proc_a, input_a, host_input_a, frame):
+    async def _frame_job(self, proc_a, input_a, host_input_a, frame):
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
             channel_flags = host_input['channel_flags']
             baseline_flags = host_input['baseline_flags']
             # Load data
-            yield from(host_input_a.wait_events())
+            await host_input_a.wait_events()
             # First channel of the current item
             item_channel = self.channel_ranges.subscribed.start
             # We only receive frames with at least one populated item, so we
@@ -1233,7 +1238,7 @@ class CBFIngest(object):
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]
 
             # Transfer data to the device
-            events = yield from(input_a.wait())
+            events = await input_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
             for name in input_buffers:
                 input_buffers[name].set_async(self.command_queue, host_input[name])
@@ -1242,7 +1247,7 @@ class CBFIngest(object):
             host_input_a.ready([transfer_done])
 
             # Perform data processing
-            events = yield from(proc_a.wait())
+            events = await proc_a.wait()
             self.command_queue.enqueue_wait_for_events(events)
             proc()
             done_event = self.command_queue.enqueue_marker()
@@ -1259,10 +1264,9 @@ class CBFIngest(object):
         assert self._stopped
         self._stopped = False
         self.capture_block_id = capture_block_id
-        self._run_future = asyncio.ensure_future(self.run())
+        self._run_future = asyncio.get_event_loop().create_task(self.run())
 
-    @asyncio.coroutine
-    def stop(self):
+    async def stop(self):
         """Shut down the session. It is safe to make reentrant calls: each
         will wait for the shutdown to complete. It is safe to call
         :meth:`start` again once one of the callers returns.
@@ -1279,13 +1283,13 @@ class CBFIngest(object):
             future = self._run_future
             # Give it a chance to stop on its own (due to stop items)
             logger.info('Waiting for run to stop (5s timeout)...')
-            done, _ = yield from(asyncio.wait([future], timeout=5))
+            done, _ = await asyncio.wait([future], timeout=5)
             if future not in done:
                 logger.info('Stopping receiver...')
                 if self.rx is not None:
                     self.rx.stop()
                 logger.info('Waiting for run to stop...')
-                yield from(future)
+                await future
             logger.info('Run stopped')
             # If multiple callers arrive here, we want only the first to
             # return True and clean up. We also need to protect against a prior
@@ -1300,14 +1304,13 @@ class CBFIngest(object):
                 self.rx = None
         return ret
 
-    @asyncio.coroutine
-    def run(self):
+    async def run(self):
         """Thin wrapper than runs the real code and handles exceptions."""
         try:
-            yield from(self._run())
+            await self._run()
         except Exception:
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
-            self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
+            self._my_sensors['device-status'].value = DeviceStatus.FAIL
 
     def close(self):
         # PyCUDA has a bug/limitation regarding cleanup
@@ -1327,28 +1330,27 @@ class CBFIngest(object):
             del self.sd_input_resource
             del self.sd_output_resource
 
-    @asyncio.coroutine
-    def _get_data(self):
+    async def _get_data(self):
         """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
-        self.status_sensor.set_value("wait-data")
+        self.status_sensor.value = Status.WAIT_DATA
         while True:
             try:
-                frame = yield from(self.rx.get())
+                frame = await self.rx.get()
             except spead2.Stopped:
                 logger.info('Detected receiver stopped')
-                yield from(self.rx.join())
+                await self.rx.join()
                 return
 
             st = time.time()
             # Configure datasets and other items now that we have complete metadata
             if idx == 0:
-                self.status_sensor.set_value("capturing")
+                self.status_sensor.value = Status.CAPTURING
 
             # Generate timestamps
             current_ts_rel = frame.timestamp / self.cbf_attr['scale_factor_timestamp']
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
-            self._my_sensors["last-dump-timestamp"].set_value(current_ts)
+            self._my_sensors["last-dump-timestamp"].value = current_ts
 
             self._output_avg.add_index(frame.idx)
             self._sd_avg.add_index(frame.idx)
@@ -1357,7 +1359,7 @@ class CBFIngest(object):
             input_a, host_input_a = self.input_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # start to transfer its data before trying to carry on.
-            yield from(host_input_a.wait())
+            await host_input_a.wait()
             self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame))
 
             # Done with reading this frame
@@ -1370,8 +1372,7 @@ class CBFIngest(object):
             # thrown as soon as possible.
             self.jobs.clean()
 
-    @asyncio.coroutine
-    def _run(self):
+    async def _run(self):
         """Real implementation of `run`."""
         # Ensure we have clean state. Some of this is unnecessary in normal
         # use, but important if the previous session crashed.
@@ -1380,9 +1381,9 @@ class CBFIngest(object):
         self._sd_avg.finish(flush=False)
         self._init_ig_sd()
         # Send start-of-stream packets.
-        yield from(self._send_sd_data(self.ig_sd.get_start()))
+        await self._send_sd_data(self.ig_sd.get_start())
         for tx in self.tx.values():
-            yield from(tx.start())
+            await tx.start()
         # Initialise the input stream
         prefixes = [self.telstate.SEPARATOR.join([self.capture_block_id, l0_name])
                     for l0_name in self.l0_names]
@@ -1404,19 +1405,19 @@ class CBFIngest(object):
             self.rx.stop()
 
         # The main loop
-        yield from(self._get_data())
+        await self._get_data()
 
         logger.info('Joined with receiver. Flushing final groups...')
         self._output_avg.finish()
         self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
-        yield from(self.jobs.finish())
+        await self.jobs.finish()
         logger.info('Jobs complete')
         for (name, tx) in self.tx.items():
             logger.info('Stopping %s tx stream...', name)
-            yield from(tx.stop())
+            await tx.stop()
         for tx in self._sdisp_ips.values():
             logger.info('Stopping signal display stream...')
-            yield from(self._stop_stream(tx, self.ig_sd))
+            await self._stop_stream(tx, self.ig_sd)
         logger.info("CBF ingest complete")
-        self.status_sensor.set_value("complete")
+        self.status_sensor.value = Status.COMPLETE
