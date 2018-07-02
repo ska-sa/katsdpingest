@@ -60,7 +60,7 @@ class TestGetCbfAttr(object):
         }
         self.telstate = TelescopeState()
         self.telstate.clear()
-        for key, value in values.iteritems():
+        for key, value in values.items():
             self.telstate.add(key, value, immutable=True)
         self.expected = {
             'adc_sample_rate': 1712000000.0,

@@ -6,7 +6,6 @@
 .. |Context| replace:: :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
 """
 
-from __future__ import print_function, division, absolute_import
 import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
@@ -1586,7 +1585,7 @@ class IngestOperation(accel.OperationSequence):
                                    operation.__class__.__name__)
             yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
-                for child_name, child_op in operation.operations.iteritems():
+                for child_name, child_op in operation.operations.items():
                     for d in generate(child_op, child_name):
                         yield (name + ':' + d[0], d[1])
         return list(generate(self, 'ingest'))

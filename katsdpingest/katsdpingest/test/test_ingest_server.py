@@ -1,6 +1,5 @@
 """Tests for :mod:`katsdpingest.ingest_server`."""
 
-from __future__ import print_function, absolute_import, division
 import argparse
 import functools
 import logging
@@ -12,8 +11,8 @@ from nose.tools import (assert_in, assert_is_not_none, assert_is_instance, asser
                         nottest)
 import tornado.gen
 from tornado.platform.asyncio import AsyncIOMainLoop
-import trollius
-from trollius import From, Return
+import asyncio
+
 
 import spead2
 import spead2.recv
@@ -59,7 +58,7 @@ class MockReceiver(object):
         self._next_frame = 0
         self._data = data
         self._timestamps = timestamps
-        self._stop_event = trollius.Event()
+        self._stop_event = asyncio.Event()
         self._channel_range = channel_range
         self._substreams = len(channel_range) // cbf_attr['n_chans_per_substream']
         self._pauses = {} if pauses is None else pauses
@@ -72,16 +71,16 @@ class MockReceiver(object):
     def stop(self):
         self._stop_event.set()
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def join(self):
-        yield From(self._stop_event.wait())
+        yield from(self._stop_event.wait())
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def get(self):
         event = self._pauses.get(self._next_frame)
         if event is None:
-            event = trollius.sleep(0, loop=self._loop)
-        yield From(event)
+            event = asyncio.sleep(0, loop=self._loop)
+        yield from(event)
         if self._next_frame >= len(self._data):
             raise spead2.Stopped('end of frame list')
         frame = Frame(self._next_frame, self._timestamps[self._next_frame], self._substreams)
@@ -91,7 +90,7 @@ class MockReceiver(object):
             stop = start + item_channels
             frame.items[i] = self._data[self._next_frame, start:stop, ...]
         self._next_frame += 1
-        raise Return(frame)
+        return frame
 
 
 class DeepCopyMock(mock.MagicMock):
@@ -166,7 +165,7 @@ class TestIngestDeviceServer(object):
             raise KeyError('VisSenderSet created with unrecognised endpoints')
 
     def _get_sd_tx(self, thread_pool, host, port, config):
-        done_future = trollius.Future()
+        done_future = asyncio.Future()
         done_future.set_result(None)
         tx = mock.MagicMock()
         tx.async_send_heap.return_value = done_future
@@ -200,7 +199,7 @@ class TestIngestDeviceServer(object):
 
     @device_test
     def setup(self, context, command_queue):
-        done_future = trollius.Future()
+        done_future = asyncio.Future()
         done_future.set_result(None)
         self._patchers = []
         self._telstate = katsdptelstate.TelescopeState()
@@ -444,7 +443,7 @@ class TestIngestDeviceServer(object):
             self._channel_average_flags(expected_output_flags, self.user_args.continuum_factor),
             expected_ts, send_range.asslice())
 
-        assert_equal([('127.0.0.2', 7149)], self._sd_tx.keys())
+        assert_equal([('127.0.0.2', 7149)], list(self._sd_tx.keys()))
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         expected_sd_vis = self._channel_average(
             expected_vis[:, self.channel_ranges.sd_output.asslice(), :],
@@ -523,7 +522,7 @@ class TestIngestDeviceServer(object):
     @tornado.gen.coroutine
     def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
-        self._pauses = {10: trollius.Future()}
+        self._pauses = {10: asyncio.Future()}
         yield self.make_request('capture-init', 'cb1')
         sd_tx = self._sd_tx[('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for

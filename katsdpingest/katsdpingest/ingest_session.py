@@ -1,14 +1,13 @@
 """Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
-from __future__ import division, print_function, absolute_import
 import time
 import fractions
 import logging
 
 import numpy as np
 
-import trollius
-from trollius import From, Return
+import asyncio
+
 
 import spead2
 import spead2.send
@@ -900,18 +899,18 @@ class CBFIngest(object):
         future : `trollius.Future`
             A future that is completed when the heap has been sent to all receivers.
         """
-        return trollius.gather(*(trollius.async(sender.async_send_heap(tx, data))
-                                 for tx in self._sdisp_ips.itervalues()))
+        return asyncio.gather(*(asyncio.ensure_future(sender.async_send_heap(tx, data))
+                                for tx in self._sdisp_ips.values()))
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _stop_stream(self, stream, ig):
         """Send a stop packet to a stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
-        yield From(stream.async_flush())
-        yield From(stream.async_send_heap(ig.get_end()))
+        yield from(stream.async_flush())
+        yield from(stream.async_send_heap(ig.get_end()))
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def drop_sdisp_ip(self, ip):
         """Drop a signal display server from the list.
 
@@ -924,7 +923,7 @@ class CBFIngest(object):
         stream = self._sdisp_ips[ip]
         del self._sdisp_ips[ip]
         if self.capturing:
-            yield From(self._stop_stream(stream, self.ig_sd))
+            yield from(self._stop_stream(stream, self.ig_sd))
 
     def add_sdisp_ip(self, endpoint):
         """Add a new server to the signal display list.
@@ -958,12 +957,12 @@ class CBFIngest(object):
         output_a, host_output_a = self.output_resource.acquire()
         self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, output_idx))
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _flush_output_job(self, proc_a, output_a, host_output_a, output_idx):
         with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
-            events = yield From(proc_a.wait())
-            events += yield From(output_a.wait())
+            events = yield from(proc_a.wait())
+            events += yield from(output_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
 
             # Compute
@@ -971,7 +970,7 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Wait for the host output buffers to be available
-            events = yield From(host_output_a.wait())
+            events = yield from(host_output_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
 
             # Transfer
@@ -990,20 +989,20 @@ class CBFIngest(object):
             output_a.ready([proc_done])
 
             ts_rel = _mid_timestamp_rel(self._output_avg, self.rx, output_idx)
-            yield From(resource.async_wait_for_events([transfer_done]))
+            yield from(resource.async_wait_for_events([transfer_done]))
             futures = []
             # Compute deltas before updating the sensors, so that only a single
             # update is observed.
             inc_bytes = 0
             inc_heaps = 0
             inc_dumps = 0
-            for (name, tx) in self.tx.iteritems():
+            for (name, tx) in self.tx.items():
                 part = data[name]
                 inc_bytes += part.nbytes
                 inc_heaps += tx.size
                 inc_dumps += 1
                 futures.append(tx.send(part, output_idx, ts_rel))
-            yield From(trollius.gather(*futures))
+            yield from(asyncio.gather(*futures))
             now = time.time()
             self.output_bytes_sensor.increment(inc_bytes, timestamp=now)
             self.output_heaps_sensor.increment(inc_heaps, timestamp=now)
@@ -1049,7 +1048,7 @@ class CBFIngest(object):
             sd_output_a, host_sd_output_a,
             output_idx, custom_signals_indices, mask))
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
                       sd_output_a, host_sd_output_a,
                       output_idx, custom_signals_indices, mask):
@@ -1064,11 +1063,11 @@ class CBFIngest(object):
                 spec_channels.start // self.channel_ranges.sd_cont_factor,
                 spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
             # Copy inputs to HostArrays
-            yield From(host_sd_input_a.wait_events())
+            yield from(host_sd_input_a.wait_events())
             host_sd_input['timeseries_weights'][:] = mask
 
             # Transfer to device
-            events = yield From(sd_input_a.wait())
+            events = yield from(sd_input_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             for name in host_sd_input:
                 sd_input_buffers[name].set_async(self.command_queue, host_sd_input[name])
@@ -1077,15 +1076,15 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Compute
-            events = yield From(proc_a.wait())
-            events += yield From(sd_output_a.wait())
+            events = yield from(proc_a.wait())
+            events += yield from(sd_output_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             proc.end_sd_sum()
             sd_input_a.ready([self.command_queue.enqueue_marker()])
             self.command_queue.flush()
 
             # Transfer back to host
-            events = yield From(host_sd_output_a.wait())
+            events = yield from(host_sd_output_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             for name in host_sd_output:
                 sd_output_buffers[name].get_async(self.command_queue, host_sd_output[name])
@@ -1099,7 +1098,7 @@ class CBFIngest(object):
             self.command_queue.flush()
 
             # Mangle and transmit the retrieved values
-            yield From(resource.async_wait_for_events([transfer_out_done]))
+            yield from(resource.async_wait_for_events([transfer_out_done]))
             ts_rel = _mid_timestamp_rel(self._sd_avg, self.rx, output_idx)
             ts = self.cbf_attr['sync_time'] + ts_rel
             cont_vis = host_sd_output['sd_cont_vis']
@@ -1150,7 +1149,7 @@ class CBFIngest(object):
             self.output_flagged_sensor.increment(flag_any_count, now)
             self.output_vis_sensor.increment(flag_counts_scale * n_baselines, now)
 
-            yield From(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
+            yield from(self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all')))
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
@@ -1181,7 +1180,7 @@ class CBFIngest(object):
                     cache[antenna] = value
             baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _frame_job(self, proc_a, input_a, host_input_a, frame):
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
@@ -1189,7 +1188,7 @@ class CBFIngest(object):
             channel_flags = host_input['channel_flags']
             baseline_flags = host_input['baseline_flags']
             # Load data
-            yield From(host_input_a.wait_events())
+            yield from(host_input_a.wait_events())
             # First channel of the current item
             item_channel = self.channel_ranges.subscribed.start
             # We only receive frames with at least one populated item, so we
@@ -1234,7 +1233,7 @@ class CBFIngest(object):
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]
 
             # Transfer data to the device
-            events = yield From(input_a.wait())
+            events = yield from(input_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             for name in input_buffers:
                 input_buffers[name].set_async(self.command_queue, host_input[name])
@@ -1243,7 +1242,7 @@ class CBFIngest(object):
             host_input_a.ready([transfer_done])
 
             # Perform data processing
-            events = yield From(proc_a.wait())
+            events = yield from(proc_a.wait())
             self.command_queue.enqueue_wait_for_events(events)
             proc()
             done_event = self.command_queue.enqueue_marker()
@@ -1260,9 +1259,9 @@ class CBFIngest(object):
         assert self._stopped
         self._stopped = False
         self.capture_block_id = capture_block_id
-        self._run_future = trollius.async(self.run())
+        self._run_future = asyncio.ensure_future(self.run())
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def stop(self):
         """Shut down the session. It is safe to make reentrant calls: each
         will wait for the shutdown to complete. It is safe to call
@@ -1280,13 +1279,13 @@ class CBFIngest(object):
             future = self._run_future
             # Give it a chance to stop on its own (due to stop items)
             logger.info('Waiting for run to stop (5s timeout)...')
-            done, _ = yield From(trollius.wait([future], timeout=5))
+            done, _ = yield from(asyncio.wait([future], timeout=5))
             if future not in done:
                 logger.info('Stopping receiver...')
                 if self.rx is not None:
                     self.rx.stop()
                 logger.info('Waiting for run to stop...')
-                yield From(future)
+                yield from(future)
             logger.info('Run stopped')
             # If multiple callers arrive here, we want only the first to
             # return True and clean up. We also need to protect against a prior
@@ -1299,13 +1298,13 @@ class CBFIngest(object):
                 self._run_future = None
                 self.capture_block_id = None
                 self.rx = None
-        raise Return(ret)
+        return ret
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def run(self):
         """Thin wrapper than runs the real code and handles exceptions."""
         try:
-            yield From(self._run())
+            yield from(self._run())
         except Exception:
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].set_value('fail', Sensor.ERROR)
@@ -1328,17 +1327,17 @@ class CBFIngest(object):
             del self.sd_input_resource
             del self.sd_output_resource
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _get_data(self):
         """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
         self.status_sensor.set_value("wait-data")
         while True:
             try:
-                frame = yield From(self.rx.get())
+                frame = yield from(self.rx.get())
             except spead2.Stopped:
                 logger.info('Detected receiver stopped')
-                yield From(self.rx.join())
+                yield from(self.rx.join())
                 return
 
             st = time.time()
@@ -1358,7 +1357,7 @@ class CBFIngest(object):
             input_a, host_input_a = self.input_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # start to transfer its data before trying to carry on.
-            yield From(host_input_a.wait())
+            yield from(host_input_a.wait())
             self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame))
 
             # Done with reading this frame
@@ -1371,7 +1370,7 @@ class CBFIngest(object):
             # thrown as soon as possible.
             self.jobs.clean()
 
-    @trollius.coroutine
+    @asyncio.coroutine
     def _run(self):
         """Real implementation of `run`."""
         # Ensure we have clean state. Some of this is unnecessary in normal
@@ -1381,9 +1380,9 @@ class CBFIngest(object):
         self._sd_avg.finish(flush=False)
         self._init_ig_sd()
         # Send start-of-stream packets.
-        yield From(self._send_sd_data(self.ig_sd.get_start()))
-        for tx in self.tx.itervalues():
-            yield From(tx.start())
+        yield from(self._send_sd_data(self.ig_sd.get_start()))
+        for tx in self.tx.values():
+            yield from(tx.start())
         # Initialise the input stream
         prefixes = [self.telstate.SEPARATOR.join([self.capture_block_id, l0_name])
                     for l0_name in self.l0_names]
@@ -1405,19 +1404,19 @@ class CBFIngest(object):
             self.rx.stop()
 
         # The main loop
-        yield From(self._get_data())
+        yield from(self._get_data())
 
         logger.info('Joined with receiver. Flushing final groups...')
         self._output_avg.finish()
         self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
-        yield From(self.jobs.finish())
+        yield from(self.jobs.finish())
         logger.info('Jobs complete')
-        for (name, tx) in self.tx.iteritems():
+        for (name, tx) in self.tx.items():
             logger.info('Stopping %s tx stream...', name)
-            yield From(tx.stop())
-        for tx in self._sdisp_ips.itervalues():
+            yield from(tx.stop())
+        for tx in self._sdisp_ips.values():
             logger.info('Stopping signal display stream...')
-            yield From(self._stop_stream(tx, self.ig_sd))
+            yield from(self._stop_stream(tx, self.ig_sd))
         logger.info("CBF ingest complete")
         self.status_sensor.set_value("complete")

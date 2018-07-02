@@ -102,7 +102,7 @@ def main():
         cbf_baselines, baselines,
         args.freq_avg, args.sd_freq_avg, create_percentile_ranges(args.mask_antennas),
         threshold_args={'n_sigma': args.sigmas})
-    print "{0} bytes required".format(proc.required_bytes())
+    print("{0} bytes required".format(proc.required_bytes()))
     proc.ensure_all_bound()
 
     permutation = np.random.permutation(baselines).astype(np.int16)
@@ -163,7 +163,7 @@ def main():
     end_event = command_queue.enqueue_marker()
     elapsed_ms = end_event.time_since(start_event) * 1000.0
     dump_ms = elapsed_ms / args.repeat
-    print "{0:.3f}ms ({1:.3f}ms per dump)".format(elapsed_ms, dump_ms)
+    print("{0:.3f}ms ({1:.3f}ms per dump)".format(elapsed_ms, dump_ms))
 
 
 if __name__ == '__main__':

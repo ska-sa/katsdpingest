@@ -1,7 +1,6 @@
 # coding: utf-8
 """Test for the sigproc module."""
 
-from __future__ import print_function, division, absolute_import
 import mock
 import numpy as np
 from katsdpingest import sigproc
@@ -227,10 +226,10 @@ class TestAccum(object):
         template = sigproc.AccumTemplate(context, 1, UNFLAGGED_BIT, excise)
         fn = template.instantiate(queue, 5, Range(1, 4), 1)
         fn.ensure_all_bound()
-        for name, value in host.iteritems():
+        for name, value in host.items():
             fn.buffer(name).set(queue, value)
         fn()
-        for name, value in expected.iteritems():
+        for name, value in expected.items():
             actual = fn.buffer(name).get(queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
@@ -378,7 +377,7 @@ class TestPostproc(object):
 
         # Compute expected continuum values. This is done even if continuum is
         # disabled, just to keep the code simple.
-        indices = range(0, channels, cont_factor)
+        indices = list(range(0, channels, cont_factor))
         cont_weights = np.add.reduceat(weights_in, indices, axis=0)
         cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
         cont_flags = np.bitwise_or.reduceat(flags_in, indices, axis=0)
@@ -714,7 +713,7 @@ class TestIngestOperation(object):
         flags = flags[rng, ...]
 
         # Continuum accumulation
-        indices = range(0, vis.shape[0], cont_factor)
+        indices = list(range(0, vis.shape[0], cont_factor))
         cont_vis = np.add.reduceat(vis, indices, axis=0)
         cont_weights = np.add.reduceat(weights, indices, axis=0)
         cont_flags = np.bitwise_or.reduceat(flags, indices, axis=0)
@@ -803,7 +802,7 @@ class TestIngestOperation(object):
             vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, count_flags_channel_range, n_sigma, excise)
-        for (name, value) in sd_expected.iteritems():
+        for (name, value) in sd_expected.items():
             expected['sd_' + name] = value
 
         # Time series
@@ -961,8 +960,6 @@ class TestIngestOperation(object):
         """If all data for an antenna is zero, it must not cause NaNs in the output."""
         channels = 4
         dumps = 2
-        inputs = 2
-        baselines = 4
 
         flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 2, 4], True, True)

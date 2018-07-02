@@ -45,7 +45,7 @@ def set_telstate_entry(telstate, name, value, attribute=True):
 
 class Range(object):
     """Representation of a range of values, as specified by a first and a
-    past-the-end value. This can be seen as an extended form of `xrange` or
+    past-the-end value. This can be seen as an extended form of `range` or
     `slice` (although without support for a non-unit step), where it is easy to
     query the start and stop values, along with other convenience methods.
 
@@ -137,7 +137,7 @@ class Range(object):
         return Range(min(self.start, other.start), max(self.stop, other.stop))
 
     def __iter__(self):
-        return iter(xrange(self.start, self.stop))
+        return iter(range(self.start, self.stop))
 
     def relative_to(self, other):
         """Return a new range that represents `self` as a range relative to

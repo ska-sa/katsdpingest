@@ -2,10 +2,10 @@
 
 import time
 import logging
+import asyncio
 
-import trollius
 import tornado.gen
-from katsdpservices.asyncio import to_tornado_future
+from tornado.platform.asyncio import to_tornado_future
 from katcp import AsyncDeviceServer, Sensor
 from katcp.kattypes import request, return_reply, Str
 from katsdptelstate.endpoint import endpoint_parser
@@ -154,7 +154,7 @@ class IngestDeviceServer(AsyncDeviceServer):
                    if isinstance(logger, logging.Logger)}
         loggers[''] = logging.getLogger()   # Not kept in loggerDict
         if component is None:
-            for name, logger in sorted(loggers.iteritems()):
+            for name, logger in sorted(loggers.items()):
                 req.inform(name, logging.getLevelName(logger.level))
             return ('ok', '{} logger(s) reported'.format(len(loggers)))
         elif level is None:
@@ -201,7 +201,7 @@ class IngestDeviceServer(AsyncDeviceServer):
     def request_drop_sdisp_ip(self, req, ip):
         """Drop an IP address from the internal list of signal display data recipients."""
         try:
-            yield to_tornado_future(trollius.async(self.cbf_ingest.drop_sdisp_ip(ip)))
+            yield to_tornado_future(asyncio.ensure_future(self.cbf_ingest.drop_sdisp_ip(ip)))
         except KeyError:
             raise tornado.gen.Return(
                 ("fail",
@@ -241,7 +241,7 @@ class IngestDeviceServer(AsyncDeviceServer):
         if not self.cbf_ingest.capturing:
             raise tornado.gen.Return(("fail", "No existing capture session."))
 
-        stopped = yield to_tornado_future(trollius.async(self.cbf_ingest.stop()))
+        stopped = yield to_tornado_future(asyncio.ensure_future(self.cbf_ingest.stop()))
 
         # In the case of concurrent connections, we need to ensure that we
         # were the one that actually did the stop, as another connection may
