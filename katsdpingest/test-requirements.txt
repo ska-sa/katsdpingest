@@ -1,5 +1,6 @@
 async_timeout==2.0.1
 asynctest==0.12.2
 coverage
+mock                     # via katsdpsigproc
 nose
 pbr                      # via mock
