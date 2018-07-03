@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 

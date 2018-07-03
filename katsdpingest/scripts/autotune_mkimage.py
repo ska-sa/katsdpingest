@@ -1,9 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Create a derived image from the katsdpingest base image that contains
 autotuning results.
 """
 
-from __future__ import print_function
 import argparse
 import sys
 import os

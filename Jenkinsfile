@@ -13,7 +13,8 @@ katsdp.standardBuild(subdir: 'katsdpcam2telstate')
 katsdp.standardBuild(subdir: 'katsdpbfingest')
 
 catchError {
-    katsdp.stagePrepare(subdir: 'katsdpingest', timeout: [time: 60, unit: 'MINUTES'])
+    katsdp.stagePrepare(subdir: 'katsdpingest', python2: false, python3: true,
+                        timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(subdir: 'katsdpingest', cuda: true, opencl: true)
     katsdp.stageMakeDocker(subdir: 'katsdpingest', venv: true)
 
@@ -24,7 +25,7 @@ catchError {
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
                 katsdp.unpackKatsdpdockerbase()
-                katsdp.virtualenv('venv') {
+                katsdp.virtualenv('venv3') {
                     dir('git/katsdpingest') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
                             sh './jenkins-autotune.sh titanx'
