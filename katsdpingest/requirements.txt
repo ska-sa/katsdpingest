@@ -3,8 +3,10 @@ appdirs                   # via katsdpsigproc
 decorator                 # via katsdpsigproc
 fakeredis                 # via katsdptelstate
 funcsigs                  # via numba
-katversion
+futures                   # via katsdpsigproc
 hiredis                   # via katsdptelstate
+ipaddress                 # via katsdptelstate
+katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
 manhole
