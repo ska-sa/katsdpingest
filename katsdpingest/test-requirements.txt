@@ -1,5 +1,5 @@
-async_timeout
-asynctest
+async_timeout==2.0.1
+asynctest==0.12.2
 coverage
 nose
 pbr                      # via mock
