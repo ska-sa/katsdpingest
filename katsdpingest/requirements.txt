@@ -1,4 +1,4 @@
-aiokatcp
+aiokatcp==0.3.1
 appdirs                   # via katsdpsigproc
 decorator                 # via katsdpsigproc
 fakeredis                 # via katsdptelstate
