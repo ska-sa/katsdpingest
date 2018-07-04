@@ -7,7 +7,7 @@ import asyncio
 import numpy as np
 import spead2
 import spead2.send
-import spead2.recv.trollius
+import spead2.recv.asyncio
 import asynctest
 import async_timeout
 
@@ -67,7 +67,7 @@ class QueueStream(object):
 
 
 class QueueRecvStream(object):
-    """Replacement for :class:`spead2.recv.trollius.Stream` that lets us
+    """Replacement for :class:`spead2.recv.asyncio.Stream` that lets us
     feed in heaps directly."""
     def __init__(self,  *args, **kwargs):
         self._loop = kwargs.pop('loop', None)
