@@ -1,8 +1,8 @@
 FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu-build as build
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
-# Enable Python 2 venv
-ENV PATH="$PATH_PYTHON2" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON2"
+# Enable Python 3 venv
+ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
 # Install Python dependencies
 COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
@@ -18,8 +18,8 @@ RUN cd /tmp/install/katsdpingest && \
 FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu-runtime
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
-COPY --chown=kat:kat --from=build /home/kat/ve /home/kat/ve
-ENV PATH="$PATH_PYTHON2" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON2"
+COPY --chown=kat:kat --from=build /home/kat/ve /home/kat/ve3
+ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
 EXPOSE 2040
 EXPOSE 7148/udp
