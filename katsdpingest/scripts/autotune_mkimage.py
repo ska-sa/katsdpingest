@@ -52,7 +52,7 @@ def tune(cli, base_image, skip):
         cli.start(container_id)
         try:
             for line in cli.logs(container_id, True, True, True):
-                sys.stdout.write(line)
+                sys.stdout.buffer.write(line)
             result = cli.wait(container_id)
         except (Exception, KeyboardInterrupt):
             cli.stop(container_id, timeout=2)
