@@ -222,7 +222,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             excise=False,
             servers=4,
             server_id=2,
-            host='localhost',
+            host='127.0.0.1',
             port=7147,
             telstate=self._telstate,
             name='sdp.ingest.1'
