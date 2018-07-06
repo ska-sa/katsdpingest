@@ -587,11 +587,11 @@ class CBFIngest(object):
 
     def _zero_counters(self):
         now = time.time()
-        self.output_bytes_sensor.set_value(0, now)
-        self.output_heaps_sensor.set_value(0, now)
-        self.output_dumps_sensor.set_value(0, now)
-        self.output_flagged_sensor.set_value(0, now)
-        self.output_vis_sensor.set_value(0, now)
+        self.output_bytes_sensor.set_value(0, timestamp=now)
+        self.output_heaps_sensor.set_value(0, timestamp=now)
+        self.output_dumps_sensor.set_value(0, timestamp=now)
+        self.output_flagged_sensor.set_value(0, timestamp=now)
+        self.output_vis_sensor.set_value(0, timestamp=now)
 
     def _init_baselines(self, antenna_mask):
         # Configure the masking and reordering of baselines
