@@ -18,7 +18,7 @@ RUN cd /tmp/install/katsdpingest && \
 FROM sdp-docker-registry.kat.ac.za:5000/docker-base-gpu-runtime
 MAINTAINER Bruce Merry "bmerry@ska.ac.za"
 
-COPY --chown=kat:kat --from=build /home/kat/ve /home/kat/ve3
+COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
 EXPOSE 2040
