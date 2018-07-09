@@ -1586,6 +1586,5 @@ class IngestOperation(accel.OperationSequence):
             yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
                 for child_name, child_op in operation.operations.items():
-                    for d in generate(child_op, child_name):
-                        yield (name + ':' + d[0], d[1])
+                    yield from generate(child_op, name + ':' + child_name)
         return list(generate(self, 'ingest'))

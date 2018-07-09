@@ -6,6 +6,7 @@ import logging
 import asyncio
 import enum
 import argparse
+from collections import OrderedDict
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
@@ -911,6 +912,9 @@ class CBFIngest:
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = list(self.proc.descriptions())
+            # Enforce ordering of the parameter dictionaries
+            descriptions = [(key, OrderedDict(sorted(value.items())))
+                            for (key, value) in descriptions]
             process_view = self.telstate.view(args.name.replace('.', '_'))
             utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
