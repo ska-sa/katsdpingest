@@ -245,7 +245,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         # were the one that actually did the stop, as another connection may
         # have raced us to stop and then started a new session.
         if stopped:
-            self.sensors["capture-active"].value = 0
+            self.sensors["capture-active"].value = False
             # Error states were associated with the session, which is now dead.
             self.sensors["device-status"].value = DeviceStatus.OK
             logger.info("capture complete")

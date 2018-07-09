@@ -1038,8 +1038,8 @@ class CBFIngest:
             inc_dumps = 0
             for (name, tx) in self.tx.items():
                 part = data[name]
-                inc_bytes += part.nbytes
-                inc_heaps += tx.size
+                inc_bytes += int(part.nbytes)
+                inc_heaps += int(tx.size)
                 inc_dumps += 1
                 futures.append(tx.send(part, output_idx, ts_rel))
             await asyncio.gather(*futures)
@@ -1192,7 +1192,7 @@ class CBFIngest:
             flag_any_count = np.sum(host_sd_output['sd_flag_any_counts'])
             n_baselines = len(self.bls_ordering.sdp_bls_ordering)
             now = time.time()
-            self.output_flagged_sensor.increment(flag_any_count, now)
+            self.output_flagged_sensor.increment(int(flag_any_count), now)
             self.output_vis_sensor.increment(flag_counts_scale * n_baselines, now)
 
             await self._send_sd_data(self.ig_sd.get_heap(descriptors='all', data='all'))
