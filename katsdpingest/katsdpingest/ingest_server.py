@@ -2,13 +2,15 @@
 
 import time
 import logging
+import argparse
+from typing import List, Dict, Any   # noqa: F401
 
 import aiokatcp
 from aiokatcp import FailReply
 from katsdptelstate.endpoint import endpoint_parser
 
 import katsdpingest
-from .ingest_session import CBFIngest, Status, DeviceStatus
+from .ingest_session import CBFIngest, Status, DeviceStatus, ChannelRanges
 from . import receiver
 from .utils import Sensor
 
@@ -16,12 +18,12 @@ from .utils import Sensor
 logger = logging.getLogger(__name__)
 
 
-def _warn_if_positive(value):
+def _warn_if_positive(value: float) -> aiokatcp.Sensor.Status:
     """Status function for sensors that count problems"""
     return Sensor.Status.WARN if value > 0 else Sensor.Status.NOMINAL
 
 
-def _device_status_status(value):
+def _device_status_status(value: DeviceStatus) -> aiokatcp.Sensor.Status:
     """Sets katcp status for device-status sensor from value"""
     if value == DeviceStatus.OK:
         return Sensor.Status.NOMINAL
@@ -53,7 +55,12 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
     VERSION = "sdp-ingest-0.2"
     BUILD_STATE = 'katsdpingest-' + katsdpingest.__version__
 
-    def __init__(self, user_args, channel_ranges, cbf_attr, context, *args, **kwargs):
+    def __init__(
+            self,
+            user_args: argparse.Namespace,
+            channel_ranges: ChannelRanges,
+            cbf_attr: Dict[str, Any],
+            context, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._stopping = False
 
@@ -119,7 +126,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
                    "Whether the SPEAD descriptors have been received "
                    " (prometheus: gauge)",
                    initial_status=Sensor.Status.NOMINAL)
-        ]
+        ]   # type: List[Sensor]
         for key, value in receiver.REJECT_HEAP_TYPES.items():
             sensors.append(Sensor(
                 int, "input-" + key + "-heaps-total",
@@ -142,7 +149,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         self.cbf_ingest.enable_debug(True)
         return "Debug logging enabled."
 
-    async def request_disable_debug(self, ctx):
+    async def request_disable_debug(self, ctx) -> str:
         """Disable debugging of the ingest process."""
         self.cbf_ingest.enable_debug(False)
         return "Debug logging disabled."
@@ -156,8 +163,10 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         If <level> is omitted, the current log level is shown. If component
         is also omitted, the current log levels of all loggers are shown.
         """
+        # manager isn't part of the documented API, so mypy/typeshed doesn't know about it
+        manager = logging.Logger.manager       # type: ignore
         # Filter out placeholders
-        loggers = {name: logger for (name, logger) in logging.Logger.manager.loggerDict.items()
+        loggers = {name: logger for (name, logger) in manager.loggerDict.items()
                    if isinstance(logger, logging.Logger)}
         loggers[''] = logging.getLogger()   # Not kept in loggerDict
         if component is None:
@@ -194,7 +203,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         logger.info(smsg)
         return smsg
 
-    async def request_drop_sdisp_ip(self, req, ip: str) -> str:
+    async def request_drop_sdisp_ip(self, ctx, ip: str) -> str:
         """Drop an IP address from the internal list of signal display data recipients."""
         try:
             await self.cbf_ingest.drop_sdisp_ip(ip)
@@ -205,7 +214,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         else:
             return "The IP address has been dropped as a signal display recipient"
 
-    async def request_add_sdisp_ip(self, req, ip: str) -> str:
+    async def request_add_sdisp_ip(self, ctx, ip: str) -> str:
         """Add the supplied ip and port (ip[:port]) to the list of signal
         display data recipients.If not port is supplied default of 7149 is
         used."""

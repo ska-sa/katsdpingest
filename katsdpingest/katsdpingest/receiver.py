@@ -3,13 +3,16 @@
 import logging
 from collections import deque
 import asyncio
+import typing   # noqa: F401
+from typing import List, Sequence, Mapping, Any, Optional, Union   # noqa: F401
 
 import spead2
 import spead2.recv
 import spead2.recv.asyncio
+from aiokatcp import Sensor
 
 import numpy as np
-from katsdptelstate.endpoint import endpoints_to_str
+from katsdptelstate.endpoint import endpoints_to_str, Endpoint
 
 from .utils import Range
 
@@ -28,25 +31,25 @@ REJECT_HEAP_TYPES = {
 }
 
 
-class Frame(object):
+class Frame:
     """A group of xeng_raw data with a common timestamp"""
-    def __init__(self, idx, timestamp, n_xengs):
+    def __init__(self, idx: int, timestamp: int, n_xengs: int) -> None:
         self.idx = idx
         self.timestamp = timestamp
-        self.items = [None] * n_xengs
+        self.items = [None] * n_xengs    # type: List[Optional[np.ndarray]]
 
-    def ready(self):
+    def ready(self) -> bool:
         return all(item is not None for item in self.items)
 
-    def empty(self):
+    def empty(self) -> bool:
         return all(item is None for item in self.items)
 
     @property
-    def nbytes(self):
+    def nbytes(self) -> int:
         return sum([(item.nbytes if item is not None else 0) for item in self.items])
 
 
-class Receiver(object):
+class Receiver:
     """Class that receives from multiple SPEAD streams and combines heaps into
     frames.
 
@@ -109,10 +112,16 @@ class Receiver(object):
         Set to try by stop(). Note that some streams may still be running
         (:attr:`_running` > 0) at the same time.
     """
-    def __init__(self, endpoints, interface_address, ibv,
-                 max_streams, max_packet_size, buffer_size,
-                 channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=4, loop=None):
+    def __init__(
+            self,
+            endpoints: List[Endpoint],
+            interface_address: str, ibv: bool,
+            max_streams: int, max_packet_size: int, buffer_size: int,
+            channel_range: Range, cbf_channels: int,
+            sensors: Mapping[str, Sensor],
+            cbf_attr: Mapping[str, Any],
+            active_frames: int = 4,
+            loop: asyncio.AbstractEventLoop = None) -> None:
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
             raise ValueError('cbf_channels not divisible by the number of endpoints')
@@ -133,10 +142,11 @@ class Receiver(object):
         self.cbf_channels = cbf_channels
         self._interface_address = interface_address
         self._ibv = ibv
-        self._streams = []
-        self._frames = None
-        self._frames_complete = asyncio.Queue(maxsize=1, loop=loop)
-        self._futures = []
+        self._streams = []      # type: List[spead2.recv.asyncio.Stream]
+        self._frames = deque()  # type: typing.Deque[Frame]
+        self._frames_complete = \
+            asyncio.Queue(maxsize=1, loop=loop)  # type: asyncio.Queue[Union[Frame, int]]
+        self._futures = []      # type: List[Optional[asyncio.Future]]
         self._stopping = False
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.timestamp_base = 0
@@ -168,14 +178,14 @@ class Receiver(object):
                 self._read_stream(self._streams[-1], i, last - first)))
         self._running = n_streams
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop all the individual streams."""
         self._stopping = True
         for stream in self._streams:
             if stream is not None:
                 stream.stop()
 
-    async def join(self):
+    async def join(self) -> None:
         """Wait for all the individual streams to stop. This must not
         be called concurrently with :meth:`get`.
 
@@ -184,11 +194,13 @@ class Receiver(object):
         while self._running > 0:
             frame = await self._frames_complete.get()
             if isinstance(frame, int):
-                await self._futures[frame]
+                future = self._futures[frame]
+                assert future is not None
+                await future
                 self._futures[frame] = None
                 self._running -= 1
 
-    def _pop_frame(self):
+    def _pop_frame(self) -> None:
         """Remove the oldest element of :attr:`_frames`, and replace it with
         a new frame at the other end.
         """
@@ -198,12 +210,12 @@ class Receiver(object):
         self._frames.popleft()
         self._frames.append(Frame(next_idx, next_timestamp, xengs))
 
-    async def _put_frame(self, frame):
+    async def _put_frame(self, frame: Frame) -> None:
         """Put a frame onto :attr:`_frames_complete` and update the sensor."""
         self._input_dumps.value += 1
         await self._frames_complete.put(frame)
 
-    async def _flush_frames(self):
+    async def _flush_frames(self) -> None:
         """Remove any completed frames from the head of :attr:`_frames`."""
         while self._frames[0].ready():
             # Note: _pop_frame must be done *before* trying to put the
@@ -215,7 +227,9 @@ class Receiver(object):
             self._pop_frame()
             await self._put_frame(frame)
 
-    def _add_readers(self, stream, endpoints, max_packet_size, buffer_size):
+    def _add_readers(self, stream: spead2.recv.asyncio.Stream,
+                     endpoints: Sequence[Endpoint],
+                     max_packet_size: int, buffer_size: int) -> None:
         """Subscribe a stream to a list of endpoints."""
         ifaddr = self._interface_address
         if self._ibv:
@@ -237,7 +251,8 @@ class Receiver(object):
             ifaddr if ifaddr is not None else 'default interface',
             ' with ibv' if self._ibv else '')
 
-    def _make_stream(self, endpoints, max_packet_size, buffer_size):
+    def _make_stream(self, endpoints: Sequence[Endpoint],
+                     max_packet_size: int, buffer_size: int) -> spead2.recv.asyncio.Stream:
         """Prepare a stream, which may combine multiple endpoints."""
         # Figure out how many heaps will have the same timestamp, and set
         # up the stream.
@@ -275,7 +290,7 @@ class Receiver(object):
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
-    def _first_timestamp(self, candidate):
+    def _first_timestamp(self, candidate: int):
         """Get raw ADC timestamp of the first frame across all ingests.
 
         This is called when the first valid dump is received for this
@@ -289,7 +304,8 @@ class Receiver(object):
         """
         return candidate
 
-    async def _read_stream(self, stream, stream_idx, n_endpoints):
+    async def _read_stream(self, stream: spead2.recv.asyncio.Stream,
+                           stream_idx: int, n_endpoints: int) -> None:
         """Co-routine that sucks data from a single stream and populates
         :attr:`_frames_complete`."""
         try:
@@ -375,9 +391,8 @@ class Receiver(object):
                 prev_ts = data_ts
                 # we have new data...
 
-                if self._frames is None:
+                if not self._frames:
                     self.timestamp_base = self._first_timestamp(data_ts)
-                    self._frames = deque()
                     for i in range(self.active_frames):
                         self._frames.append(
                             Frame(i, self.timestamp_base + self.interval * i, xengs))
@@ -416,7 +431,7 @@ class Receiver(object):
         finally:
             await self._frames_complete.put(stream_idx)
 
-    async def get(self):
+    async def get(self) -> Frame:
         """Return the next frame.
 
         This is a coroutine.
@@ -431,7 +446,9 @@ class Receiver(object):
             if isinstance(frame, int):
                 # It's actually the index of a finished stream
                 self._streams[frame].stop()   # In case the co-routine exited with an exception
-                await self._futures[frame]
+                future = self._futures[frame]
+                assert future is not None
+                await future
                 self._futures[frame] = None
                 self._running -= 1
             else:

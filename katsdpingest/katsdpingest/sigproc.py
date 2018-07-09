@@ -32,7 +32,7 @@ class Zero(accel.Operation):
         }
 
 
-class PrepareTemplate(object):
+class PrepareTemplate:
     """Handles first-stage data processing on a compute device:
 
     - Conversion to floating point
@@ -189,7 +189,7 @@ class Prepare(accel.Operation):
         }
 
 
-class AutoWeightsTemplate(object):
+class AutoWeightsTemplate:
     """Compute square root of the weight for each autocorrelation. These are
     combined by :class:`InitWeightsTemplate` to give all the initial weights.
 
@@ -327,7 +327,7 @@ class AutoWeights(accel.Operation):
         }
 
 
-class InitWeightsTemplate(object):
+class InitWeightsTemplate:
     """Use the output of :class:`AutoWeightsTemplate` to initialise all the
     weights from the visibilities.
 
@@ -452,7 +452,7 @@ class InitWeights(accel.Operation):
         }
 
 
-class CountFlagsTemplate(object):
+class CountFlagsTemplate:
     """Template for counting the number of flags of each type.
 
     A single count is made per baseline, summing over all channels. Note that
@@ -583,7 +583,7 @@ class CountFlags(accel.Operation):
         }
 
 
-class AccumTemplate(object):
+class AccumTemplate:
     """Template for weighted visibility accumulation with flags. The
     inputs are in baseline-major order, while the outputs are in
     channel-major order. Support is provided for accumulating to multiple
@@ -798,7 +798,7 @@ class Accum(accel.Operation):
         }
 
 
-class PostprocTemplate(object):
+class PostprocTemplate:
     """Postprocessing performed on each output dump:
 
     - Accumulated visibility-weight product divided by weight
@@ -976,7 +976,7 @@ class Postproc(accel.Operation):
         }
 
 
-class CompressWeightsTemplate(object):
+class CompressWeightsTemplate:
     """Do lossy compression of weights. Each weight is represented as the
     product of a per-channel float32 and a per-channel, per-baseline uint8.
 
@@ -1085,7 +1085,7 @@ class CompressWeights(accel.Operation):
         }
 
 
-class FinaliseTemplate(object):
+class FinaliseTemplate:
     """Template for final processing on a dump. This combines the operations
     of :class:`PostprocTemplate` and :class:`CompressWeightsTemplate`.
 
@@ -1199,7 +1199,7 @@ class Finalise(accel.OperationSequence):
         super().__init__(command_queue, operations, compounds)
 
 
-class IngestTemplate(object):
+class IngestTemplate:
     """Template for the entire on-device ingest processing
 
     Parameters

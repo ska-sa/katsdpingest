@@ -5,6 +5,8 @@ import fractions
 import logging
 import asyncio
 import enum
+import argparse
+from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
 
@@ -13,7 +15,9 @@ import spead2.send
 import spead2.recv
 import spead2.send.asyncio
 import spead2.recv.asyncio
+from aiokatcp import Sensor
 
+import katsdpsigproc.accel
 from katsdpsigproc.asyncio import resource
 import katsdpsigproc.rfi.device as rfi
 
@@ -70,15 +74,15 @@ class _TimeAverage(object):
         There is at least one dump in the current group if and only if this is
         not ``None``.
     """
-    def __init__(self, ratio):
+    def __init__(self, ratio: int) -> None:
         self.ratio = ratio
-        self._start_idx = None
+        self._start_idx = None    # type: Optional[int]
 
-    def _warp_start(self, idx):
+    def _warp_start(self, idx: int) -> None:
         """Set :attr:`start_idx` to the smallest multiple of ratio that is <= idx."""
         self._start_idx = idx // self.ratio * self.ratio
 
-    def add_index(self, idx):
+    def add_index(self, idx: int) -> None:
         """Record that a dump with a given index has arrived and is about to
         be processed. This may call :func:`flush`."""
 
@@ -88,24 +92,24 @@ class _TimeAverage(object):
             self.flush(self._start_idx // self.ratio)
             self._warp_start(idx)
 
-    def flush(self, out_idx):
+    def flush(self, out_idx: int) -> None:
         raise NotImplementedError
 
-    def finish(self, flush=True):
+    def finish(self, flush: bool = True) -> None:
         """Flush if not empty and `flush` is true, and reset to initial state"""
         if self._start_idx is not None and flush:
             self.flush(self._start_idx // self.ratio)
         self._start_idx = None
 
 
-def _mid_timestamp_rel(time_average, receiver, idx):
+def _mid_timestamp_rel(time_average: _TimeAverage, recv: receiver.Receiver, idx: int) -> float:
     """Convert an output dump index into a timestamp.
 
     Parameters
     ----------
     time_average : :class:`_TimeAverage`
         Averager, used to get the ratio of input to output dumps
-    receiver : :class:`.Receiver`
+    recv : :class:`.receiver.Receiver`
         Receiver, used to get CBF attributes, start timestamp and interval
     idx : int
         Output dump index
@@ -115,11 +119,11 @@ def _mid_timestamp_rel(time_average, receiver, idx):
     ts_rel : float
         Time in seconds from CBF sync time to the middle of the dump
     """
-    ts_raw = (idx + 0.5) * time_average.ratio * receiver.interval + receiver.timestamp_base
-    return ts_raw / receiver.cbf_attr['scale_factor_timestamp']
+    ts_raw = (idx + 0.5) * time_average.ratio * recv.interval + recv.timestamp_base
+    return ts_raw / recv.cbf_attr['scale_factor_timestamp']
 
 
-def _split_array(x, dtype):
+def _split_array(x: np.ndarray, dtype) -> np.ndarray:
     """Return a view of x which has one extra dimension. Each element is x is
     treated as some number of elements of type `dtype`, whose size must divide
     into the element size of `x`."""
@@ -141,7 +145,7 @@ def _split_array(x, dtype):
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
-class ChannelRanges(object):
+class ChannelRanges:
     """
     Tracks the various channel ranges involved in ingest. Each channel range
     is represented as a pair of integers (start and past-the-end), relative to
@@ -228,9 +232,9 @@ class ChannelRanges(object):
         factor.
     """
 
-    def __init__(self, servers, server_id,
-                 channels, cont_factor, sd_cont_factor, streams, guard,
-                 all_output, all_sd_output):
+    def __init__(self, servers: int, server_id: int,
+                 channels: int, cont_factor: int, sd_cont_factor: int, streams: int, guard: int,
+                 all_output: utils.Range, all_sd_output: utils.Range) -> None:
         self.cont_factor = cont_factor
         self.sd_cont_factor = sd_cont_factor
         self.guard = guard
@@ -263,7 +267,7 @@ class ChannelRanges(object):
         assert self.subscribed.issubset(self.cbf)
 
 
-class _ResourceSet(object):
+class _ResourceSet:
     """Collection of device buffers with host staging areas.
 
     A resource set groups together
@@ -282,18 +286,19 @@ class _ResourceSet(object):
     N : int
         Number of host arrays to create for each buffer
     """
-    def __init__(self, proc, names, N):
+    def __init__(self, proc: katsdpsigproc.accel.Operation,
+                 names: List[str], N: int) -> None:
         if N <= 0:
             raise ValueError('_ResourceSet needs at least one buffer')
         buffers = {name: proc.buffer(name) for name in names}
         self._device = resource.Resource(buffers)
-        self._host = []
+        self._host = []    # type: List[resource.Resource]
         for i in range(N):
             host = {name: buffer.empty_like() for name, buffer in buffers.items()}
             self._host.append(resource.Resource(host))
         self._next = 0     # Next host buffer to return from acquire
 
-    def acquire(self):
+    def acquire(self) -> Tuple[resource.ResourceAllocation, resource.ResourceAllocation]:
         """Acquire device resource and next available host resource."""
         ret = (self._device.acquire(), self._host[self._next].acquire())
         self._next += 1
@@ -302,7 +307,7 @@ class _ResourceSet(object):
         return ret
 
 
-def get_cbf_attr(telstate, cbf_name):
+def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict[str, Any]:
     """Load the configuration of the CBF stream from a telescope state.
 
     Parameters
@@ -321,7 +326,11 @@ def get_cbf_attr(telstate, cbf_name):
     return cbf_attr
 
 
-def _convert_center_freq(old_channels, old_center_freq, old_bandwidth, new_channels):
+def _convert_center_freq(
+        old_channels: utils.Range,
+        old_center_freq: float,
+        old_bandwidth: float,
+        new_channels: utils.Range) -> float:
     """Compute the center frequency of a channel range, given the center
     frequency and bandwidth of a different set of channels.
 
@@ -333,7 +342,7 @@ def _convert_center_freq(old_channels, old_center_freq, old_bandwidth, new_chann
     return old_center_freq + (new_mid - old_mid) * old_bandwidth / len(old_channels)
 
 
-class BaselineOrdering(object):
+class BaselineOrdering:
     """Encapsulates lookup tables related to baseline ordering.
 
     Parameters
@@ -360,8 +369,10 @@ class BaselineOrdering(object):
         calculations.
     """
 
-    def __init__(self, cbf_bls_ordering, antenna_mask=None):
-        def keep(baseline):
+    def __init__(self,
+                 cbf_bls_ordering: List[Tuple[str, str]],
+                 antenna_mask: Iterable[str] = None) -> None:
+        def keep(baseline: Tuple[str, str]) -> bool:
             ant1 = baseline[0][:-1]
             ant2 = baseline[1][:-1]
             # Eliminate baselines that have a lower-numbered antenna as the
@@ -369,34 +380,35 @@ class BaselineOrdering(object):
             # a problem in single pol mode and could be removed in the future.
             if ant2 < ant1:
                 return False
-            if antenna_mask:
-                return ant1 in antenna_mask and ant2 in antenna_mask
+            if antenna_mask_set:
+                return ant1 in antenna_mask_set and ant2 in antenna_mask_set
             else:
                 return True
 
-        def key(item):
+        def key(item: Tuple[int, Tuple[str, str]]) -> Tuple[bool, bool, str, str]:
             input1, input2 = item[1]
             pol1 = input1[-1]
             pol2 = input2[-1]
             return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
 
-        def input_idx(input):
+        def input_idx(input: str) -> int:
             try:
                 return inputs.index(input)
             except ValueError:
                 inputs.append(input)
                 return len(inputs) - 1
 
-        def get_collection_products(bls_ordering):
+        def get_collection_products(
+                bls_ordering: Iterable[Tuple[str, str]]) -> List[List[int]]:
             """This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`."""
-            auto = []
-            autohh = []
-            autovv = []
-            autohv = []
-            cross = []
-            crosshh = []
-            crossvv = []
-            crosshv = []
+            auto = []       # type: List[int]
+            autohh = []     # type: List[int]
+            autovv = []     # type: List[int]
+            autohv = []     # type: List[int]
+            cross = []      # type: List[int]
+            crosshh = []    # type: List[int]
+            crossvv = []    # type: List[int]
+            crosshv = []    # type: List[int]
             for ibls, bls in enumerate(bls_ordering):
                 if bls[0][:-1] == bls[1][:-1]:       # auto
                     if bls[0][-1] == bls[1][-1]:     # autohh or autovv
@@ -419,8 +431,10 @@ class BaselineOrdering(object):
             return [auto, autohh, autovv, autohv, cross, crosshh, crossvv, crosshv]
 
         if antenna_mask is not None:
-            antenna_mask = set(antenna_mask)
-        # Eliminate baselines not covered by antenna_mask
+            antenna_mask_set = set(antenna_mask)   # type: Optional[Set[str]]
+        else:
+            antenna_mask_set = None
+        # Eliminate baselines not covered by antenna_mask_set
         filtered = [x for x in enumerate(cbf_bls_ordering) if keep(x[1])]
         # Sort what's left
         reordered = sorted(filtered, key=key)
@@ -430,22 +444,23 @@ class BaselineOrdering(object):
         for i in range(len(reordered)):
             self.permutation[reordered[i][0]] = i
         # Can now discard the indices from reordered
-        reordered = [x[1] for x in reordered]
-        # Construct input_auto_baseline and baseline_inputs
-        inputs = []
-        self.baseline_inputs = [[input_idx(x[0]), input_idx(x[1])] for x in reordered]
+        reordered_bls = [x[1] for x in reordered]
+        # Construct input_auto_baseline and baseline_inputs.
+        # Note that inputs is modified by input_idx
+        inputs = []    # type: List[str]
+        self.baseline_inputs = [[input_idx(x[0]), input_idx(x[1])] for x in reordered_bls]
         self.input_auto_baseline = [-1] * len(inputs)
-        for i, inputs in enumerate(self.baseline_inputs):
-            if inputs[0] == inputs[1]:
-                self.input_auto_baseline[inputs[0]] = i
+        for i, bl_inputs in enumerate(self.baseline_inputs):
+            if bl_inputs[0] == bl_inputs[1]:
+                self.input_auto_baseline[bl_inputs[0]] = i
         if -1 in self.input_auto_baseline:
             idx = self.input_auto_baseline.index(-1)
             raise ValueError('No auto-correlation baseline found for ' + inputs[idx])
-        self.sdp_bls_ordering = np.array(reordered)
+        self.sdp_bls_ordering = np.array(reordered_bls)
 
         # Collect percentile ranges
         collection_products = get_collection_products(self.sdp_bls_ordering)
-        self.percentile_ranges = []
+        self.percentile_ranges = []   # type: List[Tuple[int, int]]
         for p in collection_products:
             if p:
                 start = p[0]
@@ -472,12 +487,12 @@ class TelstateReceiver(receiver.Receiver):
     l0_int_time : float
         Output integration time
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self._telstates = kwargs.pop('telstates')
         self._l0_int_time = kwargs.pop('l0_int_time')
         super().__init__(*args, **kwargs)
 
-    def _first_timestamp(self, candidate):
+    def _first_timestamp(self, candidate: int) -> int:
         scaled = candidate / self.cbf_attr['scale_factor_timestamp'] + 0.5 * self._l0_int_time
         try:
             for telstate in self._telstates:
@@ -490,7 +505,7 @@ class TelstateReceiver(receiver.Receiver):
             return self._telstates[0].get('first_timestamp_adc')
 
 
-class CBFIngest(object):
+class CBFIngest:
     """
     Ingest session.
 
@@ -530,13 +545,14 @@ class CBFIngest(object):
     # lists are also used by ingest_autotune.py for pre-tuning standard
     # configurations.
     tune_channels = [4096, 8192, 9216, 32768]
-    tune_percentile_sizes = set()
+    tune_percentile_sizes_set = set()
     for ants in [2, 4, 8, 16, 32, 64]:
-        tune_percentile_sizes.update({ants, 2 * ants, ants * (ants - 1) // 2, ants * (ants - 1)})
-    tune_percentile_sizes = list(sorted(tune_percentile_sizes))
+        tune_percentile_sizes_set.update(
+            {ants, 2 * ants, ants * (ants - 1) // 2, ants * (ants - 1)})
+    tune_percentile_sizes = list(sorted(tune_percentile_sizes_set))
 
     @classmethod
-    def _tune_next(cls, value, predef):
+    def _tune_next(cls, value: int, predef: Iterable[int]) -> int:
         """Return the smallest value in `predef` greater than or equal to
         `value`, or `value` if it is larger than the largest element of
         `predef`."""
@@ -547,7 +563,9 @@ class CBFIngest(object):
             return value
 
     @classmethod
-    def create_proc_template(cls, context, percentile_sizes, max_channels, excise, continuum):
+    def create_proc_template(
+            cls, context, percentile_sizes: List[int],
+            max_channels: int, excise: bool, continuum: bool) -> sigproc.IngestTemplate:
         """Create a processing template. This is a potentially slow operation,
         since it invokes autotuning.
 
@@ -585,7 +603,7 @@ class CBFIngest(object):
                                       percentile_sizes=max_percentile_sizes,
                                       excise=excise, continuum=continuum)
 
-    def _zero_counters(self):
+    def _zero_counters(self) -> None:
         now = time.time()
         self.output_bytes_sensor.set_value(0, timestamp=now)
         self.output_heaps_sensor.set_value(0, timestamp=now)
@@ -593,26 +611,26 @@ class CBFIngest(object):
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
 
-    def _init_baselines(self, antenna_mask):
+    def _init_baselines(self, antenna_mask: Iterable[str]) -> None:
         # Configure the masking and reordering of baselines
         self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
         if not len(self.bls_ordering.sdp_bls_ordering):
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 self.cbf_attr['bls_ordering'], antenna_mask))
 
-    def _init_time_averaging(self, output_int_time, sd_int_time):
+    def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
         self._output_avg = _TimeAverage(output_ratio)
-        self._output_avg.flush = self._flush_output
+        self._output_avg.flush = self._flush_output   # type: ignore
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         sd_ratio = max(1, int(round(sd_int_time / self.cbf_attr['int_time'])))
         self._sd_avg = _TimeAverage(sd_ratio)
-        self._sd_avg.flush = self._flush_sd
+        self._sd_avg.flush = self._flush_sd           # type: ignore
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
 
-    def _init_sensors(self, my_sensors):
+    def _init_sensors(self, my_sensors: Mapping[str, Sensor]) -> None:
         self._my_sensors = my_sensors
         # Autocorrelations are required, so it suffices to take just the first
         # input from each pair to get all inputs.
@@ -623,16 +641,16 @@ class CBFIngest(object):
         my_sensors['output-n-bls'].value = len(self.bls_ordering.sdp_bls_ordering)
         my_sensors['output-n-chans'].value = len(self.channel_ranges.output)
         my_sensors['output-int-time'].value = self.cbf_attr['int_time'] * self._output_avg.ratio
-        self.output_bytes_sensor = self._my_sensors['output-bytes-total']
-        self.output_heaps_sensor = self._my_sensors['output-heaps-total']
-        self.output_dumps_sensor = self._my_sensors['output-dumps-total']
-        self.output_flagged_sensor = self._my_sensors['output-flagged-total']
-        self.output_vis_sensor = self._my_sensors['output-vis-total']
-        self.status_sensor = self._my_sensors['status']
+        self.output_bytes_sensor = my_sensors['output-bytes-total']  # type: Sensor[int]
+        self.output_heaps_sensor = my_sensors['output-heaps-total']  # type: Sensor[int]
+        self.output_dumps_sensor = my_sensors['output-dumps-total']  # type: Sensor[int]
+        self.output_flagged_sensor = my_sensors['output-flagged-total']  # type: Sensor[int]
+        self.output_vis_sensor = my_sensors['output-vis-total']      # type: Sensor[int]
+        self.status_sensor = my_sensors['status']                    # type: Sensor[Status]
         self.status_sensor.value = Status.INIT
         self._zero_counters()
 
-    def _init_proc(self, context, excise, continuum):
+    def _init_proc(self, context, excise: bool, continuum: bool) -> None:
         percentile_sizes = list(set(r[1] - r[0] for r in self.bls_ordering.percentile_ranges))
         proc_template = self.create_proc_template(
             context, percentile_sizes, len(self.channel_ranges.input), excise, continuum)
@@ -662,7 +680,7 @@ class CBFIngest(object):
         for description in self.proc.descriptions():
             logger.debug("\t".join([str(x) for x in description]))
 
-    def _init_resources(self):
+    def _init_resources(self) -> None:
         self.jobs = resource.JobQueue()
         self.proc_resource = resource.Resource(self.proc)
         self.input_resource = _ResourceSet(
@@ -681,7 +699,8 @@ class CBFIngest(object):
             sd_output_names.append(base_name + '_flags')
         self.sd_output_resource = _ResourceSet(self.proc, sd_output_names, 2)
 
-    def _init_tx_one(self, args, arg_name, name, cont_factor):
+    def _init_tx_one(self, args: argparse.Namespace, arg_name: str, name: str,
+                     cont_factor: int) -> None:
         """Initialise a single transmit stream.
 
         If the stream has no endpoint specified, does nothing. Otherwise stores
@@ -752,13 +771,13 @@ class CBFIngest(object):
         self.tx[name] = tx
         self.l0_names.append(prefix)
 
-    def _init_tx(self, args):
-        self.tx = {}
-        self.l0_names = []
+    def _init_tx(self, args: argparse.Namespace) -> None:
+        self.tx = {}          # type: Dict[str, sender.VisSenderSet]
+        self.l0_names = []    # type: List[str]
         self._init_tx_one(args, 'spectral', 'spec', 1)
         self._init_tx_one(args, 'continuum', 'cont', self.channel_ranges.cont_factor)
 
-    def _init_ig_sd(self):
+    def _init_ig_sd(self) -> None:
         """Create a item group for signal displays."""
         sd_flavour = spead2.Flavour(4, 64, 48)
         inline_format = [('u', sd_flavour.heap_address_bits)]
@@ -852,11 +871,16 @@ class CBFIngest(object):
             shape=(), dtype=None, format=inline_format,
             value=self.channel_ranges.sd_output.start - self.channel_ranges.all_sd_output.start)
 
-    def __init__(self, args, cbf_attr, channel_ranges, context, my_sensors, telstate):
-        self._sdisp_ips = {}
-        self._run_future = None
+    def __init__(self, args: argparse.Namespace, cbf_attr: Dict[str, Any],
+                 channel_ranges: ChannelRanges,
+                 context,
+                 my_sensors: Mapping[str, Sensor],
+                 telstate: katsdptelstate.TelescopeState) -> None:
+        self._sdisp_ips = {}       # type: Dict[str, spead2.send.asyncio.UdpStream]
+        self._run_future = None    # type: Optional[asyncio.Task]
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
+        self.capture_block_id = None    # type: Optional[str]
 
         self.rx_spead_endpoints = args.cbf_spead
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
@@ -881,7 +905,7 @@ class CBFIngest(object):
 
         # Instantiation of input streams is delayed until the asynchronous task
         # is running, to avoid receiving data we're not yet ready for.
-        self.rx = None
+        self.rx = None       # type: Optional[receiver.Receiver]
         self._init_ig_sd()
 
         # Record information about the processing in telstate
@@ -890,13 +914,13 @@ class CBFIngest(object):
             process_view = self.telstate.view(args.name.replace('.', '_'))
             utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
-    def enable_debug(self, debug):
+    def enable_debug(self, debug: bool) -> None:
         if debug:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.NOTSET)
 
-    def _send_sd_data(self, data):
+    def _send_sd_data(self, data: spead2.send.Heap) -> asyncio.Future:
         """Send a heap to all signal display servers, asynchronously.
 
         Parameters
@@ -912,14 +936,15 @@ class CBFIngest(object):
         return asyncio.gather(*(sender.async_send_heap(tx, data)
                                 for tx in self._sdisp_ips.values()))
 
-    async def _stop_stream(self, stream, ig):
+    async def _stop_stream(self, stream: spead2.send.asyncio.UdpStream,
+                           ig: spead2.send.ItemGroup) -> None:
         """Send a stop packet to a stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
         await stream.async_flush()
         await stream.async_send_heap(ig.get_end())
 
-    async def drop_sdisp_ip(self, ip):
+    async def drop_sdisp_ip(self, ip: str) -> None:
         """Drop a signal display server from the list.
 
         Raises
@@ -933,7 +958,7 @@ class CBFIngest(object):
         if self.capturing:
             await self._stop_stream(stream, self.ig_sd)
 
-    def add_sdisp_ip(self, endpoint):
+    def add_sdisp_ip(self, endpoint: katsdptelstate.endpoint.Endpoint) -> None:
         """Add a new server to the signal display list.
 
         Parameters
@@ -959,13 +984,18 @@ class CBFIngest(object):
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
 
-    def _flush_output(self, output_idx):
+    def _flush_output(self, output_idx: int):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
         output_a, host_output_a = self.output_resource.acquire()
         self.jobs.add(self._flush_output_job(proc_a, output_a, host_output_a, output_idx))
 
-    async def _flush_output_job(self, proc_a, output_a, host_output_a, output_idx):
+    async def _flush_output_job(
+            self,
+            proc_a: resource.ResourceAllocation,
+            output_a: resource.ResourceAllocation,
+            host_output_a: resource.ResourceAllocation,
+            output_idx: int) -> None:
         with proc_a as proc, output_a as output, host_output_a as host_output:
             # Wait for resources
             events = await proc_a.wait()
@@ -981,12 +1011,14 @@ class CBFIngest(object):
             self.command_queue.enqueue_wait_for_events(events)
 
             # Transfer
-            data = {prefix: sender.Data() for prefix in self.tx}
+            data = {}   # type: Dict[str, sender.Data]
             for prefix in self.tx:
+                kwargs = {}   # type: Dict[str, np.ndarray]
                 for field in ['vis', 'flags', 'weights', 'weights_channel']:
                     name = prefix + '_' + field
-                    setattr(data[prefix], field, host_output[name])
+                    kwargs[field] = host_output[name]
                     output[name].get_async(self.command_queue, host_output[name])
+                data[prefix] = sender.Data(**kwargs)
             transfer_done = self.command_queue.enqueue_marker()
             # Prepare for the next group.
             proc.start_sum()
@@ -995,6 +1027,7 @@ class CBFIngest(object):
             proc_a.ready([proc_done])
             output_a.ready([proc_done])
 
+            assert self.rx is not None     # keep mypy happy
             ts_rel = _mid_timestamp_rel(self._output_avg, self.rx, output_idx)
             await resource.async_wait_for_events([transfer_done])
             futures = []
@@ -1017,29 +1050,26 @@ class CBFIngest(object):
             host_output_a.ready()
             logger.debug("Finished dump group with index %d", output_idx)
 
-    def _flush_sd(self, output_idx):
+    def _flush_sd(self, output_idx: int) -> None:
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
         all_channels = len(self.channel_ranges.all_sd_output)
-        custom_signals_indices = None
-        full_mask = None
         try:
             custom_signals_indices = np.array(
                 self.telstate_sdisp['sdisp_custom_signals'],
                 dtype=np.uint32, copy=False)
         except KeyError:
-            pass
+            custom_signals_indices = np.array([], dtype=np.uint32)
+
         try:
             full_mask = np.array(
                 self.telstate_sdisp['sdisp_timeseries_mask'],
                 dtype=np.float32, copy=False)
+            if full_mask.shape != (all_channels,):
+                raise ValueError
         except (KeyError, ValueError, TypeError):
-            pass
-
-        if custom_signals_indices is None:
-            custom_signals_indices = np.array([], dtype=np.uint32)
-        if full_mask is None or full_mask.shape != (all_channels,):
             full_mask = np.ones(all_channels, np.float32) / all_channels
+
         # Create mask from full_mask. mask contains a weight for each channel
         # in computed, but those outside of sd_output are zero.
         mask = np.zeros(len(self.channel_ranges.computed), np.float32)
@@ -1055,9 +1085,16 @@ class CBFIngest(object):
             sd_output_a, host_sd_output_a,
             output_idx, custom_signals_indices, mask))
 
-    async def _flush_sd_job(self, proc_a, sd_input_a, host_sd_input_a,
-                            sd_output_a, host_sd_output_a,
-                            output_idx, custom_signals_indices, mask):
+    async def _flush_sd_job(
+            self,
+            proc_a: resource.ResourceAllocation,
+            sd_input_a: resource.ResourceAllocation,
+            host_sd_input_a: resource.ResourceAllocation,
+            sd_output_a: resource.ResourceAllocation,
+            host_sd_output_a: resource.ResourceAllocation,
+            output_idx: int,
+            custom_signals_indices: np.ndarray,
+            mask: np.ndarray) -> None:
         with proc_a as proc, \
                 sd_input_a as sd_input_buffers, \
                 host_sd_input_a as host_sd_input, \
@@ -1065,6 +1102,8 @@ class CBFIngest(object):
                 host_sd_output_a as host_sd_output:
             spec_channels = self.channel_ranges.sd_output.relative_to(
                 self.channel_ranges.computed).asslice()
+            assert spec_channels.start is not None    # needed just for mypy
+            assert spec_channels.stop is not None     # needed just for mypy
             cont_channels = utils.Range(
                 spec_channels.start // self.channel_ranges.sd_cont_factor,
                 spec_channels.stop // self.channel_ranges.sd_cont_factor).asslice()
@@ -1105,6 +1144,7 @@ class CBFIngest(object):
 
             # Mangle and transmit the retrieved values
             await resource.async_wait_for_events([transfer_out_done])
+            assert self.rx is not None    # keeps mypy happy
             ts_rel = _mid_timestamp_rel(self._sd_avg, self.rx, output_idx)
             ts = self.cbf_attr['sync_time'] + ts_rel
             cont_vis = host_sd_output['sd_cont_vis']
@@ -1159,16 +1199,16 @@ class CBFIngest(object):
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    def _set_baseline_flags(self, baseline_flags, timestamp):
+    def _set_baseline_flags(self, baseline_flags: np.ndarray, timestamp: float) -> None:
         """Query telstate for per-baseline flags to set.
 
-        The last value set in prior to the end of the dump is used.
+        The last value set prior to the end of the dump is used.
         """
         end_time = timestamp + self.cbf_attr['int_time']
         if self.telstate is None:
             baseline_flags.fill(0)
             return
-        cache = {}
+        cache = {}   # type: Dict[str, bool]
         baselines = self.bls_ordering.sdp_bls_ordering
         cam_flag = 1 << sigproc.IngestTemplate.flag_names.index('cam')
         for i, baseline in enumerate(baselines):
@@ -1186,7 +1226,12 @@ class CBFIngest(object):
                     cache[antenna] = value
             baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
 
-    async def _frame_job(self, proc_a, input_a, host_input_a, frame):
+    async def _frame_job(
+            self,
+            proc_a: resource.ResourceAllocation,
+            input_a: resource.ResourceAllocation,
+            host_input_a: resource.ResourceAllocation,
+            frame: receiver.Frame) -> None:
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
@@ -1255,10 +1300,10 @@ class CBFIngest(object):
             proc_a.ready([done_event])
 
     @property
-    def capturing(self):
+    def capturing(self) -> bool:
         return self._run_future is not None
 
-    def start(self, capture_block_id):
+    def start(self, capture_block_id: str):
         assert self._run_future is None
         assert self.rx is None
         assert self._stopped
@@ -1266,7 +1311,7 @@ class CBFIngest(object):
         self.capture_block_id = capture_block_id
         self._run_future = asyncio.get_event_loop().create_task(self.run())
 
-    async def stop(self):
+    async def stop(self) -> bool:
         """Shut down the session. It is safe to make reentrant calls: each
         will wait for the shutdown to complete. It is safe to call
         :meth:`start` again once one of the callers returns.
@@ -1278,9 +1323,9 @@ class CBFIngest(object):
             when running, exactly one of them will return true.
         """
         ret = False
-        if self.capturing:
+        future = self._run_future
+        if future is not None:
             self._stopped = True
-            future = self._run_future
             # Give it a chance to stop on its own (due to stop items)
             logger.info('Waiting for run to stop (5s timeout)...')
             done, _ = await asyncio.wait([future], timeout=5)
@@ -1304,7 +1349,7 @@ class CBFIngest(object):
                 self.rx = None
         return ret
 
-    async def run(self):
+    async def run(self) -> None:
         """Thin wrapper than runs the real code and handles exceptions."""
         try:
             await self._run()
@@ -1312,7 +1357,7 @@ class CBFIngest(object):
             logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
             self._my_sensors['device-status'].value = DeviceStatus.FAIL
 
-    def close(self):
+    def close(self) -> None:
         # PyCUDA has a bug/limitation regarding cleanup
         # (http://wiki.tiker.net/PyCuda/FrequentlyAskedQuestions) that tends
         # to cause device objects and `HostArray`s to leak. To prevent it,
@@ -1330,10 +1375,11 @@ class CBFIngest(object):
             del self.sd_input_resource
             del self.sd_output_resource
 
-    async def _get_data(self):
+    async def _get_data(self) -> None:
         """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
         self.status_sensor.value = Status.WAIT_DATA
+        assert self.rx is not None     # keeps mypy happy
         while True:
             try:
                 frame = await self.rx.get()
@@ -1372,7 +1418,7 @@ class CBFIngest(object):
             # thrown as soon as possible.
             self.jobs.clean()
 
-    async def _run(self):
+    async def _run(self) -> None:
         """Real implementation of `run`."""
         # Ensure we have clean state. Some of this is unnecessary in normal
         # use, but important if the previous session crashed.

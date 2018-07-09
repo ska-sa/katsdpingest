@@ -1,9 +1,12 @@
 """Helper classes encapsulating the details of sending SPEAD streams."""
 
-import numpy as np
-import spead2.send.asyncio
 import logging
 import asyncio
+from typing import Dict, Any   # noqa: F401
+
+import numpy as np
+from katsdptelstate.endpoint import Endpoint
+import spead2.send.asyncio
 
 from .utils import Range
 
@@ -11,26 +14,31 @@ from .utils import Range
 _logger = logging.getLogger(__name__)
 
 
-class Data(object):
+class Data:
     """Bundles visibilities, flags and weights"""
-    def __init__(self, vis=None, flags=None, weights=None, weights_channel=None):
+    def __init__(self,
+                 vis: np.ndarray,
+                 flags: np.ndarray,
+                 weights: np.ndarray,
+                 weights_channel: np.ndarray) -> None:
         self.vis = vis
         self.flags = flags
         self.weights = weights
         self.weights_channel = weights_channel
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> 'Data':
         """Do numpy slicing on all fields at once"""
         return Data(self.vis[idx], self.flags[idx],
                     self.weights[idx], self.weights_channel[idx])
 
     @property
-    def nbytes(self):
+    def nbytes(self) -> int:
         return (self.vis.nbytes + self.flags.nbytes +
                 self.weights.nbytes + self.weights_channel.nbytes)
 
 
-async def async_send_heap(stream, heap):
+async def async_send_heap(stream: spead2.send.asyncio.UdpStream,
+                          heap: spead2.send.Heap) -> None:
     """Send a heap on a stream and wait for it to complete, but log and
     suppress exceptions."""
     try:
@@ -39,7 +47,7 @@ async def async_send_heap(stream, heap):
         _logger.warn("Error sending heap", exc_info=True)
 
 
-class VisSender(object):
+class VisSender:
     """A single output SPEAD stream of L0 visibility data.
 
     Parameters
@@ -60,10 +68,14 @@ class VisSender(object):
         Index of first channel, within the full bandwidth of the L0 output
     all_channels : int
         Number of channels in the full L0 output
-    baselines : number of baselines in output
+    baselines : int
+        number of baselines in output
     """
-    def __init__(self, thread_pool, endpoint, interface_address,
-                 flavour, int_time, channel_range, channel0, all_channels, baselines):
+    def __init__(self, thread_pool: spead2.ThreadPool,
+                 endpoint: Endpoint, interface_address: str,
+                 flavour: spead2.Flavour,
+                 int_time: float, channel_range: Range,
+                 channel0: int, all_channels: int, baselines: int) -> None:
         channels = len(channel_range)
         item_size = np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize
         dump_size = channels * baselines * item_size
@@ -75,7 +87,7 @@ class VisSender(object):
         # packet, which is a fraction of total size) and to allow us to catch
         # up if we temporarily fall behind the rate.
         rate = dump_size / int_time * 1.05
-        kwargs = {}
+        kwargs = {}      # type: Dict[str, Any]
         if interface_address is not None:
             kwargs['interface_address'] = interface_address
             kwargs['ttl'] = 1

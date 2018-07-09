@@ -6,6 +6,8 @@ import logging
 import sys
 import signal
 import asyncio
+import argparse
+from typing import List, Callable, TypeVar
 
 import katsdpservices
 import manhole
@@ -20,16 +22,19 @@ from katsdptelstate import endpoint
 logger = logging.getLogger("katsdpingest.ingest")
 
 
-def comma_list(type_):
+_T = TypeVar('_T')
+
+
+def comma_list(type_: Callable[..., _T]) -> Callable[[str], List[_T]]:
     """Return a function which splits a string on commas and converts each element to
     `type_`."""
 
-    def convert(arg):
+    def convert(arg: str) -> List[_T]:
         return [type_(x) for x in arg.split(',')]
     return convert
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = katsdpservices.ArgumentParser()
     parser.add_argument(
         '--sdisp-spead', type=endpoint.endpoint_list_parser(7149),
@@ -137,7 +142,7 @@ def parse_args():
     return args
 
 
-async def on_shutdown(server):
+async def on_shutdown(server: IngestDeviceServer) -> None:
     # Disable the signal handlers, to avoid being unable to kill if there
     # is an exception in the shutdown path.
     for sig in [signal.SIGINT, signal.SIGTERM]:
@@ -147,7 +152,7 @@ async def on_shutdown(server):
     server.halt()
 
 
-def main():
+def main() -> None:
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
@@ -158,7 +163,7 @@ def main():
     try:
         cbf_attr = get_cbf_attr(args.telstate, args.cbf_name)
     except KeyError as error:
-        logger.error('Terminating due to catastrophic failure: %s', error.message)
+        logger.error('Terminating due to catastrophic failure: %s', str(error))
         sys.exit(1)
     cbf_channels = cbf_attr['n_chans']
     if args.output_channels is None:
