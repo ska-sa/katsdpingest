@@ -27,6 +27,7 @@ redis                     # via katsdptelstate
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
 spead2
+terminaltables==3.1.0     # via aiomonitor
 git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
 git+ssh://git@github.com/ska-sa/katsdpservices#egg=katsdpservices
 git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
