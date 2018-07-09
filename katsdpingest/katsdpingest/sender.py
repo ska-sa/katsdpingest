@@ -144,7 +144,7 @@ class VisSender:
         await async_send_heap(self._stream, self._ig.get_heap())
 
 
-class VisSenderSet(object):
+class VisSenderSet:
     """Manages a collection of :class:`VisSender` objects, and provides similar
     functions that work collectively on all the streams.
     """

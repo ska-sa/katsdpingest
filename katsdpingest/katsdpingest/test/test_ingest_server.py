@@ -33,7 +33,7 @@ STATIC_FLAG = 1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('static'
 CAM_FLAG = 1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('cam')
 
 
-class MockReceiver(object):
+class MockReceiver:
     """Replacement for :class:`katsdpingest.receiver.Receiver`.
 
     It has a predefined list of frames and yields them with no delay. However,

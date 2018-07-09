@@ -39,7 +39,7 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
     return cbf_attr
 
 
-class TestGetCbfAttr(object):
+class TestGetCbfAttr:
     def setup(self):
         values = {
             'i0_bandwidth': 856000000.0,
@@ -81,7 +81,7 @@ class TestGetCbfAttr(object):
         assert_equal(self.expected, attrs)
 
 
-class TestTimeAverage(object):
+class TestTimeAverage:
     def test_constructor(self):
         avg = ingest_session._TimeAverage(3)
         assert_equal(3, avg.ratio)
@@ -125,7 +125,7 @@ def test_split_array():
     np.testing.assert_equal(actual, expected)
 
 
-class TestTelstateReceiver(object):
+class TestTelstateReceiver:
     def setup(self):
         self.telstate = TelescopeState()
         self.telstate.clear()
@@ -133,7 +133,7 @@ class TestTelstateReceiver(object):
     def test_first_timestamp(self):
         # We don't want to bother setting up a valid Receiver base class, we
         # just want to test the subclass, so we mock in a different base.
-        class DummyBase(object):
+        class DummyBase:
             def __init__(self, cbf_attr):
                 self.cbf_attr = cbf_attr
 
@@ -155,7 +155,7 @@ class TestTelstateReceiver(object):
             assert_equal(3087.75, self.telstate['first_timestamp'])
 
 
-class TestCBFIngest(object):
+class TestCBFIngest:
     @device_test
     def test_create_proc(self, context, queue):
         """Test that an ingest processor can be created on the device"""

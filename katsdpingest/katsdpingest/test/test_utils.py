@@ -4,7 +4,7 @@ from nose.tools import (assert_equal, assert_raises,
                         assert_true, assert_false, assert_in, assert_not_in)
 
 
-class TestRange(object):
+class TestRange:
     """Tests for :class:`katsdpingest.sigproc.Range`."""
     def test_init(self):
         r = Range(3, 5)

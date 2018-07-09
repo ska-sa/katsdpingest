@@ -18,7 +18,7 @@ import katsdptelstate.endpoint
 from nose.tools import assert_equal, assert_is_none, assert_raises
 
 
-class QueueStream(object):
+class QueueStream:
     """A simulated SPEAD stream, stored in memory as a queue of heaps. A value
     of None indicates that the stream has been shut down (because putting an
     actual stop heap in the queue won't have the desired effect, as normally
@@ -66,7 +66,7 @@ class QueueStream(object):
         cls._streams.clear()
 
 
-class QueueRecvStream(object):
+class QueueRecvStream:
     """Replacement for :class:`spead2.recv.asyncio.Stream` that lets us
     feed in heaps directly."""
     def __init__(self,  *args, **kwargs):

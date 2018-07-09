@@ -52,7 +52,7 @@ class DeviceStatus(enum.Enum):
     FAIL = 2
 
 
-class _TimeAverage(object):
+class _TimeAverage:
     """Manages a collection of dumps that are averaged together at a specific
     cadence.
 

@@ -39,7 +39,7 @@ def random_flags(rs, shape, bits, p):
     return flags
 
 
-class TestPrepare(object):
+class TestPrepare:
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
     @device_test
@@ -81,7 +81,7 @@ class TestPrepare(object):
         sigproc.PrepareTemplate(context)
 
 
-class TestAutoWeights(object):
+class TestAutoWeights:
     """Test :class:`katsdpingest.sigproc.AutoWeights`"""
 
     @device_test
@@ -121,7 +121,7 @@ class TestAutoWeights(object):
         sigproc.AutoWeightsTemplate(context)
 
 
-class TestInitWeights(object):
+class TestInitWeights:
     """Test :class:`katsdpingest.sigproc.InitWeights`"""
 
     @device_test
@@ -157,7 +157,7 @@ class TestInitWeights(object):
         sigproc.InitWeightsTemplate(context)
 
 
-class TestCountFlags(object):
+class TestCountFlags:
     """Test :class:`katsdpingest.sigproc.CountFlags`"""
 
     @device_test
@@ -207,7 +207,7 @@ class TestCountFlags(object):
         sigproc.CountFlagsTemplate(context)
 
 
-class TestAccum(object):
+class TestAccum:
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
     def _test_small(self, context, queue, excise, expected):
@@ -337,7 +337,7 @@ class TestAccum(object):
         sigproc.AccumTemplate(context, 2, 1, True)
 
 
-class TestPostproc(object):
+class TestPostproc:
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
 
     def test_bad_cont_factor(self):
@@ -429,7 +429,7 @@ class TestPostproc(object):
         sigproc.PostprocTemplate(context, 128, True, True)
 
 
-class TestCompressWeights(object):
+class TestCompressWeights:
     """Tests for :class:`katsdpingest.sigproc.CompressWeights`"""
     @device_test
     def test_simple(self, context, queue):
@@ -461,7 +461,7 @@ class TestCompressWeights(object):
         sigproc.CompressWeightsTemplate(context)
 
 
-class TestIngestOperation(object):
+class TestIngestOperation:
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
     unflagged_bit = 1 << sigproc.IngestTemplate.flag_names.index('cal_rfi')
 
