@@ -9,14 +9,14 @@ import asyncio
 import argparse
 from typing import List, Callable, TypeVar
 
+import aiomonitor
 import katsdpservices
-import manhole
+from katsdpsigproc import accel
+from katsdptelstate import endpoint
 
 from katsdpingest.ingest_session import ChannelRanges, get_cbf_attr
 from katsdpingest.utils import Range
-from katsdpsigproc import accel
 from katsdpingest.ingest_server import IngestDeviceServer
-from katsdptelstate import endpoint
 
 
 logger = logging.getLogger("katsdpingest.ingest")
@@ -120,6 +120,9 @@ def parse_args() -> argparse.Namespace:
         '--server-id', type=int, default=1,
         help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
     parser.add_argument(
+        '--no-aiomonitor', dest='aiomonitor', default=True, action='store_false',
+        help='disable aiomonitor debugging server')
+    parser.add_argument(
         '-p', '--port', type=int, default=2040, metavar='N',
         help='katcp host port. [default=%(default)s]')
     parser.add_argument(
@@ -180,14 +183,16 @@ def main() -> None:
         len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
     server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
-    # allow remote debug connections and expose server and args
-    manhole.install(oneshot_on='USR1', locals={'server': server, 'args': args})
 
     loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(on_shutdown(server)))
     loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
     loop.run_until_complete(server.start())
     logger.info("Started katsdpingest server.")
-    loop.run_until_complete(server.join())
+    if args.aiomonitor:
+        with aiomonitor.start_monitor(loop=loop, locals=locals()):
+            loop.run_until_complete(server.join())
+    else:
+        loop.run_until_complete(server.join())
     logger.info("Shutdown complete")
     loop.close()
 

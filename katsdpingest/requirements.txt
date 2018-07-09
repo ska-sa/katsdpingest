@@ -1,4 +1,6 @@
+aioconsole==0.1.8         # via aiomonitor
 aiokatcp==0.3.1
+aiomonitor==0.3.1
 appdirs                   # via katsdpsigproc
 decorator                 # via katsdpsigproc
 fakeredis                 # via katsdptelstate
@@ -9,7 +11,6 @@ ipaddress                 # via katsdptelstate
 katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
-manhole
 MarkupSafe                # via mako
 netifaces                 # via katsdptelstate
 numba                     # via katsdpsigproc
