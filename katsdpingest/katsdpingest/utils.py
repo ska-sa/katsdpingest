@@ -38,7 +38,7 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
 
 
 def set_telstate_entry(telstate: katsdptelstate.TelescopeState,
-                       name: str, value, attribute: bool =True) -> None:
+                       name: str, value, attribute: bool = True) -> None:
     if telstate is not None:
         try:
             telstate.add(name, value, immutable=attribute)
