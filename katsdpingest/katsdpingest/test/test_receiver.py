@@ -3,6 +3,7 @@
 import logging
 from unittest import mock
 import asyncio
+from typing import Dict, Tuple     # noqa: F401
 
 import numpy as np
 import spead2
@@ -24,7 +25,7 @@ class QueueStream:
     actual stop heap in the queue won't have the desired effect, as normally
     this is processed at a lower level).
     """
-    _streams = {}
+    _streams = {}   # type: Dict[Tuple[str, int], QueueStream]
 
     def __init__(self, loop=None):
         self._queue = asyncio.Queue(loop=loop)

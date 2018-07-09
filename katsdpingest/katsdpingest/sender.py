@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from typing import Dict, Any   # noqa: F401
+from typing import List, Dict, Sequence, Any   # noqa: F401
 
 import numpy as np
 from katsdptelstate.endpoint import Endpoint
@@ -148,15 +148,21 @@ class VisSenderSet:
     """Manages a collection of :class:`VisSender` objects, and provides similar
     functions that work collectively on all the streams.
     """
-    def __init__(self, thread_pool, endpoints, interface_address,
-                 flavour, int_time, channel_range, channel0, all_channels, baselines):
+    def __init__(self,
+                 thread_pool: spead2.ThreadPool,
+                 endpoints: Sequence[Endpoint],
+                 interface_address: str,
+                 flavour: spead2.Flavour,
+                 int_time: float,
+                 channel_range: Range,
+                 channel0: int, all_channels: int, baselines: int) -> None:
         channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
             raise ValueError('Number of channels not evenly divisible by number of endpoints')
         sub_channels = channels // n
         self.sub_channels = sub_channels
-        self._senders = []
+        self._senders = []     # type: List[VisSender]
         for i in range(n):
             a = channel_range.start + i * sub_channels
             b = a + sub_channels
@@ -165,18 +171,18 @@ class VisSenderSet:
                           Range(a, b), channel0 + i * sub_channels, all_channels, baselines))
 
     @property
-    def size(self):
+    def size(self) -> int:
         return len(self._senders)
 
-    async def start(self):
+    async def start(self) -> None:
         """Send a start heap to all streams."""
         await asyncio.gather(*(sender.start() for sender in self._senders))
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Send a stop heap to all streams."""
         await asyncio.gather(*(sender.stop() for sender in self._senders))
 
-    async def send(self, data, idx, ts_rel):
+    async def send(self, data: Data, idx: int, ts_rel: float) -> None:
         """Send a data heap to all streams, splitting the data between them."""
         await asyncio.gather(*(sender.send(data, idx, ts_rel)
                                for sender in self._senders))
