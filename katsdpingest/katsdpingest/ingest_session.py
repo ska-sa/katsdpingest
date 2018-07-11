@@ -890,6 +890,7 @@ class CBFIngest:
         self.rx_spead_max_packet_size = args.input_max_packet_size
         self.rx_spead_buffer_size = args.input_buffer
         self.sd_spead_rate = args.sd_spead_rate
+        self.sd_spead_ifaddr = katsdpservices.get_interface_address(args.sdisp_interface)
         self.channel_ranges = channel_ranges
         self.telstate = telstate
         self.telstate_cbf = utils.cbf_telstate_view(telstate, args.cbf_name)
@@ -979,8 +980,13 @@ class CBFIngest:
             raise ValueError('{0} is already in the active list of recipients'.format(endpoint))
         config = spead2.send.StreamConfig(max_packet_size=8872, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s to signal display list. Starting stream...", endpoint)
+        extra_args = []
+        if self.sd_spead_ifaddr is not None:
+            extra_args = {}
+        else:
+            extra_args = dict(ttl=1, interface_address=self.sd_spead_ifaddr)
         stream = spead2.send.asyncio.UdpStream(
-            spead2.ThreadPool(), endpoint.host, endpoint.port, config)
+            spead2.ThreadPool(), endpoint.host, endpoint.port, config, **extra_args)
         # Ensure that signal display streams that form the full band between
         # them always have unique heap cnts. The first output channel is used
         # as a unique key.
