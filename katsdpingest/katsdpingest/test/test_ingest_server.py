@@ -197,6 +197,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         n_xengs = 16
         self.user_args = user_args = argparse.Namespace(
             sdisp_spead=[Endpoint('127.0.0.2', 7149)],
+            sdisp_interface=None,
             cbf_spead=[Endpoint('239.102.250.{}'.format(i), 7148) for i in range(n_xengs)],
             cbf_interface='dummyif1',
             cbf_ibv=False,
@@ -263,7 +264,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._UdpStream = self._patch('spead2.send.asyncio.UdpStream',
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
-                    side_effect=lambda interface: '127.0.0.' + interface[-1])
+                    side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
