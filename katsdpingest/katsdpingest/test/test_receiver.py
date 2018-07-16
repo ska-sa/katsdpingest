@@ -1,6 +1,5 @@
 """Tests for receiver module"""
 
-import logging
 from unittest import mock
 import asyncio
 from typing import Dict, Tuple     # noqa: F401
@@ -16,92 +15,21 @@ from katsdpingest.receiver import Receiver
 from katsdpingest.sigproc import Range
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
+from katsdptelstate.endpoint import Endpoint
 from nose.tools import assert_equal, assert_is_none, assert_raises
-
-
-class QueueStream:
-    """A simulated SPEAD stream, stored in memory as a queue of heaps. A value
-    of None indicates that the stream has been shut down (because putting an
-    actual stop heap in the queue won't have the desired effect, as normally
-    this is processed at a lower level).
-    """
-    _streams = {}   # type: Dict[Tuple[str, int], QueueStream]
-
-    def __init__(self, loop=None):
-        self._queue = asyncio.Queue(loop=loop)
-
-    async def get(self):
-        heap = await self._queue.get()
-        if heap is None:
-            self._queue.put_nowait(None)
-            raise spead2.Stopped()
-        else:
-            return heap
-
-    def stop(self):
-        self._queue.put_nowait(None)
-
-    def send_heap(self, heap):
-        tp = spead2.ThreadPool()
-        encoder = spead2.send.BytesStream(tp)
-        encoder.send_heap(heap)
-        raw = encoder.getvalue()
-        decoder = spead2.recv.Stream(tp)
-        decoder.stop_on_stop_item = False
-        decoder.add_buffer_reader(raw)
-        heap = decoder.get()
-        self._queue.put_nowait(heap)
-
-    @classmethod
-    def get_instance(cls, multicast_group, port, loop=None):
-        key = (multicast_group, port)
-        if key not in cls._streams:
-            logging.debug('Creating stream %s', key)
-            cls._streams[key] = QueueStream(loop)
-        else:
-            logging.debug('Connecting to existing stream %s', key)
-        return cls._streams[key]
-
-    @classmethod
-    def clear_instances(cls):
-        cls._streams.clear()
-
-
-class QueueRecvStream:
-    """Replacement for :class:`spead2.recv.asyncio.Stream` that lets us
-    feed in heaps directly."""
-    def __init__(self,  *args, **kwargs):
-        self._loop = kwargs.pop('loop', None)
-        self._stream = None
-
-    def add_udp_reader(self, multicast_group, port, *args, **kwargs):
-        if self._stream is not None:
-            raise RuntimeError('QueueRecvStream only supports one reader')
-        self._stream = QueueStream.get_instance(multicast_group, port, self._loop)
-
-    async def get(self):
-        heap = await self._stream.get()
-        return heap
-
-    def stop(self):
-        # Note: don't call stop on the stream, because that will cause the
-        # next stream connected to the same endpoint to also be in a stopped
-        # state.
-        pass
-
-    def set_memory_allocator(self, allocator):
-        pass
-
-    def set_memory_pool(self, memory_pool):
-        pass
-
-    def set_memcpy(self, id):
-        pass
 
 
 class TestReceiver(asynctest.TestCase):
     def setUp(self):
-        patcher = mock.patch('spead2.recv.asyncio.Stream', QueueRecvStream)
+        self._streams = {}    # Dict[Endpoint, spead2.send.InprocStream]
+
+        def add_udp_reader(rx, multicast_group, port, *args, **kwargs):
+            endpoint = Endpoint(multicast_group, port)
+            tx = self._streams[endpoint]
+            rx.add_inproc_reader(tx.queue)
+
+        patcher = mock.patch.object(
+            spead2.recv.asyncio.Stream, 'add_udp_reader', add_udp_reader)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -113,12 +41,17 @@ class TestReceiver(asynctest.TestCase):
         self.cbf_attr = fake_cbf_attr(4, self.n_xengs)
         self.n_chans = self.cbf_attr['n_chans']
         self.n_bls = len(self.cbf_attr['bls_ordering'])
+        tx_thread_pool = spead2.ThreadPool()
+        self.tx = [spead2.send.InprocStream(tx_thread_pool, spead2.InprocQueue())
+                   for endpoint in endpoints]
+        self._streams = dict(zip(endpoints, self.tx))
+        for tx in self.tx:
+            # asyncio.iscoroutinefunction doesn't like pybind11 functions, so
+            # we have to hide it inside a lambda.
+            self.addCleanup(lambda: tx.queue.stop())
         self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3, loop=self.loop)
-        self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
-                   for i in range(self.n_streams)]
-        self.addCleanup(QueueStream.clear_instances)
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
             ig.add_item(0x1600, 'timestamp',
@@ -143,14 +76,14 @@ class TestReceiver(asynctest.TestCase):
                         'Each value is a complex number - '
                         'two (real and imaginary) signed integers.',
                         (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
-        for i, tx in enumerate(self.tx):
-            tx.send_heap(self.tx_ig[i].get_heap())
+        for ig, tx in zip(self.tx_ig, self.tx):
+            tx.send_heap(ig.get_heap())
 
     async def test_stop(self):
         """The receiver must stop once all streams stop"""
         data_future = self.loop.create_task(self.rx.get())
-        for i, tx in enumerate(self.tx):
-            tx.send_heap(self.tx_ig[i].get_end())
+        for ig, tx in zip(self.tx_ig, self.tx):
+            tx.send_heap(ig.get_end())
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
         with assert_raises(spead2.Stopped):
