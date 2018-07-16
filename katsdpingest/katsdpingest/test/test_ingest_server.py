@@ -98,39 +98,19 @@ class DeepCopyMock(mock.MagicMock):
         return super().__call__(*copy.deepcopy(args), **copy.deepcopy(kwargs))
 
 
-def decode_heap(heap):
-    """Converts a :class:`spead2.send.Heap` to a :class:`spead2.recv.Heap`.
-
-    If the input heap contains a stop packet, returns ``None``.
-    """
-    out_stream = spead2.send.BytesStream(spead2.ThreadPool())
-    out_stream.send_heap(heap)
-    in_stream = spead2.recv.Stream(spead2.ThreadPool())
-    in_stream.add_buffer_reader(out_stream.getvalue())
-    try:
-        heap = next(in_stream)
-    except StopIteration:
-        heap = None
-    in_stream.stop()
-    return heap
-
-
 def decode_heap_ig(heap):
     ig = spead2.ItemGroup()
-    heap = decode_heap(heap)
     assert_is_not_none(heap)
     ig.update(heap)
     return ig
 
 
-def is_start(heap):
-    heap = decode_heap(heap)
-    return heap.is_start_of_stream()
-
-
-def is_stop(heap):
-    heap = decode_heap(heap)
-    return heap is None
+def get_heaps(tx):
+    rx = spead2.recv.Stream(spead2.ThreadPool())
+    rx.stop_on_stop_item = False
+    tx.queue.stop()
+    rx.add_inproc_reader(tx.queue)
+    return list(rx)
 
 
 class TestIngestDeviceServer(asynctest.TestCase):
@@ -156,12 +136,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
             raise KeyError('VisSenderSet created with unrecognised endpoints')
 
     def _get_sd_tx(self, thread_pool, host, port, config):
-        done_future = asyncio.Future(loop=self.loop)
-        done_future.set_result(None)
-        tx = mock.MagicMock()
-        tx.async_send_heap.return_value = done_future
-        tx.async_flush.return_value = done_future
-        self._sd_tx[(host, port)] = tx
+        tx = spead2.send.asyncio.InprocStream(thread_pool, spead2.InprocQueue())
+        self._sd_tx[Endpoint(host, port)] = tx
         return tx
 
     def _create_data(self):
@@ -415,21 +391,21 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self._channel_average_flags(expected_output_flags, self.user_args.continuum_factor),
             expected_ts, send_range.asslice())
 
-        assert_equal([('127.0.0.2', 7149)], list(self._sd_tx.keys()))
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        assert_equal([Endpoint('127.0.0.2', 7149)], list(self._sd_tx.keys()))
+        sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
         expected_sd_vis = self._channel_average(
             expected_vis[:, self.channel_ranges.sd_output.asslice(), :],
             self.user_args.sd_continuum_factor)
         expected_sd_flags = self._channel_average_flags(
             expected_flags[:, self.channel_ranges.sd_output.asslice(), :],
             self.user_args.sd_continuum_factor)
-        calls = sd_tx.async_send_heap.mock_calls
+        heaps = get_heaps(sd_tx)
         # First heap should be start-of-stream marker
-        assert_true(is_start(calls[0][1][0]))
+        assert_true(heaps[0].is_start_of_stream())
         # Following heaps should contain averaged visibility data
-        assert_equal(len(expected_sd_vis), len(calls) - 2)
-        for i, call in enumerate(calls[1:-1]):
-            ig = decode_heap_ig(call[1][0])
+        assert_equal(len(expected_sd_vis), len(heaps) - 2)
+        for i, heap in enumerate(heaps[1:-1]):
+            ig = decode_heap_ig(heap)
             vis = ig['sd_blmxdata'].value
             # Signal displays take complex values as pairs of floats; reconstitute them.
             vis = vis[..., 0] + 1j * vis[..., 1]
@@ -437,7 +413,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             np.testing.assert_allclose(expected_sd_vis[i], vis, rtol=1e-5, atol=1e-6)
             np.testing.assert_array_equal(expected_sd_flags[i], flags)
         # Final call must send a stop
-        assert_true(is_stop(calls[-1][1][0]))
+        assert_true(heaps[-1].is_end_of_stream())
 
     async def test_done_when_not_capturing(self):
         """Calling capture-stop when not capturing fails"""
@@ -465,44 +441,51 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('add-sdisp-ip', '127.0.0.3:8001')
         await self.make_request('capture-init', 'cb1')
         await self.make_request('capture-done')
-        assert_equal([('127.0.0.2', 7149), ('127.0.0.3', 8000), ('127.0.0.4', 7149)],
-                     list(sorted(self._sd_tx.keys())))
+        assert_equal({Endpoint('127.0.0.2', 7149),
+                      Endpoint('127.0.0.3', 8000),
+                      Endpoint('127.0.0.4', 7149)},
+                     self._sd_tx.keys())
         # We won't check the contents, since that is tested elsewhere. Just
         # check that all the streams got the expected number of heaps.
         for tx in self._sd_tx.values():
-            assert_equal(5, len(tx.async_send_heap.mock_calls))
+            assert_equal(5, len(get_heaps(tx)))
 
     async def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
         await self.make_request('drop-sdisp-ip', '127.0.0.2')
         await self.make_request('capture-init', 'cb1')
         await self.make_request('capture-done')
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
-        sd_tx.async_send_heap.assert_not_called()
+        sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
+        assert_equal([], get_heaps(sd_tx))
 
     async def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
         self._pauses = {10: asyncio.Future()}
         await self.make_request('capture-init', 'cb1')
-        sd_tx = self._sd_tx[('127.0.0.2', 7149)]
+        sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for
         # the signal display data to be sent.
-        for i in range(1000):
-            if len(sd_tx.async_send_heap.mock_calls) >= 2:
-                break
-            await asyncio.sleep(0.01, loop=self.loop)
-        else:
-            raise asyncio.TimeoutError(
-                'Timed out waiting for signal display tx call to be made')
+        sd_rx = spead2.recv.asyncio.Stream(spead2.ThreadPool())
+        sd_rx.stop_on_stop_item = False
+        sd_rx.add_inproc_reader(sd_tx.queue)
+        heaps = []
+        with async_timeout.timeout(10):
+            for i in range(2):
+                heaps.append(await sd_rx.get())
         await self.make_request('drop-sdisp-ip', '127.0.0.2')
         self._pauses[10].set_result(None)
         await self.make_request('capture-done')
-        calls = sd_tx.async_send_heap.mock_calls
-        assert_equal(3, len(calls))     # start, one data, and stop heaps
-        assert_true(is_start(calls[0][1][0]))
-        ig = decode_heap_ig(calls[1][1][0])
+        sd_tx.queue.stop()
+        while True:
+            try:
+                heaps.append(await sd_rx.get())
+            except spead2.Stopped:
+                break
+        assert_equal(3, len(heaps))     # start, one data, and stop heaps
+        assert_true(heaps[0].is_start_of_stream())
+        ig = decode_heap_ig(heaps[1])
         assert_in('sd_blmxdata', ig)
-        assert_true(is_stop(calls[2][1][0]))
+        assert_true(heaps[2].is_end_of_stream())
 
     async def test_drop_sdisp_ip_missing(self):
         """Dropping an unregistered IP address fails"""
