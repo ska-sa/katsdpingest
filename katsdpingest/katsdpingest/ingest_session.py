@@ -980,7 +980,6 @@ class CBFIngest:
             raise ValueError('{0} is already in the active list of recipients'.format(endpoint))
         config = spead2.send.StreamConfig(max_packet_size=8872, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s to signal display list. Starting stream...", endpoint)
-        extra_args = []
         if self.sd_spead_ifaddr is None:
             extra_args = {}
         else:
