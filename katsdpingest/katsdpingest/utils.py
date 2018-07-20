@@ -197,10 +197,6 @@ class Sensor(aiokatcp.Sensor[_T]):
     """
     def set_value(self, value: _T, status: aiokatcp.Sensor.Status = None,
                   timestamp: float = None) -> None:
-        if not isinstance(value, self.stype):
-            _logger.warning('Value %r for %s is type %s, expected %s',
-                            value, self.name, type(value), self.stype)
-        assert isinstance(value, self.stype)
         if status is None:
             status = self.status_func(value)
         if value != self.value or status != self.status:
