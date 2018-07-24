@@ -38,9 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser = katsdpservices.ArgumentParser()
     parser.add_argument(
         '--sdisp-spead', type=endpoint.endpoint_list_parser(7149),
-        default='127.0.0.1:7149', metavar='ENDPOINT',
-        help=('signal display destination. Either single ip or comma-separated list. '
+        default=[], metavar='ENDPOINT',
+        help=('signal display destination. Either single endpoint or comma-separated list. '
               '[default=%(default)s]'))
+    parser.add_argument(
+        '--sdisp-interface', metavar='INTERFACE',
+        help='interface on which to send signal display data [default=auto]')
     parser.add_argument(
         '--cbf-spead', type=endpoint.endpoint_list_parser(7148),
         default=':7148', metavar='ENDPOINTS',
