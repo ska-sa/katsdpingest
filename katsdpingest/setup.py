@@ -21,7 +21,7 @@ setup(
         'aiokatcp',
         'aiomonitor',
         'numpy',
-        'spead2>=1.5.0',   # Needed for stop_on_stop_item
+        'spead2>=1.8.0',   # Needed for inproc transport for unit tests
         'katsdpsigproc',
         'katsdpservices',
         'katsdptelstate'
