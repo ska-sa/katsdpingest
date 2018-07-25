@@ -1198,7 +1198,7 @@ class CBFIngest:
             self.ig_sd['sd_flag_fraction'].value = flag_fraction
 
             # Update sensors
-            flag_any_count = np.sum(host_sd_output['sd_flag_any_counts'])
+            flag_any_count = int(np.sum(host_sd_output['sd_flag_any_counts']))
             n_baselines = len(self.bls_ordering.sdp_bls_ordering)
             now = time.time()
             self.output_flagged_sensor.increment(flag_any_count, now)
