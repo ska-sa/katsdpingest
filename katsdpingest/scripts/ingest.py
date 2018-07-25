@@ -126,6 +126,12 @@ def parse_args() -> argparse.Namespace:
         '--no-aiomonitor', dest='aiomonitor', default=True, action='store_false',
         help='disable aiomonitor debugging server')
     parser.add_argument(
+        '--aiomonitor-port', type=int, default=50101,
+        help='port for aiomonitor [default=%(default)s]')
+    parser.add_argument(
+        '--aioconsole-port', type=int, default=50102,
+        help='port for aioconsole [default=%(default)s]')
+    parser.add_argument(
         '-p', '--port', type=int, default=2040, metavar='N',
         help='katcp host port. [default=%(default)s]')
     parser.add_argument(
@@ -192,7 +198,10 @@ def main() -> None:
     loop.run_until_complete(server.start())
     logger.info("Started katsdpingest server.")
     if args.aiomonitor:
-        with aiomonitor.start_monitor(loop=loop, locals=locals()):
+        with aiomonitor.start_monitor(loop=loop,
+                                      port=args.aiomonitor_port,
+                                      console_port=args.aioconsole_port,
+                                      locals=locals()):
             loop.run_until_complete(server.join())
     else:
         loop.run_until_complete(server.join())
