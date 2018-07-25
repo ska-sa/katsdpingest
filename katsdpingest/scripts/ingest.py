@@ -1,43 +1,49 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Capture utility for a relatively generic packetised correlator data output stream.
 
 import logging
 import sys
-import katsdpservices
-
-import manhole
 import signal
-import trollius
-from trollius import From
-from tornado.platform.asyncio import AsyncIOMainLoop, to_asyncio_future
+import asyncio
+import argparse
+from typing import List, Callable, TypeVar
+
+import aiomonitor
+import katsdpservices
+from katsdpsigproc import accel
+from katsdptelstate import endpoint
 
 from katsdpingest.ingest_session import ChannelRanges, get_cbf_attr
 from katsdpingest.utils import Range
-from katsdpsigproc import accel
 from katsdpingest.ingest_server import IngestDeviceServer
-from katsdptelstate import endpoint
 
 
 logger = logging.getLogger("katsdpingest.ingest")
 
 
-def comma_list(type_):
+_T = TypeVar('_T')
+
+
+def comma_list(type_: Callable[..., _T]) -> Callable[[str], List[_T]]:
     """Return a function which splits a string on commas and converts each element to
     `type_`."""
 
-    def convert(arg):
+    def convert(arg: str) -> List[_T]:
         return [type_(x) for x in arg.split(',')]
     return convert
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = katsdpservices.ArgumentParser()
     parser.add_argument(
         '--sdisp-spead', type=endpoint.endpoint_list_parser(7149),
-        default='127.0.0.1:7149', metavar='ENDPOINT',
-        help=('signal display destination. Either single ip or comma-separated list. '
+        default=[], metavar='ENDPOINT',
+        help=('signal display destination. Either single endpoint or comma-separated list. '
               '[default=%(default)s]'))
+    parser.add_argument(
+        '--sdisp-interface', metavar='INTERFACE',
+        help='interface on which to send signal display data [default=auto]')
     parser.add_argument(
         '--cbf-spead', type=endpoint.endpoint_list_parser(7148),
         default=':7148', metavar='ENDPOINTS',
@@ -117,6 +123,15 @@ def parse_args():
         '--server-id', type=int, default=1,
         help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
     parser.add_argument(
+        '--no-aiomonitor', dest='aiomonitor', default=True, action='store_false',
+        help='disable aiomonitor debugging server')
+    parser.add_argument(
+        '--aiomonitor-port', type=int, default=50101,
+        help='port for aiomonitor [default=%(default)s]')
+    parser.add_argument(
+        '--aioconsole-port', type=int, default=50102,
+        help='port for aioconsole [default=%(default)s]')
+    parser.add_argument(
         '-p', '--port', type=int, default=2040, metavar='N',
         help='katcp host port. [default=%(default)s]')
     parser.add_argument(
@@ -139,30 +154,28 @@ def parse_args():
     return args
 
 
-def on_shutdown(server):
+async def on_shutdown(server: IngestDeviceServer) -> None:
     # Disable the signal handlers, to avoid being unable to kill if there
     # is an exception in the shutdown path.
     for sig in [signal.SIGINT, signal.SIGTERM]:
-        trollius.get_event_loop().remove_signal_handler(sig)
+        asyncio.get_event_loop().remove_signal_handler(sig)
     logger.info("Shutting down katsdpingest server...")
-    yield From(to_asyncio_future(server.handle_interrupt()))
-    yield From(to_asyncio_future(server.stop()))
-    trollius.get_event_loop().stop()
+    await server.handle_interrupt()
+    server.halt()
 
 
-def main():
+def main() -> None:
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
     if args.log_level is not None:
         logging.root.setLevel(args.log_level.upper())
 
-    ioloop = AsyncIOMainLoop()
-    ioloop.install()
+    loop = asyncio.get_event_loop()
     try:
         cbf_attr = get_cbf_attr(args.telstate, args.cbf_name)
     except KeyError as error:
-        logger.error('Terminating due to catastrophic failure: %s', error.message)
+        logger.error('Terminating due to catastrophic failure: %s', str(error))
         sys.exit(1)
     cbf_channels = cbf_attr['n_chans']
     if args.output_channels is None:
@@ -179,17 +192,21 @@ def main():
         len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
     server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
-    # allow remote debug connections and expose server and args
-    manhole.install(oneshot_on='USR1', locals={'server': server, 'args': args})
 
-    trollius.get_event_loop().add_signal_handler(
-        signal.SIGINT, lambda: trollius.async(on_shutdown(server)))
-    trollius.get_event_loop().add_signal_handler(
-        signal.SIGTERM, lambda: trollius.async(on_shutdown(server)))
-    ioloop.add_callback(server.start)
+    loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(on_shutdown(server)))
+    loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
+    loop.run_until_complete(server.start())
     logger.info("Started katsdpingest server.")
-    trollius.get_event_loop().run_forever()
+    if args.aiomonitor:
+        with aiomonitor.start_monitor(loop=loop,
+                                      port=args.aiomonitor_port,
+                                      console_port=args.aioconsole_port,
+                                      locals=locals()):
+            loop.run_until_complete(server.join())
+    else:
+        loop.run_until_complete(server.join())
     logger.info("Shutdown complete")
+    loop.close()
 
 
 if __name__ == '__main__':

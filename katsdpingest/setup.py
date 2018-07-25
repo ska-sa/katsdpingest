@@ -2,7 +2,7 @@
 from setuptools import setup, find_packages
 
 
-tests_require = ['mock', 'nose']
+tests_require = ['nose', 'asynctest', 'async_timeout', 'katsdpsigproc[test]']
 
 
 setup(
@@ -18,15 +18,13 @@ setup(
     ],
     setup_requires=['katversion'],
     install_requires=[
-        'manhole',
+        'aiokatcp',
+        'aiomonitor',
         'numpy',
-        'spead2>=1.5.0',   # Needed for stop_on_stop_item
-        'katcp',
+        'spead2>=1.8.0',   # Needed for inproc transport for unit tests
         'katsdpsigproc',
         'katsdpservices',
-        'katsdptelstate',
-        'trollius',
-        'tornado<5'
+        'katsdptelstate'
     ],
     extras_require={
         'test': tests_require

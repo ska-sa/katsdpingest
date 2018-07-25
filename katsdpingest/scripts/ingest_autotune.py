@@ -1,12 +1,12 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 Makes autotuning happen for common configurations and for all discovered
 devices, so that a subsequent run will not have to wait for autotuning.
 """
-from __future__ import print_function
 import logging
 import sys
+
 from katsdpingest import ingest_session
 from katsdpsigproc import accel
 

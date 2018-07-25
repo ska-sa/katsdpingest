@@ -1,16 +1,17 @@
 # coding: utf-8
-"""Test for the sigproc module."""
+"""Tests for the sigproc module."""
 
-from __future__ import print_function, division, absolute_import
-import mock
+from unittest import mock
+
 import numpy as np
-from katsdpingest import sigproc
-from katsdpingest.utils import Range
 from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
 from nose.tools import assert_equal, assert_raises
+
+from katsdpingest import sigproc
+from katsdpingest.utils import Range
 
 
 UNFLAGGED_BIT = 128
@@ -38,7 +39,7 @@ def random_flags(rs, shape, bits, p):
     return flags
 
 
-class TestPrepare(object):
+class TestPrepare:
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
     @device_test
@@ -80,7 +81,7 @@ class TestPrepare(object):
         sigproc.PrepareTemplate(context)
 
 
-class TestAutoWeights(object):
+class TestAutoWeights:
     """Test :class:`katsdpingest.sigproc.AutoWeights`"""
 
     @device_test
@@ -120,7 +121,7 @@ class TestAutoWeights(object):
         sigproc.AutoWeightsTemplate(context)
 
 
-class TestInitWeights(object):
+class TestInitWeights:
     """Test :class:`katsdpingest.sigproc.InitWeights`"""
 
     @device_test
@@ -156,7 +157,7 @@ class TestInitWeights(object):
         sigproc.InitWeightsTemplate(context)
 
 
-class TestCountFlags(object):
+class TestCountFlags:
     """Test :class:`katsdpingest.sigproc.CountFlags`"""
 
     @device_test
@@ -206,7 +207,7 @@ class TestCountFlags(object):
         sigproc.CountFlagsTemplate(context)
 
 
-class TestAccum(object):
+class TestAccum:
     """Test :class:`katsdpingest.sigproc.Accum`"""
 
     def _test_small(self, context, queue, excise, expected):
@@ -227,10 +228,10 @@ class TestAccum(object):
         template = sigproc.AccumTemplate(context, 1, UNFLAGGED_BIT, excise)
         fn = template.instantiate(queue, 5, Range(1, 4), 1)
         fn.ensure_all_bound()
-        for name, value in host.iteritems():
+        for name, value in host.items():
             fn.buffer(name).set(queue, value)
         fn()
-        for name, value in expected.iteritems():
+        for name, value in expected.items():
             actual = fn.buffer(name).get(queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
@@ -336,7 +337,7 @@ class TestAccum(object):
         sigproc.AccumTemplate(context, 2, 1, True)
 
 
-class TestPostproc(object):
+class TestPostproc:
     """Tests for :class:`katsdpingest.sigproc.Postproc`"""
 
     def test_bad_cont_factor(self):
@@ -378,7 +379,7 @@ class TestPostproc(object):
 
         # Compute expected continuum values. This is done even if continuum is
         # disabled, just to keep the code simple.
-        indices = range(0, channels, cont_factor)
+        indices = list(range(0, channels, cont_factor))
         cont_weights = np.add.reduceat(weights_in, indices, axis=0)
         cont_vis = np.add.reduceat(vis_in, indices, axis=0) / cont_weights
         cont_flags = np.bitwise_or.reduceat(flags_in, indices, axis=0)
@@ -428,7 +429,7 @@ class TestPostproc(object):
         sigproc.PostprocTemplate(context, 128, True, True)
 
 
-class TestCompressWeights(object):
+class TestCompressWeights:
     """Tests for :class:`katsdpingest.sigproc.CompressWeights`"""
     @device_test
     def test_simple(self, context, queue):
@@ -460,7 +461,7 @@ class TestCompressWeights(object):
         sigproc.CompressWeightsTemplate(context)
 
 
-class TestIngestOperation(object):
+class TestIngestOperation:
     flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
     unflagged_bit = 1 << sigproc.IngestTemplate.flag_names.index('cal_rfi')
 
@@ -714,7 +715,7 @@ class TestIngestOperation(object):
         flags = flags[rng, ...]
 
         # Continuum accumulation
-        indices = range(0, vis.shape[0], cont_factor)
+        indices = list(range(0, vis.shape[0], cont_factor))
         cont_vis = np.add.reduceat(vis, indices, axis=0)
         cont_weights = np.add.reduceat(weights, indices, axis=0)
         cont_flags = np.bitwise_or.reduceat(flags, indices, axis=0)
@@ -803,7 +804,7 @@ class TestIngestOperation(object):
             vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation, input_auto_baseline, baseline_inputs,
             sd_cont_factor, channel_range, count_flags_channel_range, n_sigma, excise)
-        for (name, value) in sd_expected.iteritems():
+        for (name, value) in sd_expected.items():
             expected['sd_' + name] = value
 
         # Time series
@@ -961,8 +962,6 @@ class TestIngestOperation(object):
         """If all data for an antenna is zero, it must not cause NaNs in the output."""
         channels = 4
         dumps = 2
-        inputs = 2
-        baselines = 4
 
         flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 2, 4], True, True)

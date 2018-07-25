@@ -1,9 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Create a derived image from the katsdpingest base image that contains
 autotuning results.
 """
 
-from __future__ import print_function
 import argparse
 import sys
 import os
@@ -28,14 +27,22 @@ DOCKERFILE = dedent('''\
 def get_cache(cli, container_id):
     data, _ = cli.get_archive(container_id, '/home/kat/.cache/katsdpsigproc/tuning.db')
     tardata = b''.join(data)
+    return tardata
+
+
+def untar_cache(tardata):
     with tarfile.open(fileobj=io.BytesIO(tardata)) as tar:
         with contextlib.closing(tar.extractfile('tuning.db')) as f:
             return f.read()
 
 
-def tune(cli, base_image, skip):
+def tune(cli, base_image, skip, init_tar=None):
     """Run a throwaway container to do the autotuning, and extract the result."""
     command = ['ingest_autotune.py'] if not skip else ['/bin/true']
+    if init_tar is not None:
+        command = ['sh', '-c',
+                   'mkdir -p $HOME/.cache/katsdpsigproc && ' \
+                   'cp /tmp/tuning.db $HOME/.cache/katsdpsigproc && ' + command[0]]
     # If we're running inside a Docker container, expose the same devices
     # to our child container.
     environment = {
@@ -50,10 +57,12 @@ def tune(cli, base_image, skip):
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
         container_id = container['Id']
+        if init_tar is not None:
+            cli.put_archive(container_id, '/tmp', init_tar)
         cli.start(container_id)
         try:
             for line in cli.logs(container_id, True, True, True):
-                sys.stdout.write(line)
+                sys.stdout.buffer.write(line)
             result = cli.wait(container_id)
         except (Exception, KeyboardInterrupt):
             cli.stop(container_id, timeout=2)
@@ -114,13 +123,14 @@ def main():
         cli = APIClient(args.host)
 
     if args.copy_from is not None:
-        tune_base = args.copy_from
+        copy_base = args.copy_from
     elif args.copy:
-        tune_base = args.image
+        copy_base = args.image
     else:
-        tune_base = args.base_image
+        copy_base = None
 
-    tuned = tune(cli, tune_base, args.skip)
+    init_tar = tune(cli, copy_base, True) if copy_base is not None else None
+    tuned = untar_cache(tune(cli, args.base_image, args.skip, init_tar))
     build(cli, args.image, args.base_image, tuned)
 
 

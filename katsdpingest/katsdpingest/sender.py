@@ -1,47 +1,53 @@
 """Helper classes encapsulating the details of sending SPEAD streams."""
 
-from __future__ import print_function, division, absolute_import
-import numpy as np
-import spead2.send.trollius
 import logging
-import trollius
-from trollius import From
+import asyncio
+from typing import List, Dict, Sequence, Any   # noqa: F401
+
+import numpy as np
+from katsdptelstate.endpoint import Endpoint
+import spead2.send.asyncio
+
 from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
 
 
-class Data(object):
+class Data:
     """Bundles visibilities, flags and weights"""
-    def __init__(self, vis=None, flags=None, weights=None, weights_channel=None):
+    def __init__(self,
+                 vis: np.ndarray,
+                 flags: np.ndarray,
+                 weights: np.ndarray,
+                 weights_channel: np.ndarray) -> None:
         self.vis = vis
         self.flags = flags
         self.weights = weights
         self.weights_channel = weights_channel
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> 'Data':
         """Do numpy slicing on all fields at once"""
         return Data(self.vis[idx], self.flags[idx],
                     self.weights[idx], self.weights_channel[idx])
 
     @property
-    def nbytes(self):
+    def nbytes(self) -> int:
         return (self.vis.nbytes + self.flags.nbytes +
                 self.weights.nbytes + self.weights_channel.nbytes)
 
 
-@trollius.coroutine
-def async_send_heap(stream, heap):
+async def async_send_heap(stream: spead2.send.asyncio.UdpStream,
+                          heap: spead2.send.Heap) -> None:
     """Send a heap on a stream and wait for it to complete, but log and
     suppress exceptions."""
     try:
-        yield From(stream.async_send_heap(heap))
+        await stream.async_send_heap(heap)
     except Exception:
         _logger.warn("Error sending heap", exc_info=True)
 
 
-class VisSender(object):
+class VisSender:
     """A single output SPEAD stream of L0 visibility data.
 
     Parameters
@@ -62,10 +68,14 @@ class VisSender(object):
         Index of first channel, within the full bandwidth of the L0 output
     all_channels : int
         Number of channels in the full L0 output
-    baselines : number of baselines in output
+    baselines : int
+        number of baselines in output
     """
-    def __init__(self, thread_pool, endpoint, interface_address,
-                 flavour, int_time, channel_range, channel0, all_channels, baselines):
+    def __init__(self, thread_pool: spead2.ThreadPool,
+                 endpoint: Endpoint, interface_address: str,
+                 flavour: spead2.Flavour,
+                 int_time: float, channel_range: Range,
+                 channel0: int, all_channels: int, baselines: int) -> None:
         channels = len(channel_range)
         item_size = np.dtype(np.complex64).itemsize + 2 * np.dtype(np.uint8).itemsize
         dump_size = channels * baselines * item_size
@@ -77,11 +87,11 @@ class VisSender(object):
         # packet, which is a fraction of total size) and to allow us to catch
         # up if we temporarily fall behind the rate.
         rate = dump_size / int_time * 1.05
-        kwargs = {}
+        kwargs = {}      # type: Dict[str, Any]
         if interface_address is not None:
             kwargs['interface_address'] = interface_address
             kwargs['ttl'] = 1
-        self._stream = spead2.send.trollius.UdpStream(
+        self._stream = spead2.send.asyncio.UdpStream(
             thread_pool, endpoint.host, endpoint.port,
             spead2.send.StreamConfig(max_packet_size=8872, rate=rate), **kwargs)
         self._stream.set_cnt_sequence(channel0, all_channels)
@@ -110,23 +120,19 @@ class VisSender(object):
                           description="Channel index of first channel in the heap",
                           shape=(), dtype=np.uint32)
 
-    @trollius.coroutine
-    def start(self):
+    async def start(self):
         """Send a start packet to the stream."""
-        yield From(async_send_heap(self._stream, self._ig.get_start()))
+        await async_send_heap(self._stream, self._ig.get_start())
 
-    @trollius.coroutine
-    def stop(self):
+    async def stop(self):
         """Send a stop packet to the stream. To ensure that it won't be lost
         on the sending side, the stream is first flushed, then the stop
         heap is sent and waited for."""
-        yield From(self._stream.async_flush())
-        yield From(self._stream.async_send_heap(self._ig.get_end()))
+        await self._stream.async_flush()
+        await self._stream.async_send_heap(self._ig.get_end())
 
-    @trollius.coroutine
-    def send(self, data, idx, ts_rel):
-        """Asynchronously send visibilities to the receiver, returning a
-        future."""
+    async def send(self, data, idx, ts_rel):
+        """Asynchronously send visibilities to the receiver"""
         data = data[self._channel_range.asslice()]
         self._ig['correlator_data'].value = data.vis
         self._ig['flags'].value = data.flags
@@ -135,22 +141,28 @@ class VisSender(object):
         self._ig['timestamp'].value = ts_rel
         self._ig['dump_index'].value = idx
         self._ig['frequency'].value = self._channel0
-        return trollius.async(async_send_heap(self._stream, self._ig.get_heap()))
+        await async_send_heap(self._stream, self._ig.get_heap())
 
 
-class VisSenderSet(object):
+class VisSenderSet:
     """Manages a collection of :class:`VisSender` objects, and provides similar
     functions that work collectively on all the streams.
     """
-    def __init__(self, thread_pool, endpoints, interface_address,
-                 flavour, int_time, channel_range, channel0, all_channels, baselines):
+    def __init__(self,
+                 thread_pool: spead2.ThreadPool,
+                 endpoints: Sequence[Endpoint],
+                 interface_address: str,
+                 flavour: spead2.Flavour,
+                 int_time: float,
+                 channel_range: Range,
+                 channel0: int, all_channels: int, baselines: int) -> None:
         channels = len(channel_range)
         n = len(endpoints)
         if channels % n != 0:
             raise ValueError('Number of channels not evenly divisible by number of endpoints')
         sub_channels = channels // n
         self.sub_channels = sub_channels
-        self._senders = []
+        self._senders = []     # type: List[VisSender]
         for i in range(n):
             a = channel_range.start + i * sub_channels
             b = a + sub_channels
@@ -159,21 +171,18 @@ class VisSenderSet(object):
                           Range(a, b), channel0 + i * sub_channels, all_channels, baselines))
 
     @property
-    def size(self):
+    def size(self) -> int:
         return len(self._senders)
 
-    @trollius.coroutine
-    def start(self):
+    async def start(self) -> None:
         """Send a start heap to all streams."""
-        return trollius.gather(*(trollius.async(sender.start()) for sender in self._senders))
+        await asyncio.gather(*(sender.start() for sender in self._senders))
 
-    @trollius.coroutine
-    def stop(self):
+    async def stop(self) -> None:
         """Send a stop heap to all streams."""
-        return trollius.gather(*(trollius.async(sender.stop()) for sender in self._senders))
+        await asyncio.gather(*(sender.stop() for sender in self._senders))
 
-    @trollius.coroutine
-    def send(self, data, idx, ts_rel):
+    async def send(self, data: Data, idx: int, ts_rel: float) -> None:
         """Send a data heap to all streams, splitting the data between them."""
-        return trollius.gather(*(trollius.async(sender.send(data, idx, ts_rel))
-                                 for sender in self._senders))
+        await asyncio.gather(*(sender.send(data, idx, ts_rel)
+                               for sender in self._senders))

@@ -1,15 +1,17 @@
 """Miscellaneous ingest utilities"""
 
 import logging
+from typing import TypeVar, Tuple
 
 import katsdptelstate
-import katcp
+import aiokatcp
 
 
 _logger = logging.getLogger(__name__)
 
 
-def cbf_telstate_view(telstate, stream_name):
+def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
+                      stream_name: str) -> katsdptelstate.TelescopeState:
     """Create a telstate view that allows querying properties from a stream.
     It supports only baseline-correlation-products and
     tied-array-channelised-voltage streams. Properties that don't exist on the
@@ -35,7 +37,8 @@ def cbf_telstate_view(telstate, stream_name):
     return telstate.__class__(prefixes=prefixes, base=telstate)
 
 
-def set_telstate_entry(telstate, name, value, attribute=True):
+def set_telstate_entry(telstate: katsdptelstate.TelescopeState,
+                       name: str, value, attribute: bool = True) -> None:
     if telstate is not None:
         try:
             telstate.add(name, value, immutable=attribute)
@@ -43,23 +46,23 @@ def set_telstate_entry(telstate, name, value, attribute=True):
             _logger.warning('%s', error)
 
 
-class Range(object):
+class Range:
     """Representation of a range of values, as specified by a first and a
-    past-the-end value. This can be seen as an extended form of `xrange` or
+    past-the-end value. This can be seen as an extended form of `range` or
     `slice` (although without support for a non-unit step), where it is easy to
     query the start and stop values, along with other convenience methods.
 
     Ranges can be empty, in which case they still have a `start` and `stop`
     value that are equal, but the value itself is irrelevant.
     """
-    def __init__(self, start, stop):
+    def __init__(self, start: int, stop: int) -> None:
         if start > stop:
             raise ValueError('start must be <= stop')
         self.start = start
         self.stop = stop
 
     @classmethod
-    def parse(cls, value):
+    def parse(cls, value: str) -> 'Range':
         """Convert a string of the form 'A:B' to a :class:`~katsdpingest.utils.Range`,
         where A and B are integers.
 
@@ -71,19 +74,19 @@ class Range(object):
         else:
             return Range(int(fields[0]), int(fields[1]))
 
-    def __str__(self):
+    def __str__(self) -> str:
         return '{}:{}'.format(self.start, self.stop)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return 'Range({}, {})'.format(self.start, self.stop)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.stop - self.start
 
-    def __contains__(self, value):
+    def __contains__(self, value) -> bool:
         return self.start <= value < self.stop
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if not isinstance(other, Range):
             return False
         if not self:
@@ -91,26 +94,26 @@ class Range(object):
         else:
             return self.start == other.start and self.stop == other.stop
 
-    def __ne__(self, other):
+    def __ne__(self, other) -> bool:
         return not (self == other)
 
     # Can't prevent object from being mutated, but __eq__ is defined, so not
     # suitable for hashing.
-    __hash__ = None
+    __hash__ = None   # type: ignore  # keep mypy happy
 
-    def issubset(self, other):
+    def issubset(self, other) -> bool:
         return self.start == self.stop or (other.start <= self.start and self.stop <= other.stop)
 
-    def issuperset(self, other):
+    def issuperset(self, other) -> bool:
         return other.issubset(self)
 
-    def isaligned(self, alignment):
+    def isaligned(self, alignment) -> bool:
         """Whether the start and end of this interval are aligned to multiples
         of `alignment`.
         """
         return not self or (self.start % alignment == 0 and self.stop % alignment == 0)
 
-    def alignto(self, alignment):
+    def alignto(self, alignment) -> 'Range':
         """Return the smallest range containing self for which
         ``r.isaligned()`` is true.
         """
@@ -120,7 +123,7 @@ class Range(object):
             return Range(self.start // alignment * alignment,
                          (self.stop + alignment - 1) // alignment * alignment)
 
-    def intersection(self, other):
+    def intersection(self, other) -> 'Range':
         start = max(self.start, other.start)
         stop = min(self.stop, other.stop)
         if start > stop:
@@ -128,7 +131,7 @@ class Range(object):
         else:
             return Range(start, stop)
 
-    def union(self, other):
+    def union(self, other) -> 'Range':
         """Return the smallest range containing both ranges."""
         if not self:
             return other
@@ -137,9 +140,9 @@ class Range(object):
         return Range(min(self.start, other.start), max(self.stop, other.stop))
 
     def __iter__(self):
-        return iter(xrange(self.start, self.stop))
+        return iter(range(self.start, self.stop))
 
-    def relative_to(self, other):
+    def relative_to(self, other) -> 'Range':
         """Return a new range that represents `self` as a range relative to
         `other` (i.e. where the start element of `other` is numbered 0). If
         `self` is an empty range, an undefined empty range is returned.
@@ -153,15 +156,15 @@ class Range(object):
             raise ValueError('self is not a subset of other')
         return Range(self.start - other.start, self.stop - other.start)
 
-    def asslice(self):
+    def asslice(self) -> slice:
         """Return a slice object representing the same range"""
         return slice(self.start, self.stop)
 
-    def astuple(self):
+    def astuple(self) -> Tuple[int, int]:
         """Return a tuple containing the start and end values"""
         return (self.start, self.stop)
 
-    def split(self, chunks, chunk_id):
+    def split(self, chunks: int, chunk_id: int) -> 'Range':
         """Return the `chunk_id`-th of `chunks` equally-sized pieces.
 
         Raises
@@ -179,43 +182,28 @@ class Range(object):
                      self.start + (chunk_id + 1) * chunk_size)
 
 
-class SensorWrapper(object):
-    """Convenience wrapper around a sensor.
+_T = TypeVar('_T')
 
-    It
-    - Provides property access to the value
-    - Caches the value of the sensor (removes the need for locking)
-    - Filters out updates that don't change the value
-    - Allows the status to be computed from the value
 
-    Because of the caching, it is important that the sensor is not modified
-    other than through the wrapper.
+class Sensor(aiokatcp.Sensor[_T]):
+    """Wrapper around :class:`aiokatcp.Sensor` that suppresses redundant updates.
+
+    A value update that doesn't change the value or the status is hidden from
+    the base class, so that observers using the AUTO strategy don't see
+    redundant updates.
+
+    It also provides a helper function to increment the value and set an
+    explicit timestamp.
     """
-    def __init__(self, sensor, initial_value=None, status_func=lambda x: katcp.Sensor.NOMINAL):
-        self._sensor = sensor
-        self._status = sensor.status()
-        self._value = sensor.value()
-        self._status_func = status_func
-        if initial_value is not None:
-            self.value = initial_value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, new_value):
-        self.set_value(new_value)
-
-    def set_value(self, new_value, timestamp=None):
-        new_status = self._status_func(new_value)
-        if new_value != self._value or new_status != self._status:
-            self._value = new_value
-            self._status = new_status
-            self._sensor.set_value(new_value, status=new_status, timestamp=timestamp)
+    def set_value(self, value: _T, status: aiokatcp.Sensor.Status = None,
+                  timestamp: float = None) -> None:
+        if status is None:
+            status = self.status_func(value)
+        if value != self.value or status != self.status:
+            super().set_value(value, status, timestamp)
 
     def increment(self, delta, timestamp=None):
-        self.set_value(self.value + delta, timestamp)
+        self.set_value(self.value + delta, timestamp=timestamp)
 
 
-__all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'SensorWrapper']
+__all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'Sensor']

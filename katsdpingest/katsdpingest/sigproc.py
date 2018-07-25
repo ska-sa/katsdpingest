@@ -6,7 +6,6 @@
 .. |Context| replace:: :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
 """
 
-from __future__ import print_function, division, absolute_import
 import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
@@ -16,7 +15,7 @@ from .utils import Range
 class Zero(accel.Operation):
     """Zeros out a set of visibilities, flags and weights with the same shape"""
     def __init__(self, command_queue, channels, baselines):
-        super(Zero, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.slots['vis'] = accel.IOSlot((channels, baselines), np.complex64)
         self.slots['weights'] = accel.IOSlot((channels, baselines), np.float32)
         self.slots['flags'] = accel.IOSlot((channels, baselines), np.uint8)
@@ -33,7 +32,7 @@ class Zero(accel.Operation):
         }
 
 
-class PrepareTemplate(object):
+class PrepareTemplate:
     """Handles first-stage data processing on a compute device:
 
     - Conversion to floating point
@@ -138,7 +137,7 @@ class Prepare(accel.Operation):
                  in_baselines, out_baselines):
         if in_baselines < out_baselines:
             raise ValueError('Baselines can only be discarded, not amplified')
-        super(Prepare, self).__init__(command_queue)
+        super().__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
@@ -190,7 +189,7 @@ class Prepare(accel.Operation):
         }
 
 
-class AutoWeightsTemplate(object):
+class AutoWeightsTemplate:
     """Compute square root of the weight for each autocorrelation. These are
     combined by :class:`InitWeightsTemplate` to give all the initial weights.
 
@@ -279,7 +278,7 @@ class AutoWeights(accel.Operation):
         Number of baselines in the visibilities
     """
     def __init__(self, template, command_queue, channels, channel_range, inputs, baselines):
-        super(AutoWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.kernel = template.program.get_kernel('auto_weights')
         self.template = template
         self.channels = channels
@@ -328,7 +327,7 @@ class AutoWeights(accel.Operation):
         }
 
 
-class InitWeightsTemplate(object):
+class InitWeightsTemplate:
     """Use the output of :class:`AutoWeightsTemplate` to initialise all the
     weights from the visibilities.
 
@@ -415,7 +414,7 @@ class InitWeights(accel.Operation):
         Number of baselines
     """
     def __init__(self, template, command_queue, channels, inputs, baselines):
-        super(InitWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.kernel = template.program.get_kernel('init_weights')
         self.template = template
         self.channels = channels
@@ -453,7 +452,7 @@ class InitWeights(accel.Operation):
         }
 
 
-class CountFlagsTemplate(object):
+class CountFlagsTemplate:
     """Template for counting the number of flags of each type.
 
     A single count is made per baseline, summing over all channels. Note that
@@ -542,7 +541,7 @@ class CountFlags(accel.Operation):
         Mask of flag bits to count
     """
     def __init__(self, template, command_queue, channels, channel_range, baselines, mask=0xff):
-        super(CountFlags, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.channel_range = channel_range
@@ -584,7 +583,7 @@ class CountFlags(accel.Operation):
         }
 
 
-class AccumTemplate(object):
+class AccumTemplate:
     """Template for weighted visibility accumulation with flags. The
     inputs are in baseline-major order, while the outputs are in
     channel-major order. Support is provided for accumulating to multiple
@@ -722,7 +721,7 @@ class Accum(accel.Operation):
     """
 
     def __init__(self, template, command_queue, channels, channel_range, baselines):
-        super(Accum, self).__init__(command_queue)
+        super().__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
         self.template = template
@@ -799,7 +798,7 @@ class Accum(accel.Operation):
         }
 
 
-class PostprocTemplate(object):
+class PostprocTemplate:
     """Postprocessing performed on each output dump:
 
     - Accumulated visibility-weight product divided by weight
@@ -926,7 +925,7 @@ class Postproc(accel.Operation):
         If `channels` is not a multiple of `cont_factor`
     """
     def __init__(self, template, command_queue, channels, baselines, cont_factor):
-        super(Postproc, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
@@ -977,7 +976,7 @@ class Postproc(accel.Operation):
         }
 
 
-class CompressWeightsTemplate(object):
+class CompressWeightsTemplate:
     """Do lossy compression of weights. Each weight is represented as the
     product of a per-channel float32 and a per-channel, per-baseline uint8.
 
@@ -1049,7 +1048,7 @@ class CompressWeights(accel.Operation):
         Number of baselines
     """
     def __init__(self, template, command_queue, channels, baselines):
-        super(CompressWeights, self).__init__(command_queue)
+        super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
@@ -1086,7 +1085,7 @@ class CompressWeights(accel.Operation):
         }
 
 
-class FinaliseTemplate(object):
+class FinaliseTemplate:
     """Template for final processing on a dump. This combines the operations
     of :class:`PostprocTemplate` and :class:`CompressWeightsTemplate`.
 
@@ -1197,10 +1196,10 @@ class Finalise(accel.OperationSequence):
                 'cont_weights': ['compress_weights_cont:weights_out']
             })
 
-        super(Finalise, self).__init__(command_queue, operations, compounds)
+        super().__init__(command_queue, operations, compounds)
 
 
-class IngestTemplate(object):
+class IngestTemplate:
     """Template for the entire on-device ingest processing
 
     Parameters
@@ -1517,7 +1516,7 @@ class IngestOperation(accel.OperationSequence):
         if template.continuum:
             aliases['scratch1'].append('cont_weights_fp32')
 
-        super(IngestOperation, self).__init__(command_queue, operations, compounds, aliases)
+        super().__init__(command_queue, operations, compounds, aliases)
 
     @property
     def n_accs(self):
@@ -1586,7 +1585,6 @@ class IngestOperation(accel.OperationSequence):
                                    operation.__class__.__name__)
             yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
-                for child_name, child_op in operation.operations.iteritems():
-                    for d in generate(child_op, child_name):
-                        yield (name + ':' + d[0], d[1])
+                for child_name, child_op in operation.operations.items():
+                    yield from generate(child_op, name + ':' + child_name)
         return list(generate(self, 'ingest'))

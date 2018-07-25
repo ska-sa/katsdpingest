@@ -1,109 +1,38 @@
 """Tests for receiver module"""
 
-from __future__ import print_function, absolute_import, division
+from unittest import mock
+import asyncio
+from typing import Dict, Tuple     # noqa: F401
+
 import numpy as np
 import spead2
 import spead2.send
-import spead2.recv.trollius
-import trollius
-from trollius import From, Return
+import spead2.recv.asyncio
+import asynctest
+import async_timeout
+
 from katsdpingest.receiver import Receiver
 from katsdpingest.sigproc import Range
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
-from katsdpsigproc.test.test_resource import async_test
+from katsdptelstate.endpoint import Endpoint
 from nose.tools import assert_equal, assert_is_none, assert_raises
-import mock
-import logging
 
 
-class QueueStream(object):
-    """A simulated SPEAD stream, stored in memory as a queue of heaps. A value
-    of None indicates that the stream has been shut down (because putting an
-    actual stop heap in the queue won't have the desired effect, as normally
-    this is processed at a lower level).
-    """
-    _streams = {}
+class TestReceiver(asynctest.TestCase):
+    def setUp(self):
+        self._streams = {}    # Dict[Endpoint, spead2.send.InprocStream]
 
-    def __init__(self, loop=None):
-        self._queue = trollius.Queue(loop=loop)
+        def add_udp_reader(rx, multicast_group, port, *args, **kwargs):
+            endpoint = Endpoint(multicast_group, port)
+            tx = self._streams[endpoint]
+            rx.add_inproc_reader(tx.queue)
 
-    @trollius.coroutine
-    def get(self):
-        heap = yield From(self._queue.get())
-        if heap is None:
-            self._queue.put_nowait(None)
-            raise spead2.Stopped()
-        else:
-            raise Return(heap)
+        patcher = mock.patch.object(
+            spead2.recv.asyncio.Stream, 'add_udp_reader', add_udp_reader)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def stop(self):
-        self._queue.put_nowait(None)
-
-    def send_heap(self, heap):
-        tp = spead2.ThreadPool()
-        encoder = spead2.send.BytesStream(tp)
-        encoder.send_heap(heap)
-        raw = encoder.getvalue()
-        decoder = spead2.recv.Stream(tp)
-        decoder.stop_on_stop_item = False
-        decoder.add_buffer_reader(raw)
-        heap = decoder.get()
-        self._queue.put_nowait(heap)
-
-    @classmethod
-    def get_instance(cls, multicast_group, port, loop=None):
-        key = (multicast_group, port)
-        if key not in cls._streams:
-            logging.debug('Creating stream %s', key)
-            cls._streams[key] = QueueStream(loop)
-        else:
-            logging.debug('Connecting to existing stream %s', key)
-        return cls._streams[key]
-
-    @classmethod
-    def clear_instances(cls):
-        cls._streams.clear()
-
-
-class QueueRecvStream(object):
-    """Replacement for :class:`spead2.recv.trollius.Stream` that lets us
-    feed in heaps directly."""
-    def __init__(self,  *args, **kwargs):
-        self._loop = kwargs.pop('loop', None)
-        self._stream = None
-
-    def add_udp_reader(self, multicast_group, port, *args, **kwargs):
-        if self._stream is not None:
-            raise RuntimeError('QueueRecvStream only supports one reader')
-        self._stream = QueueStream.get_instance(multicast_group, port, self._loop)
-
-    @trollius.coroutine
-    def get(self):
-        heap = yield From(self._stream.get())
-        raise Return(heap)
-
-    def stop(self):
-        # Note: don't call stop on the stream, because that will cause the
-        # next stream connected to the same endpoint to also be in a stopped
-        # state.
-        pass
-
-    def set_memory_allocator(self, allocator):
-        pass
-
-    def set_memory_pool(self, memory_pool):
-        pass
-
-    def set_memcpy(self, id):
-        pass
-
-
-class TestReceiver(object):
-    def setup(self):
-        self.patcher = mock.patch('spead2.recv.trollius.Stream', QueueRecvStream)
-        self.patcher.start()
-        self.loop = trollius.get_event_loop_policy().new_event_loop()
         self.n_streams = 2
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)(
             '239.0.0.1+{}'.format(self.n_streams - 1))
@@ -112,11 +41,17 @@ class TestReceiver(object):
         self.cbf_attr = fake_cbf_attr(4, self.n_xengs)
         self.n_chans = self.cbf_attr['n_chans']
         self.n_bls = len(self.cbf_attr['bls_ordering'])
+        tx_thread_pool = spead2.ThreadPool()
+        self.tx = [spead2.send.InprocStream(tx_thread_pool, spead2.InprocQueue())
+                   for endpoint in endpoints]
+        self._streams = dict(zip(endpoints, self.tx))
+        for tx in self.tx:
+            # asyncio.iscoroutinefunction doesn't like pybind11 functions, so
+            # we have to hide it inside a lambda.
+            self.addCleanup(lambda: tx.queue.stop())
         self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3, loop=self.loop)
-        self.tx = [QueueStream.get_instance('239.0.0.{}'.format(i + 1), 7148, loop=self.loop)
-                   for i in range(self.n_streams)]
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
             ig.add_item(0x1600, 'timestamp',
@@ -141,24 +76,19 @@ class TestReceiver(object):
                         'Each value is a complex number - '
                         'two (real and imaginary) signed integers.',
                         (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
-        for i, tx in enumerate(self.tx):
-            tx.send_heap(self.tx_ig[i].get_heap())
+        for ig, tx in zip(self.tx_ig, self.tx):
+            tx.send_heap(ig.get_heap())
 
-    def teardown(self):
-        self.patcher.stop()
-        QueueStream.clear_instances()
-        self.loop.close()
-
-    @async_test
-    def test_stop(self):
+    async def test_stop(self):
         """The receiver must stop once all streams stop"""
-        data_future = trollius.async(self.rx.get(), loop=self.loop)
-        for i, tx in enumerate(self.tx):
-            tx.send_heap(self.tx_ig[i].get_end())
+        data_future = self.loop.create_task(self.rx.get())
+        for ig, tx in zip(self.tx_ig, self.tx):
+            tx.send_heap(ig.get_end())
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
         with assert_raises(spead2.Stopped):
-            yield From(trollius.wait_for(data_future, 30, loop=self.loop))
+            with async_timeout.timeout(30, loop=self.loop):
+                await data_future
 
     def _make_data(self, n_frames):
         """Generates made-up timestamps and correlator data
@@ -187,8 +117,7 @@ class TestReceiver(object):
         timestamps = indices * interval + 1234567890123
         return xeng_raw, indices, timestamps
 
-    @trollius.coroutine
-    def _send_in_order(self, xeng_raw, timestamps):
+    async def _send_in_order(self, xeng_raw, timestamps):
         for t in range(len(xeng_raw)):
             for i in range(self.n_xengs):
                 stream_idx = i * self.n_streams // self.n_xengs
@@ -196,29 +125,29 @@ class TestReceiver(object):
                 self.tx_ig[stream_idx]['frequency'].value = i * self.n_chans // self.n_xengs
                 self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
                 self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
-            yield From(trollius.sleep(0.02, loop=self.loop))
+            await asyncio.sleep(0.02, loop=self.loop)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
-    @async_test
-    def test_in_order(self):
+    async def test_in_order(self):
         """Test normal case with data arriving in the expected order"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
-        send_future = trollius.async(self._send_in_order(xeng_raw, timestamps), loop=self.loop)
+        send_future = asyncio.ensure_future(self._send_in_order(xeng_raw, timestamps),
+                                            loop=self.loop)
         for t in range(n_frames):
-            frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
+            frame = await asyncio.wait_for(self.rx.get(), 3, loop=self.loop)
             assert_equal(indices[t], frame.idx)
             assert_equal(timestamps[t], frame.timestamp)
             assert_equal(self.n_xengs, len(frame.items))
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
-            yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
-        yield From(send_future)
+            with async_timeout.timeout(3, loop=self.loop):
+                await self.rx.get()
+        await send_future
 
-    @trollius.coroutine
-    def _send_out_of_order(self, xeng_raw, timestamps):
+    async def _send_out_of_order(self, xeng_raw, timestamps):
         order = [
             # Send parts of frames 0, 1
             (0, 0), (0, 1), (0, 3),
@@ -246,19 +175,19 @@ class TestReceiver(object):
             self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
             self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
             # Longish sleep to ensure the ordering is respected
-            yield From(trollius.sleep(0.02, loop=self.loop))
+            await asyncio.sleep(0.02, loop=self.loop)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
-    @async_test
-    def test_out_of_order(self):
+    async def test_out_of_order(self):
         """Test various edge behaviour for out-of-order data"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
-        send_future = trollius.async(self._send_out_of_order(xeng_raw, timestamps), loop=self.loop)
+        send_future = self.loop.create_task(self._send_out_of_order(xeng_raw, timestamps))
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []), (8, [])]:
-                frame = yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
+                with async_timeout.timeout(3, loop=self.loop):
+                    frame = await self.rx.get()
                 assert_equal(indices[t], frame.idx)
                 assert_equal(timestamps[t], frame.timestamp)
                 assert_equal(self.n_xengs, len(frame.items))
@@ -268,6 +197,7 @@ class TestReceiver(object):
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
-                yield From(trollius.wait_for(self.rx.get(), 3, loop=self.loop))
+                with async_timeout.timeout(3, loop=self.loop):
+                    await self.rx.get()
         finally:
-            yield From(send_future)
+            await send_future

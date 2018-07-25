@@ -1,19 +1,20 @@
 """Receives from multiple SPEAD streams and combines heaps into frames."""
 
-from __future__ import print_function, absolute_import, division
 import logging
 from collections import deque
+import asyncio
+import typing   # noqa: F401
+from typing import List, Sequence, Mapping, Any, Optional, Union   # noqa: F401
 
-import katcp
 import spead2
 import spead2.recv
-import spead2.recv.trollius
-import trollius
-from trollius import From, Return
-import numpy as np
-from katsdptelstate.endpoint import endpoints_to_str
+import spead2.recv.asyncio
+from aiokatcp import Sensor
 
-from .utils import Range, SensorWrapper
+import numpy as np
+from katsdptelstate.endpoint import endpoints_to_str, Endpoint
+
+from .utils import Range
 
 
 _logger = logging.getLogger(__name__)
@@ -30,29 +31,25 @@ REJECT_HEAP_TYPES = {
 }
 
 
-def _warn_if_positive(value):
-    return katcp.Sensor.WARN if value > 0 else katcp.Sensor.NOMINAL
-
-
-class Frame(object):
+class Frame:
     """A group of xeng_raw data with a common timestamp"""
-    def __init__(self, idx, timestamp, n_xengs):
+    def __init__(self, idx: int, timestamp: int, n_xengs: int) -> None:
         self.idx = idx
         self.timestamp = timestamp
-        self.items = [None] * n_xengs
+        self.items = [None] * n_xengs    # type: List[Optional[np.ndarray]]
 
-    def ready(self):
+    def ready(self) -> bool:
         return all(item is not None for item in self.items)
 
-    def empty(self):
+    def empty(self) -> bool:
         return all(item is None for item in self.items)
 
     @property
-    def nbytes(self):
+    def nbytes(self) -> int:
         return sum([(item.nbytes if item is not None else 0) for item in self.items])
 
 
-class Receiver(object):
+class Receiver:
     """Class that receives from multiple SPEAD streams and combines heaps into
     frames.
 
@@ -82,7 +79,7 @@ class Receiver(object):
         Dictionary mapping CBF attribute names to value
     active_frames : int, optional
         Maximum number of incomplete frames to keep at one time
-    loop : :class:`trollius.BaseEventLoop`, optional
+    loop : :class:`asyncio.AbstractEventLoop`, optional
         I/O loop used for asynchronous operations
 
     Attributes
@@ -102,23 +99,29 @@ class Receiver(object):
         Deque of :class:`Frame` objects representing incomplete frames. After
         initialization, it always contains exactly `active_frames`
         elements, with timestamps separated by the inter-dump interval.
-    _frames_complete : :class:`trollius.Queue`
+    _frames_complete : :class:`asyncio.Queue`
         Queue of complete frames of type :class:`Frame`. It may also contain
         integers, which are the numbers of finished streams.
     _running : int
         Number of streams still running
-    _futures : list of :class:`trollius.Future`
+    _futures : list of :class:`asyncio.Future`
         Futures associated with each call to :meth:`_read_stream`
-    _streams : list of :class:`spead2.recv.trollius.Stream`
+    _streams : list of :class:`spead2.recv.asyncio.Stream`
         Individual SPEAD streams
     _stopping : bool
         Set to try by stop(). Note that some streams may still be running
         (:attr:`_running` > 0) at the same time.
     """
-    def __init__(self, endpoints, interface_address, ibv,
-                 max_streams, max_packet_size, buffer_size,
-                 channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=4, loop=None):
+    def __init__(
+            self,
+            endpoints: List[Endpoint],
+            interface_address: str, ibv: bool,
+            max_streams: int, max_packet_size: int, buffer_size: int,
+            channel_range: Range, cbf_channels: int,
+            sensors: Mapping[str, Sensor],
+            cbf_attr: Mapping[str, Any],
+            active_frames: int = 4,
+            loop: asyncio.AbstractEventLoop = None) -> None:
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
             raise ValueError('cbf_channels not divisible by the number of endpoints')
@@ -132,30 +135,37 @@ class Receiver(object):
                                   channel_range.stop // self._endpoint_channels]
 
         if loop is None:
-            loop = trollius.get_event_loop()
+            loop = asyncio.get_event_loop()
         self.cbf_attr = cbf_attr
         self.active_frames = active_frames
         self.channel_range = channel_range
         self.cbf_channels = cbf_channels
         self._interface_address = interface_address
         self._ibv = ibv
-        self._streams = []
-        self._frames = None
-        self._frames_complete = trollius.Queue(maxsize=1, loop=loop)
-        self._futures = []
+        self._streams = []      # type: List[spead2.recv.asyncio.Stream]
+        self._frames = deque()  # type: typing.Deque[Frame]
+        self._frames_complete = \
+            asyncio.Queue(maxsize=1, loop=loop)  # type: asyncio.Queue[Union[Frame, int]]
+        self._futures = []      # type: List[Optional[asyncio.Future]]
         self._stopping = False
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.timestamp_base = 0
         self._loop = loop
         self._ig_cbf = spead2.ItemGroup()
 
-        self._input_bytes = SensorWrapper(sensors['input-bytes-total'], 0)
-        self._input_heaps = SensorWrapper(sensors['input-heaps-total'], 0)
-        self._input_dumps = SensorWrapper(sensors['input-dumps-total'], 0)
-        self._descriptors_received = SensorWrapper(sensors['descriptors-received'], False)
-        self._reject_heaps = {name: SensorWrapper(sensors['input-' + name + '-heaps-total'], 0,
-                                                  _warn_if_positive)
-                              for name in REJECT_HEAP_TYPES}
+        self._input_bytes = sensors['input-bytes-total']
+        self._input_bytes.value = 0
+        self._input_heaps = sensors['input-heaps-total']
+        self._input_heaps.value = 0
+        self._input_dumps = sensors['input-dumps-total']
+        self._input_dumps.value = 0
+        self._descriptors_received = sensors['descriptors-received']
+        self._descriptors_received.value = False
+        self._reject_heaps = {
+            name: sensors['input-' + name + '-heaps-total'] for name in REJECT_HEAP_TYPES
+        }
+        for sensor in self._reject_heaps.values():
+            sensor.value = 0
 
         n_streams = min(max_streams, len(use_endpoints))
         stream_buffer_size = buffer_size // n_streams
@@ -164,32 +174,33 @@ class Receiver(object):
             last = len(use_endpoints) * (i + 1) // n_streams
             self._streams.append(self._make_stream(use_endpoints[first:last],
                                                    max_packet_size, stream_buffer_size))
-            self._futures.append(trollius.async(
-                self._read_stream(self._streams[-1], i, last - first), loop=loop))
+            self._futures.append(loop.create_task(
+                self._read_stream(self._streams[-1], i, last - first)))
         self._running = n_streams
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop all the individual streams."""
         self._stopping = True
         for stream in self._streams:
             if stream is not None:
                 stream.stop()
 
-    @trollius.coroutine
-    def join(self):
+    async def join(self) -> None:
         """Wait for all the individual streams to stop. This must not
         be called concurrently with :meth:`get`.
 
         This is a coroutine.
         """
         while self._running > 0:
-            frame = yield From(self._frames_complete.get())
+            frame = await self._frames_complete.get()
             if isinstance(frame, int):
-                yield From(self._futures[frame])
+                future = self._futures[frame]
+                assert future is not None
+                await future
                 self._futures[frame] = None
                 self._running -= 1
 
-    def _pop_frame(self):
+    def _pop_frame(self) -> None:
         """Remove the oldest element of :attr:`_frames`, and replace it with
         a new frame at the other end.
         """
@@ -199,14 +210,12 @@ class Receiver(object):
         self._frames.popleft()
         self._frames.append(Frame(next_idx, next_timestamp, xengs))
 
-    @trollius.coroutine
-    def _put_frame(self, frame):
+    async def _put_frame(self, frame: Frame) -> None:
         """Put a frame onto :attr:`_frames_complete` and update the sensor."""
         self._input_dumps.value += 1
-        yield From(self._frames_complete.put(frame))
+        await self._frames_complete.put(frame)
 
-    @trollius.coroutine
-    def _flush_frames(self):
+    async def _flush_frames(self) -> None:
         """Remove any completed frames from the head of :attr:`_frames`."""
         while self._frames[0].ready():
             # Note: _pop_frame must be done *before* trying to put the
@@ -216,9 +225,11 @@ class Receiver(object):
             frame = self._frames[0]
             _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
             self._pop_frame()
-            yield From(self._put_frame(frame))
+            await self._put_frame(frame)
 
-    def _add_readers(self, stream, endpoints, max_packet_size, buffer_size):
+    def _add_readers(self, stream: spead2.recv.asyncio.Stream,
+                     endpoints: Sequence[Endpoint],
+                     max_packet_size: int, buffer_size: int) -> None:
         """Subscribe a stream to a list of endpoints."""
         ifaddr = self._interface_address
         if self._ibv:
@@ -240,7 +251,8 @@ class Receiver(object):
             ifaddr if ifaddr is not None else 'default interface',
             ' with ibv' if self._ibv else '')
 
-    def _make_stream(self, endpoints, max_packet_size, buffer_size):
+    def _make_stream(self, endpoints: Sequence[Endpoint],
+                     max_packet_size: int, buffer_size: int) -> spead2.recv.asyncio.Stream:
         """Prepare a stream, which may combine multiple endpoints."""
         # Figure out how many heaps will have the same timestamp, and set
         # up the stream.
@@ -265,7 +277,7 @@ class Receiver(object):
         #   - frame being processed by ingest_session (which could be several, depending on
         #     latency of the pipeline, but assume 3 to be on the safe side)
         memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
-        stream = spead2.recv.trollius.Stream(
+        stream = spead2.recv.asyncio.Stream(
             spead2.ThreadPool(),
             max_heaps=max_heaps,
             ring_heaps=ring_heaps, loop=self._loop,
@@ -278,7 +290,7 @@ class Receiver(object):
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
-    def _first_timestamp(self, candidate):
+    def _first_timestamp(self, candidate: int) -> int:
         """Get raw ADC timestamp of the first frame across all ingests.
 
         This is called when the first valid dump is received for this
@@ -292,8 +304,8 @@ class Receiver(object):
         """
         return candidate
 
-    @trollius.coroutine
-    def _read_stream(self, stream, stream_idx, n_endpoints):
+    async def _read_stream(self, stream: spead2.recv.asyncio.Stream,
+                           stream_idx: int, n_endpoints: int) -> None:
         """Co-routine that sucks data from a single stream and populates
         :attr:`_frames_complete`."""
         try:
@@ -305,7 +317,7 @@ class Receiver(object):
             n_stop = 0
             while True:
                 try:
-                    heap = yield From(stream.get())
+                    heap = await stream.get()
                 except spead2.Stopped:
                     break
                 if heap.is_end_of_stream():
@@ -379,9 +391,8 @@ class Receiver(object):
                 prev_ts = data_ts
                 # we have new data...
 
-                if self._frames is None:
+                if not self._frames:
                     self.timestamp_base = self._first_timestamp(data_ts)
-                    self._frames = deque()
                     for i in range(self.active_frames):
                         self._frames.append(
                             Frame(i, self.timestamp_base + self.interval * i, xengs))
@@ -407,21 +418,20 @@ class Receiver(object):
                     else:
                         _logger.debug('Frame with timestamp %d is %d/%d complete', ts0,
                                       actual, expected)
-                        yield From(self._put_frame(frame))
+                        await self._put_frame(frame)
                     self._reject_heaps['missing'].value += expected - actual
                     del frame   # Free it up, particularly if discarded
-                    yield From(self._flush_frames())
+                    await self._flush_frames()
                     ts0 = self._frames[0].timestamp
                 frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
                 self._input_bytes.value += data_item.nbytes
                 self._input_heaps.value += 1
-                yield From(self._flush_frames())
+                await self._flush_frames()
         finally:
-            yield From(self._frames_complete.put(stream_idx))
+            await self._frames_complete.put(stream_idx)
 
-    @trollius.coroutine
-    def get(self):
+    async def get(self) -> Frame:
         """Return the next frame.
 
         This is a coroutine.
@@ -432,22 +442,24 @@ class Receiver(object):
             if all the streams have stopped
         """
         while self._running > 0:
-            frame = yield From(self._frames_complete.get())
+            frame = await self._frames_complete.get()
             if isinstance(frame, int):
                 # It's actually the index of a finished stream
                 self._streams[frame].stop()   # In case the co-routine exited with an exception
-                yield From(self._futures[frame])
+                future = self._futures[frame]
+                assert future is not None
+                await future
                 self._futures[frame] = None
                 self._running -= 1
             else:
-                raise Return(frame)
+                return frame
         # Check for frames still in the queue
         while self._frames:
             frame = self._frames[0]
             self._frames.popleft()
             if frame.ready():
                 _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
-                raise Return(frame)
+                return frame
             elif not frame.empty():
                 _logger.warning('Frame with timestamp %d is incomplete, discarding',
                                 frame.timestamp)
