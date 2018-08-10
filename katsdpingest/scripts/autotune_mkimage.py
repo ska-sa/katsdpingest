@@ -41,7 +41,7 @@ def tune(cli, base_image, skip, init_tar=None):
     command = ['ingest_autotune.py'] if not skip else ['/bin/true']
     if init_tar is not None:
         command = ['sh', '-c',
-                   'mkdir -p $HOME/.cache/katsdpsigproc && ' \
+                   'mkdir -p $HOME/.cache/katsdpsigproc && '
                    'cp /tmp/tuning.db $HOME/.cache/katsdpsigproc && ' + command[0]]
     # If we're running inside a Docker container, expose the same devices
     # to our child container.
