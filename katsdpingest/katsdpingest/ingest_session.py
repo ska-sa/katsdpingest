@@ -16,7 +16,6 @@ import spead2.send
 import spead2.recv
 import spead2.send.asyncio
 import spead2.recv.asyncio
-from aiokatcp import Sensor
 
 import katsdpsigproc.accel
 from katsdpsigproc.asyncio import resource
@@ -28,6 +27,7 @@ import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
 from . import utils, receiver, sender, sigproc
+from .utils import Sensor
 
 
 logger = logging.getLogger(__name__)
@@ -981,7 +981,7 @@ class CBFIngest:
         config = spead2.send.StreamConfig(max_packet_size=8872, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s to signal display list. Starting stream...", endpoint)
         if self.sd_spead_ifaddr is None:
-            extra_args = {}
+            extra_args = {}     # type: Dict[str, Any]
         else:
             extra_args = dict(ttl=1, interface_address=self.sd_spead_ifaddr)
         stream = spead2.send.asyncio.UdpStream(

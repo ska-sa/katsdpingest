@@ -3,7 +3,7 @@
 import time
 import logging
 import argparse
-from typing import List, Dict, Any   # noqa: F401
+from typing import List, Dict, Mapping, Any, cast   # noqa: F401
 
 import aiokatcp
 from aiokatcp import FailReply
@@ -139,7 +139,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         # create the device resources
         self.cbf_ingest = CBFIngest(
             user_args, cbf_attr, channel_ranges, context,
-            self.sensors, user_args.telstate)
+            cast(Mapping[str, Sensor], self.sensors), user_args.telstate)
         # add default or user specified endpoints
         for sdisp_endpoint in user_args.sdisp_spead:
             self.cbf_ingest.add_sdisp_ip(sdisp_endpoint)
