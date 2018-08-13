@@ -16,6 +16,8 @@ catchError {
     katsdp.stagePrepare(subdir: 'katsdpingest', python2: false, python3: true,
                         timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(subdir: 'katsdpingest', cuda: true, opencl: true)
+    katsdp.stageFlake8(subdir: 'katsdpingest')
+    katsdp.stageMypy(subdir: 'katsdpingest')
     katsdp.stageMakeDocker(subdir: 'katsdpingest', venv: true)
 
     stage('katsdpingest/autotuning') {
