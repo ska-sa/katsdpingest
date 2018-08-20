@@ -13,19 +13,18 @@ from katsdpingest.utils import Range
 
 def fake_cbf_attr(n_antennas, n_xengs=4):
     cbf_attr = dict(
-        adc_sample_rate=1712000000.0,
+        scale_factor_timestamp=1712000000.0,
         n_chans=4096,
         n_chans_per_substream=1024,
         n_accs=408 * 256,
         sync_time=1400000000.0
     )
-    cbf_attr['bandwidth'] = cbf_attr['adc_sample_rate'] / 2
+    cbf_attr['bandwidth'] = cbf_attr['scale_factor_timestamp'] / 2
     cbf_attr['center_freq'] = cbf_attr['bandwidth'] * 3 / 2   # Reasonable for L band
-    cbf_attr['scale_factor_timestamp'] = cbf_attr['adc_sample_rate']
     cbf_attr['ticks_between_spectra'] = 2 * cbf_attr['n_chans']
     cbf_attr['n_chans_per_substream'] = cbf_attr['n_chans'] // n_xengs
     cbf_attr['int_time'] = (cbf_attr['n_accs'] * cbf_attr['ticks_between_spectra']
-                            / cbf_attr['adc_sample_rate'])
+                            / cbf_attr['scale_factor_timestamp'])
     bls_ordering = []
     antennas = ['m{:03}'.format(90 + i) for i in range(n_antennas)]
     # This ordering matches what's currently produced by CBF
@@ -44,7 +43,6 @@ class TestGetCbfAttr:
         values = {
             'i0_bandwidth': 856000000.0,
             'i0_sync_time': 1234567890.0,
-            'i0_adc_sample_rate': 1712000000.0,
             'i0_scale_factor_timestamp': 1712000000.0,
             'i0_antenna_channelised_voltage_instrument_dev_name': 'i0',
             'i0_antenna_channelised_voltage_n_chans': 262144,  # Different, to check precedence
@@ -63,7 +61,6 @@ class TestGetCbfAttr:
         for key, value in values.items():
             self.telstate.add(key, value, immutable=True)
         self.expected = {
-            'adc_sample_rate': 1712000000.0,
             'n_chans': 4096,
             'n_chans_per_substream': 256,
             'n_accs': 104448,
