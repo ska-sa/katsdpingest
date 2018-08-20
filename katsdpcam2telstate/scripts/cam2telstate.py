@@ -183,7 +183,6 @@ SENSORS = [
     Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_fft0_shift',
            sdp_name='${stream.cbf.antenna_channelised_voltage}_fft_shift'),
     Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay', convert=np.safe_eval),
-    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay_ok'),
     Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_eq', convert=np.safe_eval),
     # Subarray sensors
     Sensor('${subarray}_config_label', immutable=True),
