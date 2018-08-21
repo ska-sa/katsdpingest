@@ -33,7 +33,7 @@ from .utils import Sensor
 logger = logging.getLogger(__name__)
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
-    'adc_sample_rate', 'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
+    'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
