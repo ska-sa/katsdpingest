@@ -163,13 +163,14 @@ SENSORS = [
     Sensor('${instrument}_scale_factor_timestamp', immutable=True),
     Sensor('${instrument}_sync_time', immutable=True),
     # CBF sensors that are stream-specific
+    Sensor('${sub_stream.cbf.baseline_correlation_products}_bandwidth', immutable=True),
     Sensor('${stream.cbf.baseline_correlation_products}_bls_ordering',
            immutable=True, convert=np.safe_eval),
     Sensor('${stream.cbf.baseline_correlation_products}_int_time', immutable=True),
     Sensor('${stream.cbf.baseline_correlation_products}_n_accs', immutable=True),
     Sensor('${stream.cbf.baseline_correlation_products}_n_chans_per_substream', immutable=True),
-    # Beamformer metadata are not immutable, because controlled by passband
-    Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans'),
+    Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_${inputn}_weight'),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
@@ -177,6 +178,7 @@ SENSORS = [
            sdp_name='${stream.cbf.antenna_channelised_voltage}_ticks_between_spectra',
            immutable=True),
     Sensor('${stream.cbf.antenna_channelised_voltage}_n_chans', immutable=True),
+    Sensor('${sub_stream.cbf.antenna_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_centre_frequency',
            sdp_name='${sub_stream.cbf.antenna_channelised_voltage}_center_freq', immutable=True),
     # TODO: need to figure out how to deal with multi-stage FFT instruments
