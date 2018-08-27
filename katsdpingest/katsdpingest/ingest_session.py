@@ -834,6 +834,9 @@ class CBFIngest:
             description='Timestamp of this sd frame in centiseconds since epoch.',
             shape=(), dtype=None, format=inline_format)
         bls_ordering = np.asarray(self.bls_ordering.sdp_bls_ordering)
+        if bls_ordering.dtype.kind == 'U':
+            # Bandwidth calculations assume it is 1-byte ASCII not 4-byte UCS-4
+            bls_ordering = np.char.encode(bls_ordering)
         self.ig_sd.add_item(
             name='bls_ordering', id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
