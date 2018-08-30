@@ -2,6 +2,7 @@ aioconsole                # via aiomonitor
 aiokatcp
 aiomonitor
 appdirs                   # via katsdpsigproc
+async-timeout             # via aiokatcp
 decorator                 # via katsdpsigproc
 fakeredis                 # via katsdptelstate
 funcsigs                  # via numba
