@@ -27,7 +27,6 @@ REJECT_HEAP_TYPES = {
     'too-old': 'timestamp is prior to the start time',
     'bad-channel': 'channel offset is not aligned to the substreams',
     'missing': 'expected heap was not received',
-    'metadata': 'heap without payload e.g. descriptor or start-of-stream'
 }
 
 
@@ -161,6 +160,8 @@ class Receiver:
         self._input_dumps.value = 0
         self._descriptors_received = sensors['descriptors-received']
         self._descriptors_received.value = False
+        self._metadata_heaps = sensors['input-metadata-heaps-total']
+        self._metadata_heaps.value = 0
         self._reject_heaps = {
             name: sensors['input-' + name + '-heaps-total'] for name in REJECT_HEAP_TYPES
         }
@@ -321,7 +322,7 @@ class Receiver:
                 except spead2.Stopped:
                     break
                 if heap.is_end_of_stream():
-                    self._reject_heaps['metadata'].value += 1
+                    self._metadata_heaps.value += 1
                     n_stop += 1
                     _logger.debug("%d/%d endpoints stopped on stream %d",
                                   n_stop, n_endpoints, stream_idx)
@@ -351,7 +352,7 @@ class Receiver:
                     self._descriptors_received.value = True
                 if 'xeng_raw' not in updated:
                     _logger.debug("CBF non-data heap received on stream %d", stream_idx)
-                    self._reject_heaps['metadata'].value += 1
+                    self._metadata_heaps.value += 1
                     continue
                 if 'timestamp' not in updated:
                     _logger.warning("CBF heap without timestamp received on stream %d", stream_idx)
