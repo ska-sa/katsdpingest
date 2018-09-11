@@ -15,6 +15,7 @@ import json
 import tornado
 import tornado.ioloop
 import tornado.gen
+from tornado.gen import Return
 import numpy as np
 import katsdptelstate
 import katsdpservices
@@ -124,6 +125,12 @@ class Sensor(object):
         return ans
 
 
+STREAM_TYPES = {
+    'cbf.antenna_channelised_voltage',
+    'cbf.baseline_correlation_products',
+    'cbf.tied_array_channelised_voltage'
+}
+
 #: Templates for sensors
 SENSORS = [
     # Receptor sensors
@@ -171,7 +178,7 @@ SENSORS = [
     Sensor('${stream.cbf.baseline_correlation_products}_n_chans_per_substream', immutable=True),
     Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans', immutable=True),
-    Sensor('${stream.cbf.tied_array_channelised_voltage}_${inputn}_weight'),
+    Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight'),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
     Sensor('${stream.cbf.antenna_channelised_voltage}_n_samples_between_spectra',
@@ -251,14 +258,11 @@ class Client(object):
         self._sensors = None  #: Dictionary from CAM name to sensor object
         self._instruments = set()  #: Set of instruments available in the current subarray
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
-        self._pool_resources = tornado.concurrent.Future()
-        self._input_labels = tornado.concurrent.Future()
-        self._band = tornado.concurrent.Future()
         self._sub_name = None     #: Set once connected
         self._cbf_name = None     #: Set once connected
         self._sdp_name = None     #: Set once connected
-        self._receptors = []      #: Set once _pool_resources result is set
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
+        self._start_waiters = {}  #: Pending futures for get_sensor_value
 
     def parse_streams(self):
         """Parse the stream information from telstate to populate the
@@ -270,65 +274,13 @@ class Client(object):
                 self._instruments.add(instrument_name)
                 self._streams_with_type[name] = stream['type']
 
-    def get_sensors(self):
-        """Get list of sensors to be collected from CAM. This should be
-        replaced to use kattelmod. It must only be called after
-        :attr:`_pool_resources` and :attr:`_input_labels` are resolved.
-
-        Returns
-        -------
-        sensors : list of `Sensor`
-        """
-        band = self._band.result()
-        rx_name = 'rsc_rx{}'.format(band)
-        dig_name = 'dig_{}_band'.format(band)
-        # Build table of names for expanding sensor templates
-        # Using a defaultdict removes the need to hardcode the list of stream
-        # types.
-        substitutions = collections.defaultdict(
-            list,
-            receptor=[(name, [name]) for name in self._receptors],
-            receiver=[(rx_name, [rx_name])],
-            digitiser=[(dig_name, [dig_name])],
-            subarray=[(self._sub_name, ['sub'])],
-            cbf=[(self._cbf_name, ['cbf'])],
-            sdp=[(self._sdp_name, ['sdp'])]
-        )
-        for (number, name) in enumerate(self._input_labels.result()):
-            substitutions['inputn'].append(('input{}'.format(number), [name]))
-        for (cam_prefix, sdp_prefix) in substitutions['cbf']:
-            # Add the per instrument specific sensors for every instrument we know about
-            for instrument in self._instruments:
-                cam_instrument = "{}_{}".format(cam_prefix, instrument)
-                sdp_instruments = [instrument]
-                substitutions['instrument'].append((cam_instrument, sdp_instruments))
-            # For each stream we add type specific sensors
-            for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
-                cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
-                cam_sub_stream = "{}_streams_{}".format(self._sub_name, full_stream_name)
-                sdp_streams = [full_stream_name]
-                substitutions['stream'].append((cam_stream, sdp_streams))
-                substitutions['stream.' + stream_type].append((cam_stream, sdp_streams))
-                substitutions['sub_stream'].append((cam_sub_stream, sdp_streams))
-                substitutions['sub_stream.' + stream_type].append((cam_sub_stream, sdp_streams))
-
-        sensors = []
-        for template in SENSORS:
-            expanded = template.expand(substitutions)
-            if not expanded:
-                self._logger.warning('No sensors expanded from template %s', template.cam_name)
-            sensors.extend(expanded)
-        return sensors
-
     @tornado.gen.coroutine
-    def subscribe_one(self, sensor):
-        """Utility for subscribing to a single sensor. This is only used for
-        "special" sensors used during startup.
+    def get_sensor_value(self, sensor):
+        """Get the current value of a sensor.
 
-        Parameters
-        ----------
-        sensor : str
-            Name of the sensor to subscribe to
+        This is only used for special sensors needed to bootstrap subscriptions.
+        Multiple calls can proceed in parallel, provided that they do not
+        duplicate any names.
         """
         status = yield self._portal_client.subscribe(
             self.namespace, sensor)
@@ -342,28 +294,96 @@ class Client(object):
         else:
             raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
                 sensor, result[u'info']))
+        assert sensor not in self._start_waiters
+        self._start_waiters[sensor] = future = tornado.concurrent.Future()
+        value = yield future
+        yield self._portal_client.unsubscribe(self.namespace, sensor)
+        raise Return(value)
 
     @tornado.gen.coroutine
-    def get_resources(self):
-        """Query subarray_N_pool_resources to find out which cbf_M resource and
-        which receptors are assigned to the subarray, followed by
-        cbf_N_input_labels to find the input labels.
+    def get_receptors(self):
+        """Get the list of receptors"""
+        value = yield self.get_sensor_value('{}_pool_resources'.format(self._sub_name))
+        resources = value.split(',')
+        receptors = []
+        for resource in resources:
+            if re.match(r'^m\d+$', resource):
+                receptors.append(resource)
+        raise Return(receptors)
+
+    @tornado.gen.coroutine
+    def get_sensors(self):
+        """Get list of sensors to be collected from CAM.
+
+        Returns
+        -------
+        sensors : list of `Sensor`
         """
-        sensor = '{}_pool_resources'.format(self._sub_name)
-        yield self.subscribe_one(sensor)
-        # Wait until we get a callback with the value
-        yield self._pool_resources
-        yield self._portal_client.unsubscribe(self.namespace, sensor)
-        # Now input labels
-        sensor = '{}_input_labels'.format(self._cbf_name)
-        yield self.subscribe_one(sensor)
-        yield self._input_labels
-        yield self._portal_client.unsubscribe(self.namespace, sensor)
-        # Finally we need the band
-        sensor = '{}_band'.format(self._sub_name)
-        yield self.subscribe_one(sensor)
-        yield self._band
-        yield self._portal_client.unsubscribe(self.namespace, sensor)
+        receptors = yield self.get_receptors()
+        input_labels = yield self.get_sensor_value('{}_input_labels'.format(self._cbf_name))
+        input_labels = input_labels.split(',')
+        band = yield self.get_sensor_value('{}_band'.format(self._sub_name))
+
+        rx_name = 'rsc_rx{}'.format(band)
+        dig_name = 'dig_{}_band'.format(band)
+        # Build table of names for expanding sensor templates
+        substitutions = {
+            'receptor': [(name, [name]) for name in receptors],
+            'receiver': [(rx_name, [rx_name])],
+            'digitiser': [(dig_name, [dig_name])],
+            'subarray': [(self._sub_name, ['sub'])],
+            'cbf': [(self._cbf_name, ['cbf'])],
+            'sdp': [(self._sdp_name, ['sdp'])],
+            'inputn': [],
+            'instrument': [],
+            'stream': [],
+            'sub_stream': [],
+            'stream.cbf.tied_array_channelised_voltage.inputn': []
+        }
+        for stream_type in STREAM_TYPES:
+            substitutions['stream.' + stream_type] = []
+            substitutions['sub_stream.' + stream_type] = []
+
+        cam_prefix = self._cbf_name
+        for (number, name) in enumerate(input_labels):
+            substitutions['inputn'].append(('input{}'.format(number), [name]))
+        # Add the per instrument specific sensors for every instrument we know about
+        for instrument in self._instruments:
+            cam_instrument = "{}_{}".format(cam_prefix, instrument)
+            sdp_instruments = [instrument]
+            substitutions['instrument'].append((cam_instrument, sdp_instruments))
+        # For each stream we add type specific sensors
+        for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
+            if stream_type not in STREAM_TYPES:
+                self._logger.warning('Skipping stream %s with unknown type %s',
+                                     full_stream_name, stream_type)
+            cam_stream = "{}_{}".format(cam_prefix, full_stream_name)
+            cam_sub_stream = "{}_streams_{}".format(self._sub_name, full_stream_name)
+            sdp_streams = [full_stream_name]
+            substitutions['stream'].append((cam_stream, sdp_streams))
+            substitutions['stream.' + stream_type].append((cam_stream, sdp_streams))
+            substitutions['sub_stream'].append((cam_sub_stream, sdp_streams))
+            substitutions['sub_stream.' + stream_type].append((cam_sub_stream, sdp_streams))
+            # tied-array-channelised-voltage per-input sensors are special:
+            # only a subset of the inputs are used and only the corresponding
+            # sensors exist.
+            if stream_type == 'cbf.tied_array_channelised_voltage':
+                source_indices = yield self.get_sensor_value(cam_stream + '_source_indices')
+                source_indices = np.safe_eval(source_indices)
+                sublist = substitutions['stream.{}.inputn'.format(stream_type)]
+                for index in source_indices:
+                    if 0 <= index < len(input_labels):
+                        name = '{}_{}'.format(full_stream_name, input_labels[index])
+                        sublist.append(('{}_input{}'.format(cam_stream, index), [name]))
+                    else:
+                        self._logger.warning('Out of range source index %d on %s',
+                                             index, full_stream_name)
+
+        sensors = []
+        for template in SENSORS:
+            expanded = template.expand(substitutions)
+            sensors.extend(expanded)
+        raise Return(sensors)
 
     @tornado.gen.coroutine
     def start(self):
@@ -383,10 +403,9 @@ class Client(object):
             self._cbf_name = yield self._portal_client.sensor_subarray_lookup('cbf', '')
             self._sdp_name = yield self._portal_client.sensor_subarray_lookup('sdp', '')
             self._logger.info('Initialising')
-            # First find out which resources are allocated to the subarray
-            yield self.get_resources()
             # Now we can tell which sensors to subscribe to
-            self._sensors = {x.cam_name: x for x in self.get_sensors()}
+            sensors = yield self.get_sensors()
+            self._sensors = {x.cam_name: x for x in sensors}
 
             self._waiting = len(self._sensors)
             status = yield self._portal_client.subscribe(
@@ -421,7 +440,7 @@ class Client(object):
     def sensor_update(self, sensor, value, status, timestamp):
         name = sensor.cam_name
         if status not in ['nominal', 'warn', 'error']:
-            self._logger.warn("Sensor {} received update '{}' with status '{}' (ignored)"
+            self._logger.info("Sensor {} received update '{}' with status '{}' (ignored)"
                               .format(name, value, status))
             return
         try:
@@ -454,23 +473,12 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if name == '{}_pool_resources'.format(self._sub_name):
-            if not self._pool_resources.done() and status == 'nominal':
-                resources = value.split(',')
-                self._receptors = []
-                for resource in resources:
-                    if re.match(r'^m\d+$', resource):
-                        self._receptors.append(resource)
-                self._pool_resources.set_result(resources)
-        elif self._cbf_name and name == '{}_input_labels'.format(self._cbf_name):
-            if not self._input_labels.done() and status == 'nominal':
-                labels = value.split(',')
-                self._input_labels.set_result(labels)
-        elif name == '{}_band'.format(self._sub_name):
-            if not self._band.done() and status == 'nominal':
-                self._band.set_result(value)
+        if status == 'nominal' and name in self._start_waiters:
+            future = self._start_waiters.pop(name)
+            if not future.done():
+                future.set_result(value)
 
-        if self._sensors is None:
+        if self._sensors is None:   # We are still bootstrapping
             return
         if name not in self._sensors:
             self._logger.warn("Sensor {} received update '{}' but we didn't subscribe (ignored)"
