@@ -84,7 +84,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
                    default=Status.INIT, initial_status=Sensor.Status.NOMINAL),
             Sensor(float, "last-dump-timestamp",
                    "Timestamp of most recently received correlator dump in Unix seconds "
-                   " (prometheus: gauge)", "s",
+                   "(prometheus: gauge)", "s",
                    default=0.0, initial_status=Sensor.Status.NOMINAL),
             Sensor(DeviceStatus, "device-status",
                    "Health status",
@@ -92,15 +92,19 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
                    status_func=_device_status_status),
             Sensor(int, "input-bytes-total",
                    "Number of payload bytes received from CBF in this session "
-                   " (prometheus: counter)",
+                   "(prometheus: counter)",
                    initial_status=Sensor.Status.NOMINAL),
             Sensor(int, "input-heaps-total",
                    "Number of payload heaps received from CBF in this session "
-                   " (prometheus: counter)",
+                   "(prometheus: counter)",
                    initial_status=Sensor.Status.NOMINAL),
             Sensor(int, "input-dumps-total",
                    "Number of CBF dumps received in this session "
-                   " (prometheus: counter)",
+                   "(prometheus: counter)",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "input-metadata-heaps-total",
+                   "Number of heaps that do not contain payload in this session "
+                   "(prometheus: counter)",
                    initial_status=Sensor.Status.NOMINAL),
             Sensor(int, "output-bytes-total",
                    "Number of payload bytes sent on L0 in this session "
