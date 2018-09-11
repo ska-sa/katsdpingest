@@ -63,14 +63,19 @@ class Sensor(object):
     convert : callable, optional
         If provided, it is used to transform the sensor value before storing
         it in telescope state.
+    ignore_missing : bool, optional
+        If true, don't report an error if the sensor isn't present. This is
+        used for sensors that only exist in RTS but not MeerKAT, or vice
+        versa.
     """
     def __init__(self, cam_name, sdp_name=None, sampling_strategy_and_params='event',
-                 immutable=False, convert=None):
+                 immutable=False, convert=None, ignore_missing=False):
         self.cam_name = cam_name
         self.sdp_name = sdp_name or cam_name
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
         self.convert = convert
+        self.ignore_missing = ignore_missing
         self.waiting = True     #: Waiting for an initial value
 
     def expand(self, substitutions):
@@ -121,7 +126,8 @@ class Sensor(object):
                               sdp_names,
                               self.sampling_strategy_and_params,
                               self.immutable,
-                              self.convert))
+                              self.convert,
+                              self.ignore_missing))
         return ans
 
 
@@ -210,7 +216,7 @@ SENSORS = [
     Sensor('anc_air_temperature'),
     Sensor('anc_wind_direction'),
     Sensor('anc_mean_wind_speed'),
-    Sensor('anc_siggen_ku_frequency'),
+    Sensor('anc_siggen_ku_frequency', ignore_missing=True),
     Sensor('anc_tfr_ktt_gnss'),
     Sensor('mcp_dmc_version_list', immutable=True)
 ]
@@ -420,7 +426,8 @@ class Client(object):
                         self._sensors[sensor_name].waiting = False
                 for sensor in strategy_sensors:
                     if sensor.cam_name not in status:
-                        self._logger.error("Sensor %s not found", sensor.cam_name)
+                        if not sensor.ignore_missing:
+                            self._logger.error("Sensor %s not found", sensor.cam_name)
                         self._waiting -= 1
                         sensor.waiting = False
 
