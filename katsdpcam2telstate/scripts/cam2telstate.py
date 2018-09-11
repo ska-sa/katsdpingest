@@ -130,7 +130,7 @@ STREAM_TYPES = {
     'cbf.baseline_correlation_products',
     'cbf.tied_array_channelised_voltage'
 }
-
+STATUS_VALID_VALUE = {'nominal', 'warn', 'error'}
 #: Templates for sensors
 SENSORS = [
     # Receptor sensors
@@ -262,7 +262,6 @@ class Client(object):
         self._cbf_name = None     #: Set once connected
         self._sdp_name = None     #: Set once connected
         self._waiting = 0         #: Number of sensors whose initial value is still outstanding
-        self._start_waiters = {}  #: Pending futures for get_sensor_value
 
     def parse_streams(self):
         """Parse the stream information from telstate to populate the
@@ -282,23 +281,11 @@ class Client(object):
         Multiple calls can proceed in parallel, provided that they do not
         duplicate any names.
         """
-        status = yield self._portal_client.subscribe(
-            self.namespace, sensor)
-        if status != 1:
-            raise RuntimeError("Expected 1 sensor for {}, found {}".format(sensor, status))
-        status = yield self._portal_client.set_sampling_strategy(
-            self.namespace, sensor, 'event')
-        result = status[sensor]
-        if result[u'success']:
-            self._logger.info("Set sampling strategy on %s to event", sensor)
-        else:
-            raise RuntimeError("Failed to set sampling strategy on {}: {}".format(
-                sensor, result[u'info']))
-        assert sensor not in self._start_waiters
-        self._start_waiters[sensor] = future = tornado.concurrent.Future()
-        value = yield future
-        yield self._portal_client.unsubscribe(self.namespace, sensor)
-        raise Return(value)
+        data = yield self._portal_client.sensor_value(sensor)
+        if data.status not in STATUS_VALID_VALUE:
+            self._logger.warning('Status %s for sensor %s is invalid, but using the value anyway',
+                                 data.status, sensor)
+        raise Return(data.value)
 
     @tornado.gen.coroutine
     def get_receptors(self):
@@ -439,7 +426,7 @@ class Client(object):
 
     def sensor_update(self, sensor, value, status, timestamp):
         name = sensor.cam_name
-        if status not in ['nominal', 'warn', 'error']:
+        if status not in STATUS_VALID_VALUE:
             self._logger.info("Sensor {} received update '{}' with status '{}' (ignored)"
                               .format(name, value, status))
             return
@@ -473,10 +460,6 @@ class Client(object):
         value = data[u'value']
         if isinstance(value, unicode):
             value = value.encode('us-ascii')
-        if status == 'nominal' and name in self._start_waiters:
-            future = self._start_waiters.pop(name)
-            if not future.done():
-                future.set_result(value)
 
         if self._sensors is None:   # We are still bootstrapping
             return
