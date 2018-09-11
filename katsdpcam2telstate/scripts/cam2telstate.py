@@ -398,19 +398,32 @@ class Client(object):
             status = yield self._portal_client.subscribe(
                 self.namespace, self._sensors.keys())
             self._logger.info("Subscribed to %d channels", status)
-            for sensor in six.itervalues(self._sensors):
-                status = yield self._portal_client.set_sampling_strategy(
-                    self.namespace, sensor.cam_name, sensor.sampling_strategy_and_params)
-                result = status[sensor.cam_name]
-                if result[u'success']:
-                    self._logger.info("Set sampling strategy on %s to %s",
-                                      sensor.cam_name, sensor.sampling_strategy_and_params)
-                else:
-                    self._logger.error("Failed to set sampling strategy on %s: %s",
-                                       sensor.cam_name, result[u'info'])
-                    # Not going to get any values, so don't wait for it
-                    self._waiting -= 1
-                    sensor.waiting = False
+
+            # Group sensors by strategy to bulk-set sampling strategies
+            by_strategy = collections.defaultdict(list)
+            for sensor in sensors:
+                by_strategy[sensor.sampling_strategy_and_params].append(sensor)
+            for (strategy, strategy_sensors) in six.iteritems(by_strategy):
+                regex = '^(?:' + '|'.join(re.escape(sensor.cam_name)
+                                          for sensor in strategy_sensors) + ')$'
+                status = yield self._portal_client.set_sampling_strategies(
+                    self.namespace, regex, strategy)
+                for (sensor_name, result) in sorted(six.iteritems(status)):
+                    if result[u'success']:
+                        self._logger.info("Set sampling strategy on %s to %s",
+                                          sensor_name, strategy)
+                    else:
+                        self._logger.error("Failed to set sampling strategy on %s: %s",
+                                           sensor_name, result[u'info'])
+                        # Not going to get any values, so don't wait for it
+                        self._waiting -= 1
+                        self._sensors[sensor_name].waiting = False
+                for sensor in strategy_sensors:
+                    if sensor.cam_name not in status:
+                        self._logger.error("Sensor %s not found", sensor.cam_name)
+                        self._waiting -= 1
+                        sensor.waiting = False
+
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
                 signal.signal(
                     signal_number,
