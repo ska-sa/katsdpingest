@@ -185,7 +185,8 @@ class TestReceiver(asynctest.TestCase):
         xeng_raw, indices, timestamps = self._make_data(n_frames)
         send_future = self.loop.create_task(self._send_out_of_order(xeng_raw, timestamps))
         try:
-            for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []), (8, [])]:
+            for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []),
+                               (7, [1, 2, 3]), (8, []), (9, [1])]:
                 with async_timeout.timeout(3, loop=self.loop):
                     frame = await self.rx.get()
                 assert_equal(indices[t], frame.idx)
