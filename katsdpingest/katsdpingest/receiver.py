@@ -119,7 +119,7 @@ class Receiver:
             channel_range: Range, cbf_channels: int,
             sensors: Mapping[str, Sensor],
             cbf_attr: Mapping[str, Any],
-            active_frames: int = 4,
+            active_frames: int = 1,
             loop: asyncio.AbstractEventLoop = None) -> None:
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
@@ -201,32 +201,38 @@ class Receiver:
                 self._futures[frame] = None
                 self._running -= 1
 
-    def _pop_frame(self) -> None:
-        """Remove the oldest element of :attr:`_frames`, and replace it with
-        a new frame at the other end.
+    def _pop_frame(self, replace=True) -> Optional[Frame]:
+        """Remove the oldest element of :attr:`_frames`.
+
+        Replace it with a new frame at the other end (unless `replace` is
+        false), warn if it is incomplete, and update the missing heaps
+        counter.
+
+        Returns
+        -------
+        frame
+            The popped frame, or ``None`` if it was empty
         """
         xengs = len(self._frames[-1].items)
         next_idx = self._frames[-1].idx + 1
         next_timestamp = self._frames[-1].timestamp + self.interval
-        self._frames.popleft()
-        self._frames.append(Frame(next_idx, next_timestamp, xengs))
+        frame = self._frames.popleft()
+        if replace:
+            self._frames.append(Frame(next_idx, next_timestamp, xengs))
+        actual = sum(item is not None for item in frame.items)
+        self._reject_heaps['missing'].value += xengs - actual
+        if actual == 0:
+            _logger.debug('Frame with timestamp %d is empty, discarding', frame.timestamp)
+            return None
+        else:
+            _logger.debug('Frame with timestamp %d is %d/%d complete',
+                          frame.timestamp, actual, xengs)
+        return frame
 
     async def _put_frame(self, frame: Frame) -> None:
         """Put a frame onto :attr:`_frames_complete` and update the sensor."""
         self._input_dumps.value += 1
         await self._frames_complete.put(frame)
-
-    async def _flush_frames(self) -> None:
-        """Remove any completed frames from the head of :attr:`_frames`."""
-        while self._frames[0].ready():
-            # Note: _pop_frame must be done *before* trying to put the
-            # item onto the queue, because other coroutines may run and
-            # operate on _frames while we're waiting for space in the
-            # queue.
-            frame = self._frames[0]
-            _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
-            self._pop_frame()
-            await self._put_frame(frame)
 
     def _add_readers(self, stream: spead2.recv.asyncio.Stream,
                      endpoints: Sequence[Endpoint],
@@ -410,25 +416,15 @@ class Receiver:
                     self._reject_heaps['bad-timestamp'].value += 1
                     continue
                 while data_ts >= ts0 + self.interval * self.active_frames:
-                    frame = self._frames[0]
-                    self._pop_frame()
-                    expected = len(frame.items)
-                    actual = sum(item is not None for item in frame.items)
-                    if actual == 0:
-                        _logger.debug('Frame with timestamp %d is empty, discarding', ts0)
-                    else:
-                        _logger.debug('Frame with timestamp %d is %d/%d complete', ts0,
-                                      actual, expected)
+                    frame = self._pop_frame()
+                    if frame:
                         await self._put_frame(frame)
-                    self._reject_heaps['missing'].value += expected - actual
                     del frame   # Free it up, particularly if discarded
-                    await self._flush_frames()
                     ts0 = self._frames[0].timestamp
                 frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
                 self._input_bytes.value += data_item.nbytes
                 self._input_heaps.value += 1
-                await self._flush_frames()
         finally:
             await self._frames_complete.put(stream_idx)
 
@@ -456,12 +452,7 @@ class Receiver:
                 return frame
         # Check for frames still in the queue
         while self._frames:
-            frame = self._frames[0]
-            self._frames.popleft()
-            if frame.ready():
-                _logger.debug('Flushing frame with timestamp %d', frame.timestamp)
-                return frame
-            elif not frame.empty():
-                _logger.warning('Frame with timestamp %d is incomplete, discarding',
-                                frame.timestamp)
+            tail_frame = self._pop_frame(replace=False)
+            if tail_frame:
+                return tail_frame
         raise spead2.Stopped('End of streams')
