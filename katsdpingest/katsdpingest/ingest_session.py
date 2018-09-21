@@ -749,6 +749,7 @@ class CBFIngest:
         utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
         utils.set_telstate_entry(view, 'stream_type', 'sdp.vis')
         utils.set_telstate_entry(view, 'calibrations_applied', [])
+        utils.set_telstate_entry(view, 'need_weights_power_scale', True)
         self.tx[name] = tx
         self.l0_names.append(prefix)
 
