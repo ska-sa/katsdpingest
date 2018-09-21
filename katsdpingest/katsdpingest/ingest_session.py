@@ -359,10 +359,6 @@ class BaselineOrdering:
         The permutation specifying the reordering. Element *i* indicates
         the position in the new order corresponding to element *i* of
         the original order, or -1 if the baseline was masked out.
-    input_auto_baseline : list
-        The post-permutation baseline index for each autocorrelation
-    baseline_inputs : list
-        Inputs (indexed as for `input_auto_baseline`) for each baseline
     sdp_bls_ordering : ndarray
         Replacement ordering, in the same format as `cbf_bls_ordering`
     percentile_ranges : list of pairs of int
@@ -446,17 +442,6 @@ class BaselineOrdering:
             self.permutation[reordered[i][0]] = i
         # Can now discard the indices from reordered
         reordered_bls = [x[1] for x in reordered]
-        # Construct input_auto_baseline and baseline_inputs.
-        # Note that inputs is modified by input_idx
-        inputs = []    # type: List[str]
-        self.baseline_inputs = [[input_idx(x[0]), input_idx(x[1])] for x in reordered_bls]
-        self.input_auto_baseline = [-1] * len(inputs)
-        for i, bl_inputs in enumerate(self.baseline_inputs):
-            if bl_inputs[0] == bl_inputs[1]:
-                self.input_auto_baseline[bl_inputs[0]] = i
-        if -1 in self.input_auto_baseline:
-            idx = self.input_auto_baseline.index(-1)
-            raise ValueError('No auto-correlation baseline found for ' + inputs[idx])
         self.sdp_bls_ordering = np.array(reordered_bls)
 
         # Collect percentile ranges
@@ -660,7 +645,6 @@ class CBFIngest:
             self.command_queue, len(self.channel_ranges.input),
             self.channel_ranges.computed.relative_to(self.channel_ranges.input),
             self.channel_ranges.sd_output.relative_to(self.channel_ranges.input),
-            len(self.bls_ordering.input_auto_baseline),
             len(self.cbf_attr['bls_ordering']),
             len(self.bls_ordering.sdp_bls_ordering),
             self.channel_ranges.cont_factor,
@@ -671,10 +655,6 @@ class CBFIngest:
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(
             self.command_queue, np.asarray(self.bls_ordering.permutation, dtype=np.int16))
-        self.proc.buffer('input_auto_baseline').set(
-            self.command_queue, np.asarray(self.bls_ordering.input_auto_baseline, dtype=np.uint16))
-        self.proc.buffer('baseline_inputs').set(
-            self.command_queue, np.asarray(self.bls_ordering.baseline_inputs, dtype=np.uint16))
         self.proc.start_sum()
         self.proc.start_sd_sum()
         logger.debug("\nProcessing Blocks\n=================\n")

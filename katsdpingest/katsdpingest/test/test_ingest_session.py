@@ -158,7 +158,7 @@ class TestCBFIngest:
         """Test that an ingest processor can be created on the device"""
         template = ingest_session.CBFIngest.create_proc_template(context, [4, 12], 4096, True, True)
         template.instantiate(
-            queue, 1024, Range(96, 1024 - 96), Range(96, 1024 - 96), 16, 544, 512,
+            queue, 1024, Range(96, 1024 - 96), Range(96, 1024 - 96), 544, 512,
             8, 16, [(0, 4), (500, 512)],
             threshold_args={'n_sigma': 11.0})
 
@@ -213,8 +213,6 @@ class TestCBFIngest:
         bls = ingest_session.BaselineOrdering(orig_ordering)
         np.testing.assert_equal(expected_ordering, bls.sdp_bls_ordering)
         np.testing.assert_equal([2, 4, 0, 6, 9, 11, 10, 8, 5, 7, 1, 3], bls.permutation)
-        np.testing.assert_equal([0, 1, 2, 3], bls.input_auto_baseline)
-        np.testing.assert_equal(expected_baseline_inputs, bls.baseline_inputs)
 
     def test_baseline_permutation_masked(self):
         orig_ordering = np.array([
@@ -240,5 +238,3 @@ class TestCBFIngest:
         bls = ingest_session.BaselineOrdering(orig_ordering, antenna_mask)
         np.testing.assert_equal(expected_ordering, bls.sdp_bls_ordering)
         np.testing.assert_equal([-1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 0, 1], bls.permutation)
-        np.testing.assert_equal([0, 1], bls.input_auto_baseline)
-        np.testing.assert_equal([[0, 0], [1, 1], [0, 1], [1, 0]], bls.baseline_inputs)
