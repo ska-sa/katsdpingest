@@ -30,30 +30,32 @@ import katsdpbfingest
 _logger = logging.getLogger(__name__)
 
 
-def _config_from_telstate(args, config, name_map):
+def _config_from_telstate(telstate, config, attr_name, telstate_name=None):
     """Populate a SessionConfig from telstate entries.
 
     Parameters
     ----------
-    args : :class:`argparse.Namespace`
-        Command-line arguments
+    telstate : :class:`katsdptelstate.TelescopeState`
+        Telescope state with views for the CBF stream
     config : :class:`katsdpbfingest._bf_ingest.SessionConfig`
         Configuration object to populate
-    name_map : dict
-        Mapping from attribute name in config to telstate name suffix
+    attr_name : str
+        Attribute name to set in `config`
+    telstate_name : str, optional
+        Name to look up in `telstate` (defaults to `attr_name`)
     """
-    telstate = utils.cbf_telstate_view(args.telstate, args.stream_name)
-    for attr_name, telstate_name in name_map.items():
-        value = telstate[telstate_name]
-        _logger.info('Setting %s to %s from telstate', attr_name, value)
-        setattr(config, attr_name, value)
+    if telstate_name is None:
+        telstate_name = attr_name
+    value = telstate[telstate_name]
+    _logger.info('Setting %s to %s from telstate', attr_name, value)
+    setattr(config, attr_name, value)
 
 
 def _create_session_config(args):
     """Creates a SessionConfig object for a :class:`CaptureServer`.
 
     Note that this function makes blocking calls to telstate. The returned
-    config has a blank filename.
+    config has no filename.
 
     Parameters
     ----------
@@ -69,11 +71,15 @@ def _create_session_config(args):
         config.network_affinity = args.affinity[1]
     if args.direct_io:
         config.direct = True
-    _config_from_telstate(args, config, {
-        'ticks_between_spectra': 'ticks_between_spectra',
-        'channels': 'n_chans',
-        'channels_per_heap': 'n_chans_per_substream',
-        'spectra_per_heap': 'spectra_per_heap'})
+
+    # Load external config from telstate
+    telstate = utils.cbf_telstate_view(args.telstate, args.stream_name)
+    _config_from_telstate(telstate, config, 'channels', 'n_chans')
+    _config_from_telstate(telstate, config, 'channels_per_heap', 'n_chans_per_substream')
+    for name in ['ticks_between_spectra', 'spectra_per_heap', 'sync_time',
+                 'bandwidth', 'center_freq', 'scale_factor_timestamp']:
+        _config_from_telstate(telstate, config, name)
+
     # Check that the requested channel range is valid.
     all_channels = Range(0, config.channels)
     if args.channels is None:
@@ -86,12 +92,23 @@ def _create_session_config(args):
         raise ValueError(
             '--channels does not fit inside range {}'.format(all_channels))
 
-    endpoint_range = np.s_[args.channels.start // channels_per_endpoint:
-                           args.channels.stop // channels_per_endpoint]
+    # Update for selected channel range
+    channel_shift = (args.channels.start + args.channels.stop - config.channels) / 2
+    config.center_freq += channel_shift * config.bandwidth / config.channels
+    config.bandwidth = config.bandwidth * len(args.channels) / config.channels
     config.channels = len(args.channels)
     config.channel_offset = args.channels.start
+
+    endpoint_range = np.s_[args.channels.start // channels_per_endpoint:
+                           args.channels.stop // channels_per_endpoint]
     for endpoint in args.cbf_spead[endpoint_range]:
         config.add_endpoint(socket.gethostbyname(endpoint.host), endpoint.port)
+    if args.stats is not None:
+        config.set_stats_endpoint(args.stats.host, args.stats.port)
+        config.stats_int_time = args.stats_int_time
+        if args.stats_interface is not None:
+            config.stats_interface_address = \
+                katsdpservices.get_interface_address(args.stats_interface)
 
     return config
 
@@ -113,7 +130,7 @@ class _CaptureSession(object):
 
     Attributes
     ----------
-    filename : :class:`str`
+    filename : :class:`str` or ``None``
         Filename of the HDF5 file written
     _telstate : :class:`katsdptelstate.TelescopeState`
         Telescope state interface, if any
@@ -163,7 +180,7 @@ class _CaptureSession(object):
         pool = concurrent.futures.ThreadPoolExecutor(1)
         try:
             yield From(self._loop.run_in_executor(pool, self._session.join))
-            if self._session.n_heaps > 0:
+            if self._session.n_heaps > 0 and self.filename is not None:
                 # Write the metadata to file
                 self._write_metadata()
             _logger.info('Capture complete, %d heaps, of which %d dropped',
@@ -189,8 +206,9 @@ class CaptureServer(object):
     Parameters
     ----------
     args : :class:`argparse.Namespace`
-        Command-line arguments. The following arguments are required. Refer to
-        the script for documentation of these options.
+        Command-line arguments. The following arguments are must be present, although
+        some of them can be ``None``. Refer to the script for documentation of
+        these options.
 
         - cbf_spead
         - file_base
@@ -198,6 +216,9 @@ class CaptureServer(object):
         - affinity
         - telstate
         - stream_name
+        - stats
+        - stats_int_time
+        - stats_interface
 
     loop : :class:`trollius.BaseEventLoop`
         IO Loop for running coroutines
@@ -229,20 +250,23 @@ class CaptureServer(object):
 
     @trollius.coroutine
     def start_capture(self, capture_block_id):
-        """Start capture to file, if not already in progress.
+        """Start capture, if not already in progress.
 
         This is a co-routine.
         """
         if self._capture is None:
-            basename = '{}_{}.h5'.format(capture_block_id, self._args.stream_name)
-            self._config.filename = os.path.join(self._args.file_base, basename)
+            if self._args.file_base is not None:
+                basename = '{}_{}.h5'.format(capture_block_id, self._args.stream_name)
+                self._config.filename = os.path.join(self._args.file_base, basename)
+            else:
+                self._config.filename = None
             self._capture = _CaptureSession(
                 self._config, self._args.telstate, self._args.stream_name, self._loop)
         raise Return(self._capture.filename)
 
     @trollius.coroutine
     def stop_capture(self):
-        """Stop capture to file, if currently running. This is a co-routine."""
+        """Stop capture, if currently running. This is a co-routine."""
         if self._capture is not None:
             capture = self._capture
             yield From(capture.stop())
@@ -292,10 +316,11 @@ class KatcpCaptureServer(CaptureServer, katcp.DeviceServer):
         """Start capture to file."""
         if self.capturing:
             raise tornado.gen.Return(('fail', 'already capturing'))
-        stat = os.statvfs(self._args.file_base)
-        if stat.f_bavail / stat.f_blocks < 0.05:
-            raise tornado.gen.Return(('fail', 'less than 5% disk space free on {}'.format(
-                os.path.abspath(self._args.file_base))))
+        if self._args.file_base is not None:
+            stat = os.statvfs(self._args.file_base)
+            if stat.f_bavail / stat.f_blocks < 0.05:
+                raise tornado.gen.Return(('fail', 'less than 5% disk space free on {}'.format(
+                    os.path.abspath(self._args.file_base))))
         yield self._start_capture(capture_block_id)
         raise tornado.gen.Return(('ok',))
 

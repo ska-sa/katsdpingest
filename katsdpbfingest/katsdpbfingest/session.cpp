@@ -11,13 +11,14 @@
 #include "common.h"
 #include "session.h"
 #include "writer.h"
+#include "stats.h"
 
 // TODO: only used for gil_scoped_release. Would be nice to find a way to avoid
 // having this file depend on pybind11.
 namespace py = pybind11;
 
 session::session(const session_config &config) :
-    config(config),
+    config(config.validate()),
     recv(config),
     run_future(std::async(std::launch::async, &session::run, this))
 {
@@ -77,14 +78,27 @@ void session::run_impl()
     int spectra_per_heap = config.spectra_per_heap;
     std::int64_t ticks_between_spectra = config.ticks_between_spectra;
 
-    hdf5_writer w(config.filename, config.direct,
-                  channels, channels_per_heap, spectra_per_heap, ticks_between_spectra);
-    int fd = w.get_fd();
+    std::unique_ptr<stats_collector> stats;
+    if (!config.stats_endpoint.address().is_unspecified())
+    {
+        stats.reset(new stats_collector(config));
+    }
+
+    std::unique_ptr<hdf5_writer> w;
+    int fd = -1;
+    std::size_t reserve_blocks = 0;
     struct statfs stat;
-    if (fstatfs(fd, &stat) < 0)
-        throw std::system_error(errno, std::system_category(), "fstatfs failed");
-    std::size_t slice_size = 2 * spectra_per_heap * channels;
-    std::size_t reserve_blocks = (1024 * 1024 * 1024 + 1000 * slice_size) / stat.f_bsize;
+    if (config.filename)
+    {
+        w.reset(new hdf5_writer(*config.filename, config.direct,
+                                channels, channels_per_heap, spectra_per_heap,
+                                ticks_between_spectra));
+        fd = w->get_fd();
+        if (fstatfs(fd, &stat) < 0)
+            throw std::system_error(errno, std::system_category(), "fstatfs failed");
+        std::size_t slice_size = 2 * spectra_per_heap * channels;
+        reserve_blocks = (1024 * 1024 * 1024 + 1000 * slice_size) / stat.f_bsize;
+    }
 
     boost::format progress_formatter("dropped %1% of %2%");
     bool done = false;
@@ -98,7 +112,10 @@ void session::run_impl()
         {
             slice s = ring.pop();
             n_heaps += s.n_present;
-            w.add(s);
+            if (stats)
+                stats->add(s);
+            if (w)
+                w->add(s);
             std::int64_t time_heaps = (s.spectrum + spectra_per_heap) / spectra_per_heap;
             std::int64_t total_heaps = time_heaps * (channels / channels_per_heap);
             if (total_heaps > n_total_heaps)
@@ -108,12 +125,15 @@ void session::run_impl()
                 {
                     progress_formatter % (n_total_heaps - n_heaps) % n_total_heaps;
                     log_message(spead2::log_level::info, progress_formatter.str());
-                    if (fstatfs(fd, &stat) < 0)
-                        throw std::system_error(errno, std::system_category(), "fstatfs failed");
-                    if (stat.f_bavail < reserve_blocks)
+                    if (w)
                     {
-                        log_message(spead2::log_level::info, "stopping capture due to lack of free space");
-                        done = true;
+                        if (fstatfs(fd, &stat) < 0)
+                            throw std::system_error(errno, std::system_category(), "fstatfs failed");
+                        if (stat.f_bavail < reserve_blocks)
+                        {
+                            log_message(spead2::log_level::info, "stopping capture due to lack of free space");
+                            done = true;
+                        }
                     }
                     // Find next multiple of check_cadence strictly greater
                     // than time_heaps.

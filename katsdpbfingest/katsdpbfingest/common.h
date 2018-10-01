@@ -5,12 +5,15 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <experimental/optional>
 #include <boost/asio.hpp>
 #include <boost/format.hpp>
 #include <spead2/common_logging.h>
 
 // Forward-declare to avoid sucking in pybind11.h
 namespace pybind11 { class object; }
+
+static constexpr std::uint8_t data_lost = 1 << 3;
 
 void log_message(spead2::log_level level, const std::string &msg);
 void set_logger(pybind11::object logger);
@@ -169,7 +172,7 @@ void window<T, Derived>::flush_all()
 
 struct session_config
 {
-    std::string filename;
+    std::experimental::optional<std::string> filename;
     std::vector<boost::asio::ip::udp::endpoint> endpoints;
     boost::asio::ip::address interface_address;
 
@@ -187,16 +190,33 @@ struct session_config
     int channel_offset = 0;
     // Number of channels, counting from channel_offset
     int channels = -1;
+    // Time (in seconds) over which to accumulate stats
+    double stats_int_time = 1.0;
 
     // Metadata derived from telescope state.
     std::int64_t ticks_between_spectra = -1;
     int spectra_per_heap = -1;
     int channels_per_heap = -1;
+    double sync_time = -1.0;
+    double bandwidth = -1.0;
+    double center_freq = -1.0;
+    double scale_factor_timestamp = -1.0;
+
+    boost::asio::ip::udp::endpoint stats_endpoint;
+    boost::asio::ip::address stats_interface_address;
 
     explicit session_config(const std::string &filename);
     void add_endpoint(const std::string &bind_host, std::uint16_t port);
     std::string get_interface_address() const;
     void set_interface_address(const std::string &address);
+
+    void set_stats_endpoint(const std::string &host, std::uint16_t port);
+    std::string get_stats_interface_address() const;
+    void set_stats_interface_address(const std::string &address);
+
+    // Check that all required items have been set and return self.
+    // Throws invalid_value if not.
+    const session_config &validate() const;
 };
 
 #endif // COMMON_H
