@@ -331,7 +331,8 @@ def _convert_center_freq(
         old_channels: utils.Range,
         old_center_freq: float,
         old_bandwidth: float,
-        new_channels: utils.Range) -> float:
+        new_channels: utils.Range,
+        continuum_factor: int = 1) -> float:
     """Compute the center frequency of a channel range, given the center
     frequency and bandwidth of a different set of channels.
 
@@ -340,7 +341,19 @@ def _convert_center_freq(
     """
     old_mid = (old_channels.start + old_channels.stop) / 2
     new_mid = (new_channels.start + new_channels.stop) / 2
-    return old_center_freq + (new_mid - old_mid) * old_bandwidth / len(old_channels)
+    center_freq = old_center_freq + (new_mid - old_mid) * old_bandwidth / len(old_channels)
+    # The above handles the subsetting, but continuum averaging also affects
+    # it due to the half-channel offset for even channel counts.
+    if continuum_factor != 1:
+        n_old = len(old_channels)
+        n_continuum = n_old // continuum_factor
+        adjust = 0.0
+        if n_old % 2 == 0:
+            adjust -= 0.5 * old_bandwidth / n_old
+        if n_continuum % 2 == 0:
+            adjust += 0.5 * old_bandwidth / n_continuum
+        center_freq += adjust
+    return center_freq
 
 
 class BaselineOrdering:
@@ -761,7 +774,7 @@ class CBFIngest:
         center_freq = _convert_center_freq(self.channel_ranges.cbf,
                                            self.cbf_attr['center_freq'],
                                            self.cbf_attr['bandwidth'],
-                                           all_output)
+                                           all_output, cont_factor)
         utils.set_telstate_entry(view, 'bandwidth', bandwidth, prefix)
         utils.set_telstate_entry(view, 'center_freq', center_freq, prefix)
         utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)

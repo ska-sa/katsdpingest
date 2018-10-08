@@ -355,9 +355,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
             assert_equal(bls_ordering, sorted(get_ts('bls_ordering').tolist()))
             assert_equal(self.cbf_attr['sync_time'], get_ts('sync_time'))
             assert_equal(267500000.0, get_ts('bandwidth'))
-            assert_equal(1086718750.0, get_ts('center_freq'))
             assert_equal(8 * self.cbf_attr['int_time'], get_ts('int_time'))
             assert_equal((464, 1744), get_ts('channel_range'))
+        assert_equal(1086718750.0, self._telstate['sdp_l0_center_freq'])
+        # Offset by 7.5 channels to identify the centre of a continuum channel
+        assert_equal(1088286132.8125, self._telstate['sdp_l0_continuum_center_freq'])
 
     async def test_capture(self):
         """Test the core data capture process."""
