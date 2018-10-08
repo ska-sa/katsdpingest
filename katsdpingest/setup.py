@@ -24,7 +24,8 @@ setup(
         'spead2>=1.8.0',   # Needed for inproc transport for unit tests
         'katsdpsigproc',
         'katsdpservices',
-        'katsdptelstate'
+        'katsdptelstate',
+        'katdal'
     ],
     extras_require={
         'test': tests_require
