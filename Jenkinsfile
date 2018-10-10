@@ -6,7 +6,8 @@ katsdp.setDependencies([
     'ska-sa/katsdpsigproc/master',
     'ska-sa/katsdpdockerbase/master',
     'ska-sa/katsdpservices/master',
-    'ska-sa/katsdptelstate/master'])
+    'ska-sa/katsdptelstate/master',
+    'ska-sa/katdal'])
 
 katsdp.standardBuild(subdir: 'katsdpcam2telstate')
 katsdp.standardBuild(subdir: 'katsdpbfingest')

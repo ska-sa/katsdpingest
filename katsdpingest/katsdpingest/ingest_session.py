@@ -23,6 +23,7 @@ import katsdpsigproc.rfi.device as rfi
 
 import katsdpservices
 
+from katdal.dataset import SpectralWindow
 import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
@@ -325,22 +326,6 @@ def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict
         logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
     logger.info('All metadata received from telstate')
     return cbf_attr
-
-
-def _convert_center_freq(
-        old_channels: utils.Range,
-        old_center_freq: float,
-        old_bandwidth: float,
-        new_channels: utils.Range) -> float:
-    """Compute the center frequency of a channel range, given the center
-    frequency and bandwidth of a different set of channels.
-
-    The implementation is careful to avoid introducing rounding errors where the answer
-    is an exactly representable value.
-    """
-    old_mid = (old_channels.start + old_channels.stop) / 2
-    new_mid = (new_channels.start + new_channels.stop) / 2
-    return old_center_freq + (new_mid - old_mid) * old_bandwidth / len(old_channels)
 
 
 class BaselineOrdering:
@@ -752,18 +737,19 @@ class CBFIngest:
         # nodes, with the same values.
         prefix = getattr(args, 'l0_{}_name'.format(arg_name))
         view = self.telstate.view(prefix)
-        utils.set_telstate_entry(view, 'n_chans', len(all_output) // cont_factor)
+        cbf_spw = SpectralWindow(
+            self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=self.cbf_attr['bandwidth'], sideband=1)
+        output_spw = cbf_spw.subrange(all_output.start, all_output.stop)
+        output_spw = output_spw.rechannelise(len(all_output) // cont_factor)
+
+        utils.set_telstate_entry(view, 'n_chans', output_spw.num_chans)
         utils.set_telstate_entry(view, 'n_chans_per_substream', tx.sub_channels)
         utils.set_telstate_entry(view, 'n_bls', baselines)
         utils.set_telstate_entry(view, 'bls_ordering', self.bls_ordering.sdp_bls_ordering)
         utils.set_telstate_entry(view, 'sync_time', self.cbf_attr['sync_time'])
-        bandwidth = self.cbf_attr['bandwidth'] * len(all_output) / len(self.channel_ranges.cbf)
-        center_freq = _convert_center_freq(self.channel_ranges.cbf,
-                                           self.cbf_attr['center_freq'],
-                                           self.cbf_attr['bandwidth'],
-                                           all_output)
-        utils.set_telstate_entry(view, 'bandwidth', bandwidth, prefix)
-        utils.set_telstate_entry(view, 'center_freq', center_freq, prefix)
+        utils.set_telstate_entry(view, 'bandwidth', output_spw.bandwidth, prefix)
+        utils.set_telstate_entry(view, 'center_freq', output_spw.centre_freq, prefix)
         utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)
         utils.set_telstate_entry(view, 'int_time', int_time, prefix)
         utils.set_telstate_entry(view, 'excise', args.excise, prefix)
@@ -842,20 +828,18 @@ class CBFIngest:
             name='bls_ordering', id=0x100C,
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
-        # Determine bandwidth and centre frequency of the signal display product
-        sd_bandwidth = (self.cbf_attr['bandwidth'] * len(self.channel_ranges.all_sd_output)
-                        / len(self.channel_ranges.cbf))
-        sd_center_freq = _convert_center_freq(
-            self.channel_ranges.cbf, self.cbf_attr['center_freq'], self.cbf_attr['bandwidth'],
-            self.channel_ranges.all_sd_output)
+        cbf_spw = SpectralWindow(
+            self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=self.cbf_attr['bandwidth'], sideband=1)
+        sd_spw = cbf_spw.subrange(*self.channel_ranges.all_sd_output.astuple())
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the signal display product in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=sd_bandwidth)
+            shape=(), dtype=None, format=[('f', 64)], value=sd_spw.bandwidth)
         self.ig_sd.add_item(
             name="center_freq", id=0x1011,
             description="The center frequency of the signal display product in Hz.",
-            shape=(), dtype=None, format=[('f', 64)], value=sd_center_freq)
+            shape=(), dtype=None, format=[('f', 64)], value=sd_spw.centre_freq)
         self.ig_sd.add_item(
             name="n_chans", id=0x1009,
             description="The total number of frequency channels in the signal display product.",
