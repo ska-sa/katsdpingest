@@ -766,6 +766,7 @@ class CBFIngest:
         utils.set_telstate_entry(view, 'center_freq', center_freq, prefix)
         utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)
         utils.set_telstate_entry(view, 'int_time', int_time, prefix)
+        utils.set_telstate_entry(view, 'excise', args.excise, prefix)
         utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
         utils.set_telstate_entry(view, 'stream_type', 'sdp.vis')
         utils.set_telstate_entry(view, 'calibrations_applied', [])
