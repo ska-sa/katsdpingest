@@ -373,7 +373,7 @@ class TestCompressWeights:
 
         expected_channel = np.max(weights_in, axis=1) * np.float32(1.0 / 255.0)
         scale = np.reciprocal(expected_channel)[..., np.newaxis]
-        expected_out = (weights_in * scale).astype(np.uint8)
+        expected_out = np.round(weights_in * scale).astype(np.uint8)
         np.testing.assert_allclose(expected_channel,
                                    fn.buffer('weights_channel').get(queue),
                                    rtol=1e-5)
