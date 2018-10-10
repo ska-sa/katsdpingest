@@ -388,13 +388,6 @@ class BaselineOrdering:
             pol2 = input2[-1]
             return (input1[:-1] != input2[:-1], pol1 != pol2, pol1, pol2)
 
-        def input_idx(input: str) -> int:
-            try:
-                return inputs.index(input)
-            except ValueError:
-                inputs.append(input)
-                return len(inputs) - 1
-
         def get_collection_products(
                 bls_ordering: Iterable[Tuple[str, str]]) -> List[List[int]]:
             """This is a clone (and cleanup) of :func:`katsdpdisp.data.set_bls`."""

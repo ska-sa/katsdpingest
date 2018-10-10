@@ -195,20 +195,6 @@ class TestCBFIngest:
             ['m000v', 'm001v'],
             ['m000h', 'm001v'],
             ['m000v', 'm001h']])
-        expected_baseline_inputs = np.array([
-            [0, 0],
-            [1, 1],
-            [2, 2],
-            [3, 3],
-            [0, 2],
-            [1, 3],
-            [2, 0],
-            [3, 1],
-            [0, 1],
-            [2, 3],
-            [0, 3],
-            [2, 1]
-        ])
 
         bls = ingest_session.BaselineOrdering(orig_ordering)
         np.testing.assert_equal(expected_ordering, bls.sdp_bls_ordering)
