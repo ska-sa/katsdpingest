@@ -738,11 +738,9 @@ class CBFIngest:
         prefix = getattr(args, 'l0_{}_name'.format(arg_name))
         view = self.telstate.view(prefix)
         cbf_spw = SpectralWindow(
-            self.cbf_attr['center_freq'],
-            self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf),
-            len(self.channel_ranges.cbf),
-            sideband=1)
-        output_spw = cbf_spw.subset(all_output.start, all_output.stop)
+            self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=self.cbf_attr['bandwidth'], sideband=1)
+        output_spw = cbf_spw.subrange(all_output.start, all_output.stop)
         output_spw = output_spw.rechannelise(len(all_output) // cont_factor)
 
         utils.set_telstate_entry(view, 'n_chans', output_spw.num_chans)
@@ -830,11 +828,9 @@ class CBFIngest:
             description="Mapping of antenna/pol pairs to data output products.",
             shape=bls_ordering.shape, dtype=bls_ordering.dtype, value=bls_ordering)
         cbf_spw = SpectralWindow(
-            self.cbf_attr['center_freq'],
-            self.cbf_attr['bandwidth'] / len(self.channel_ranges.cbf),
-            len(self.channel_ranges.cbf),
-            sideband=1)
-        sd_spw = cbf_spw.subset(*self.channel_ranges.all_sd_output.astuple())
+            self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=self.cbf_attr['bandwidth'], sideband=1)
+        sd_spw = cbf_spw.subrange(*self.channel_ranges.all_sd_output.astuple())
         self.ig_sd.add_item(
             name="bandwidth", id=0x1013,
             description="The analogue bandwidth of the signal display product in Hz.",
