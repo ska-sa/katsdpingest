@@ -43,7 +43,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void compress_weights(
     for (int i = lid; i < baselines; i += ${wgsx})
     {
         float weight = weights_in[in_offset + i];
-        weight *= scale;
+        weight = weight * scale + 0.5f;
         weights_out[out_offset + i] = (unsigned char) weight;
     }
 }
