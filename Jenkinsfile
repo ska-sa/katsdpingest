@@ -10,7 +10,7 @@ katsdp.setDependencies([
     'ska-sa/katdal'])
 
 katsdp.standardBuild(subdir: 'katsdpcam2telstate')
-katsdp.standardBuild(subdir: 'katsdpbfingest')
+katsdp.standardBuild(subdir: 'katsdpbfingest', python2: false, python3: true)
 
 catchError {
     katsdp.stagePrepare(subdir: 'katsdpingest', python2: false, python3: true,
