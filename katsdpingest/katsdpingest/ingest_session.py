@@ -147,6 +147,35 @@ def _split_array(x: np.ndarray, dtype) -> np.ndarray:
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
+def _fix_descriptions(desc):
+    """Massage operation descriptions to be suitable for telstate storage.
+
+    It recursively:
+    - Replaces Python types and numpy dtypes with their string form.
+    - Replaces dictionaries with OrderedDict so that the output is
+      reproducible across runs.
+    """
+    if isinstance(desc, list):
+        return [_fix_descriptions(item) for item in desc]
+    elif isinstance(desc, tuple):
+        return tuple([_fix_descriptions(item) for item in desc])
+    elif isinstance(desc, set):
+        return {fix_descriptions(item) for item in desc}
+    elif isinstance(desc, dict):
+        return OrderedDict(sorted(_fix_descriptions(item) for item in desc.items()))
+    elif isinstance(desc, np.dtype):
+        return np.lib.format.dtype_to_descr(desc)
+    elif isinstance(desc, type):
+        if issubclass(desc, np.generic):
+            # It's something like np.uint8, which is probably intended to represent
+            # a numpy dtype.
+            return np.lib.format.dtype_to_descr(np.dtype(desc))
+        else:
+            return str(desc)
+    else:
+        return desc
+
+
 class ChannelRanges:
     """
     Tracks the various channel ranges involved in ingest. Each channel range
@@ -875,9 +904,7 @@ class CBFIngest:
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = list(self.proc.descriptions())
-            # Enforce ordering of the parameter dictionaries
-            descriptions = [(key, OrderedDict(sorted(value.items())))
-                            for (key, value) in descriptions]
+            descriptions = _fix_descriptions(descriptions)
             process_view = self.telstate.view(args.name.replace('.', '_'))
             utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
