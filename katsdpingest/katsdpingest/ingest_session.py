@@ -160,7 +160,7 @@ def _fix_descriptions(desc):
     elif isinstance(desc, tuple):
         return tuple([_fix_descriptions(item) for item in desc])
     elif isinstance(desc, set):
-        return {fix_descriptions(item) for item in desc}
+        return {_fix_descriptions(item) for item in desc}
     elif isinstance(desc, dict):
         return OrderedDict(sorted(_fix_descriptions(item) for item in desc.items()))
     elif isinstance(desc, np.dtype):
