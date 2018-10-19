@@ -23,7 +23,7 @@ import katsdpsigproc.rfi.device as rfi
 
 import katsdpservices
 
-from katdal.dataset import SpectralWindow
+from katdal import SpectralWindow
 import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
