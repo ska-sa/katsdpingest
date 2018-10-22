@@ -147,7 +147,7 @@ def _split_array(x: np.ndarray, dtype) -> np.ndarray:
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
-def _fix_descriptions(desc):
+def _fix_descriptions(desc: Any) -> Any:
     """Massage operation descriptions to be suitable for telstate storage.
 
     It recursively:
