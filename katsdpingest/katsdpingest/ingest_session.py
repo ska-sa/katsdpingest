@@ -903,8 +903,7 @@ class CBFIngest:
 
         # Record information about the processing in telstate
         if args.name is not None:
-            descriptions = list(self.proc.descriptions())
-            descriptions = _fix_descriptions(descriptions)
+            descriptions = _fix_descriptions(list(self.proc.descriptions()))
             process_view = self.telstate.view(args.name.replace('.', '_'))
             utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
