@@ -147,7 +147,7 @@ def _split_array(x: np.ndarray, dtype) -> np.ndarray:
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
-def _fix_descriptions(desc):
+def _fix_descriptions(desc: Any) -> Any:
     """Massage operation descriptions to be suitable for telstate storage.
 
     It recursively:
@@ -903,8 +903,7 @@ class CBFIngest:
 
         # Record information about the processing in telstate
         if args.name is not None:
-            descriptions = list(self.proc.descriptions())
-            descriptions = _fix_descriptions(descriptions)
+            descriptions = _fix_descriptions(list(self.proc.descriptions()))
             process_view = self.telstate.view(args.name.replace('.', '_'))
             utils.set_telstate_entry(process_view, 'process_log', descriptions)
 
