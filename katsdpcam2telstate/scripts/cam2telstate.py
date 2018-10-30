@@ -184,7 +184,12 @@ SENSORS = [
     Sensor('${stream.cbf.baseline_correlation_products}_n_chans_per_substream', immutable=True),
     Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans', immutable=True),
-    Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight'),
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_source_indices',
+           immutable=True, convert=np.safe_eval),
+    Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight',
+           ignore_missing=True),   # CBF-CAM ICD v5 - remove in future
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_weight',
+           ignore_missing=True, convert=np.safe_eval),   # CBF-CAM ICD v6 (draft)
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
     Sensor('${stream.cbf.antenna_channelised_voltage}_n_samples_between_spectra',
