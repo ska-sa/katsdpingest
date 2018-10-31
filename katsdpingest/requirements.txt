@@ -21,6 +21,7 @@ katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
 MarkupSafe                # via mako
+msgpack                   # via katsdptelstate
 netifaces                 # via katsdptelstate
 numba                     # via katsdpsigproc
 numpy
