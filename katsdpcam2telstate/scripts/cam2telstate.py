@@ -183,7 +183,6 @@ SENSORS = [
     Sensor('${stream.cbf.baseline_correlation_products}_n_accs', immutable=True),
     Sensor('${stream.cbf.baseline_correlation_products}_n_chans_per_substream', immutable=True),
     Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
-    Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_source_indices',
            immutable=True, convert=np.safe_eval),
     Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight',
