@@ -7,6 +7,7 @@ hiredis                      # via katsdptelstate
 ipaddress                    # via katsdpservices
 katcp
 katversion
+msgpack                      # via katsdptelstate
 netifaces                    # via katsdpservices
 numpy
 ply                          # via katcp
