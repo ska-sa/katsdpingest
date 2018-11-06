@@ -27,6 +27,7 @@ REJECT_HEAP_TYPES = {
     'too-old': 'timestamp is prior to the start time',
     'bad-channel': 'channel offset is not aligned to the substreams',
     'missing': 'expected heap was not received',
+    'bad-heap': 'heap items are missing, wrong shape etc'
 }
 
 
@@ -359,8 +360,13 @@ class Receiver:
                     else:
                         for raw_item in heap.get_items():
                             if raw_item.id == item.id:
-                                item.set_from_raw(raw_item)
-                                item.version += 1
+                                try:
+                                    item.set_from_raw(raw_item)
+                                    item.version += 1
+                                except ValueError:
+                                    _logger.warning('Exception updating item from heap',
+                                                    exc_info=True)
+                                    return 'bad-heap'
                                 data_ts = item.value
                                 break
                     # Note: no return here. We carry on to process the timestamp
@@ -368,7 +374,11 @@ class Receiver:
                     _logger.debug('Received non-descriptor heap before descriptors')
                     return 'no-descriptor'
                 else:
-                    updated = self._ig_cbf.update(heap)
+                    try:
+                        updated = self._ig_cbf.update(heap)
+                    except ValueError:
+                        _logger.warning('Exception updating item group from heap', exc_info=True)
+                        return 'bad-heap'
                     # The _ig_cbf is shared between streams, so we need to use the values
                     # before next yielding.
                     if 'timestamp' in updated:
@@ -434,10 +444,10 @@ class Receiver:
                 # From here on we expect we have proper data
                 if data_item is None:
                     _logger.warning("CBF heap without xeng_raw received on stream %d", stream_idx)
-                    return 'no-descriptor'
+                    return 'bad-heap'
                 if channel0 is None:
                     _logger.warning("CBF heap without frequency received on stream %d", stream_idx)
-                    return 'no-descriptor'
+                    return 'bad-heap'
                 heap_channel_range = Range(channel0, channel0 + heap_channels)
                 if not (heap_channel_range.isaligned(heap_channels) and
                         heap_channel_range.issubset(self.channel_range)):
