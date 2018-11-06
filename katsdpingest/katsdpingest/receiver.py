@@ -27,6 +27,7 @@ REJECT_HEAP_TYPES = {
     'too-old': 'timestamp is prior to the start time',
     'bad-channel': 'channel offset is not aligned to the substreams',
     'missing': 'expected heap was not received',
+    'bad-heap': 'heap items are missing, wrong shape etc'
 }
 
 
@@ -322,62 +323,81 @@ class Receiver:
             ts_wrap_offset = 0        # Value added to compensate for CBF timestamp wrapping
             ts_wrap_period = 2**48
             n_stop = 0
-            while True:
-                try:
-                    heap = await stream.get()
-                except spead2.Stopped:
-                    break
+
+            async def process_heap(heap):
+                """Process one heap and return a classification for it.
+
+                The classification is one of:
+                - None (normal)
+                - 'stop'
+                - 'metadata'
+                - a key from REJECT_HEAP_TYPES
+                """
+                nonlocal prev_ts, ts_wrap_offset, n_stop
+
+                heap_type = None
+                data_ts = None
+                data_item = None
+                channel0 = None
+
                 if heap.is_end_of_stream():
                     self._metadata_heaps.value += 1
                     n_stop += 1
                     _logger.debug("%d/%d endpoints stopped on stream %d",
                                   n_stop, n_endpoints, stream_idx)
-                    if n_stop == n_endpoints:
-                        stream.stop()
-                        break
-                    else:
-                        continue
+                    return 'stop'
                 elif isinstance(heap, spead2.recv.IncompleteHeap):
-                    # Don't warn if we've already been asked to stop. There may
-                    # be some heaps still in the network at the time we were
-                    # asked to stop.
-                    if not self._stopping:
-                        _logger.debug('dropped incomplete heap %d (%d/%d bytes of payload)',
-                                      heap.cnt, heap.received_length, heap.heap_length)
-                        self._reject_heaps['incomplete'].value += 1
-                    continue
+                    heap_type = 'incomplete'
+                    _logger.debug('dropped incomplete heap %d (%d/%d bytes of payload)',
+                                  heap.cnt, heap.received_length, heap.heap_length)
+                    # Attempt to extract the timestamp. We can't use
+                    # self._ig_cbf.update because that requires a complete
+                    # heap, so this emulates some of its functionality.
+                    try:
+                        item = self._ig_cbf['timestamp']
+                    except KeyError:
+                        pass   # We don't have the descriptor for it yet
+                    else:
+                        for raw_item in heap.get_items():
+                            if raw_item.id == item.id:
+                                try:
+                                    item.set_from_raw(raw_item)
+                                    item.version += 1
+                                except ValueError:
+                                    _logger.warning('Exception updating item from heap',
+                                                    exc_info=True)
+                                    return 'bad-heap'
+                                data_ts = item.value
+                                break
+                    # Note: no return here. We carry on to process the timestamp
                 elif not self._descriptors_received.value and not heap.get_descriptors():
                     _logger.debug('Received non-descriptor heap before descriptors')
-                    self._reject_heaps['no-descriptor'].value += 1
-                    continue
-                updated = self._ig_cbf.update(heap)
-                # The _ig_cbf is shared between streams, so we need to use the values
-                # before next yielding.
-                if not self._descriptors_received.value and 'xeng_raw' in self._ig_cbf:
-                    # This heap added the descriptors
-                    self._descriptors_received.value = True
-                if 'xeng_raw' not in updated:
-                    _logger.debug("CBF non-data heap received on stream %d", stream_idx)
-                    self._metadata_heaps.value += 1
-                    continue
-                if 'timestamp' not in updated:
-                    _logger.warning("CBF heap without timestamp received on stream %d", stream_idx)
-                    continue
-                if 'frequency' not in updated:
-                    _logger.warning("CBF heap without frequency received on stream %d", stream_idx)
-                    continue
-                channel0 = updated['frequency'].value
-                heap_channel_range = Range(channel0, channel0 + heap_channels)
-                if not (heap_channel_range.isaligned(heap_channels) and
-                        heap_channel_range.issubset(self.channel_range)):
-                    _logger.debug("CBF heap with invalid channel %d on stream %d",
-                                  channel0, stream_idx)
-                    self._reject_heaps['bad-channel'].value += 1
-                    continue
-                xeng_idx = (channel0 - self.channel_range.start) // heap_channels
+                    return 'no-descriptor'
+                else:
+                    try:
+                        updated = self._ig_cbf.update(heap)
+                    except ValueError:
+                        _logger.warning('Exception updating item group from heap', exc_info=True)
+                        return 'bad-heap'
+                    # The _ig_cbf is shared between streams, so we need to use the values
+                    # before next yielding.
+                    if 'timestamp' in updated:
+                        data_ts = updated['timestamp'].value
+                    if 'xeng_raw' in updated:
+                        data_item = updated['xeng_raw'].value
+                    if 'frequency' in updated:
+                        channel0 = updated['frequency'].value
+                    if not self._descriptors_received.value and 'xeng_raw' in self._ig_cbf:
+                        # This heap added the descriptors
+                        self._descriptors_received.value = True
 
-                data_ts = self._ig_cbf['timestamp'].value + ts_wrap_offset
-                data_item = self._ig_cbf['xeng_raw'].value
+                if data_ts is None:
+                    _logger.debug("Heap without timestamp received on stream %d", stream_idx)
+                    return heap_type or 'metadata'
+
+                # Process the timestamp, even if this is an incomplete heap, so
+                # that we age out partial frames timeously.
+                data_ts += ts_wrap_offset
                 if prev_ts is not None and data_ts < prev_ts - ts_wrap_period // 2:
                     # This happens either because packets ended up out-of-order,
                     # or because the CBF timestamp wrapped. Out-of-order should
@@ -393,11 +413,9 @@ class Receiver:
                     ts_wrap_offset -= ts_wrap_period
                     data_ts -= ts_wrap_period
                     _logger.warning('Data timestamps reverse wrapped')
-                _logger.debug('Received heap with timestamp %d on stream %d, channel %d',
+                _logger.debug('Received heap with timestamp %d on stream %d, channel %s',
                               data_ts, stream_idx, channel0)
                 prev_ts = data_ts
-                # we have new data...
-
                 if not self._frames:
                     self.timestamp_base = self._first_timestamp(data_ts)
                     for i in range(self.active_frames):
@@ -406,25 +424,59 @@ class Receiver:
                 ts0 = self._frames[0].timestamp
                 if data_ts < ts0:
                     _logger.debug('Timestamp %d is too far in the past, discarding '
-                                  '(frequency %d)', data_ts, channel0)
-                    self._reject_heaps['too-old'].value += 1
-                    continue
+                                  '(channel %s)', data_ts, channel0)
+                    return heap_type or 'too-old'
                 elif (data_ts - ts0) % self.interval != 0:
                     _logger.debug('Timestamp %d does not conform to %d + %dn, '
-                                  'discarding (frequency %d)',
+                                  'discarding (channel %s)',
                                   data_ts, ts0, self.interval, channel0)
-                    self._reject_heaps['bad-timestamp'].value += 1
-                    continue
+                    return heap_type or 'bad-timestamp'
                 while data_ts >= ts0 + self.interval * self.active_frames:
                     frame = self._pop_frame()
                     if frame:
                         await self._put_frame(frame)
                     del frame   # Free it up, particularly if discarded
                     ts0 = self._frames[0].timestamp
+
+                if heap_type == 'incomplete':
+                    return heap_type
+
+                # From here on we expect we have proper data
+                if data_item is None:
+                    _logger.warning("CBF heap without xeng_raw received on stream %d", stream_idx)
+                    return 'bad-heap'
+                if channel0 is None:
+                    _logger.warning("CBF heap without frequency received on stream %d", stream_idx)
+                    return 'bad-heap'
+                heap_channel_range = Range(channel0, channel0 + heap_channels)
+                if not (heap_channel_range.isaligned(heap_channels) and
+                        heap_channel_range.issubset(self.channel_range)):
+                    _logger.debug("CBF heap with invalid channel %d on stream %d",
+                                  channel0, stream_idx)
+                    return 'bad-channel'
+                xeng_idx = (channel0 - self.channel_range.start) // heap_channels
                 frame_idx = (data_ts - ts0) // self.interval
                 self._frames[frame_idx].items[xeng_idx] = data_item
                 self._input_bytes.value += data_item.nbytes
                 self._input_heaps.value += 1
+                return heap_type
+
+            async for heap in stream:
+                heap_type = await process_heap(heap)
+                if heap_type == 'stop':
+                    if n_stop == n_endpoints:
+                        stream.stop()
+                        break
+                elif heap_type == 'metadata':
+                    self._metadata_heaps.value += 1
+                elif heap_type in REJECT_HEAP_TYPES:
+                    # Don't warn about incomplete heaps if we've already been
+                    # asked to stop. There may be some heaps still in the
+                    # network at the time we were asked to stop.
+                    if heap_type != 'incomplete' or not self._stopping:
+                        self._reject_heaps[heap_type].value += 1
+                else:
+                    assert heap_type is None
         finally:
             await self._frames_complete.put(stream_idx)
 
