@@ -28,6 +28,16 @@ def _array_encode(value: Any) -> Any:
         return value
 
 
+def _fromrecords(reclist, names):
+    """Convert array of records to array for writing to HDF5.
+
+    This is similar to :func:`np.rec.fromrecords` (in limited form), but any
+    fields containing Unicode are encoded as UTF-8.
+    """
+    fields = [_array_encode(field) for field in zip(*reclist)]
+    return np.rec.fromarrays(fields, names=names)
+
+
 def set_telescope_model(h5_file: h5py.File,
                         model_data: TelescopeModelData,
                         base_path: str = "/TelescopeModel") -> None:
@@ -53,7 +63,7 @@ def set_telescope_model(h5_file: h5py.File,
                 data = model_data.get_sensor_values(sensor)
                 if data is not None:
                     try:
-                        dset = np.rec.fromrecords(data, names='timestamp, value, status')
+                        dset = _fromrecords(data, names='timestamp, value, status')
                         dset.sort(axis=0)
                         c_group.create_dataset(sensor.name, data=dset)
                         if sensor.description is not None:
