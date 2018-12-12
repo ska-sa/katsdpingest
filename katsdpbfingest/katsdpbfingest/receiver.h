@@ -55,6 +55,9 @@ struct receiver_counters
 {
     std::int64_t heaps = 0;           ///< Heaps actually received
     std::int64_t bytes = 0;           ///< Bytes of payload actually received
+    std::int64_t packets = 0;         ///< Packets received by spead2
+    std::int64_t batches = 0;         ///< Packet batches received by spead2
+    std::size_t max_batch = 0;        ///< Largest batch size
     std::int64_t total_heaps = 0;     ///< Heaps we expected to receive (based on timestamps)
     /// Heaps rejected because the timestamp was too far in the past
     std::int64_t too_old_heaps = 0;
@@ -168,7 +171,9 @@ private:
     void flush(slice &s);
 
     /// Update the public counters from the internal ones (called periodically)
-    void refresh_counters(const boost::system::error_code &ec);
+    void refresh_counters();
+    /// Run @refrefresh_counters and schedule self to run again
+    void refresh_counters_periodic(const boost::system::error_code &ec);
 
     /// Called by bf_stream::heap_ready
     void heap_ready(const spead2::recv::heap &heap);

@@ -14,9 +14,11 @@ import numpy as np
 
 import aiokatcp
 from aiokatcp import FailReply, Sensor
+import spead2
 
 import katsdpservices
 import katsdptelstate
+from katsdptelstate.endpoint import endpoints_to_str
 
 from ._bf_ingest import Session, SessionConfig, ReceiverCounters
 from . import utils, file_writer
@@ -67,6 +69,8 @@ def _create_session_config(args: argparse.Namespace) -> SessionConfig:
         Command-line arguments. See :class:`CaptureServer`.
     """
     config = SessionConfig('')  # Real filename supplied later
+    config.max_packet = args.max_packet
+    config.buffer_size = args.buffer_size
     if args.interface is not None:
         config.interface_address = katsdpservices.get_interface_address(args.interface)
     config.ibv = args.ibv
@@ -105,8 +109,10 @@ def _create_session_config(args: argparse.Namespace) -> SessionConfig:
 
     endpoint_range = np.s_[args.channels.start // channels_per_endpoint:
                            args.channels.stop // channels_per_endpoint]
-    for endpoint in args.cbf_spead[endpoint_range]:
+    endpoints = args.cbf_spead[endpoint_range]
+    for endpoint in endpoints:
         config.add_endpoint(socket.gethostbyname(endpoint.host), endpoint.port)
+    config.endpoints_str = endpoints_to_str(endpoints)
     if args.stats is not None:
         config.set_stats_endpoint(args.stats.host, args.stats.port)
         config.stats_int_time = args.stats_int_time
@@ -342,16 +348,28 @@ class KatcpCaptureServer(CaptureServer, aiokatcp.DeviceServer):
                    "Number of heaps rejected due to bad timestamp or channel "
                    "(prometheus: counter)",
                    initial_status=Sensor.Status.NOMINAL,
-                   status_func=_warn_if_positive)
+                   status_func=_warn_if_positive),
+            Sensor(int, "input-packets-total",
+                   "Total number of packets received (prometheus: counter)",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "input-batches-total",
+                   "Number of batches of packets processed (prometheus: counter)",
+                   initial_status=Sensor.Status.NOMINAL),
+            Sensor(int, "input-max-batch",
+                   "Maximum number of packets processed in a batch (prometheus: gauge)",
+                   initial_status=Sensor.Status.NOMINAL)
         ]
         for sensor in sensors:
             self.sensors.add(sensor)
 
     def update_counters(self, counters: ReceiverCounters) -> None:
         timestamp = time.time()
-        for name in ['heaps', 'bytes', 'too-old-heaps', 'incomplete-heaps',
-                     'bad-metadata-heaps']:
-            sensor = self.sensors['input-{}-total'.format(name)]
+        counter_sensors = ['bytes', 'packets', 'batches',
+                           'heaps', 'too-old-heaps', 'incomplete-heaps', 'bad-metadata-heaps']
+        gauge_sensors = ['max-batch']
+        for name in counter_sensors + gauge_sensors:
+            sensor_name = 'input-{}{}'.format(name, '' if name in gauge_sensors else '-total')
+            sensor = self.sensors[sensor_name]
             value = getattr(counters, name.replace('-', '_'))
             sensor.set_value(value, timestamp=timestamp)
         self.sensors['input-missing-heaps-total'].set_value(
@@ -381,4 +399,68 @@ class KatcpCaptureServer(CaptureServer, aiokatcp.DeviceServer):
     stop.__doc__ = aiokatcp.DeviceServer.stop.__doc__
 
 
-__all__ = ['CaptureServer', 'KatcpCaptureServer']
+def parse_args(args=None, namespace=None):
+    """Parse command-line arguments.
+
+    Any arguments are forwarded to :meth:`katsdpservices.ArgumentParser.parse_args`.
+    """
+    defaults = SessionConfig('')
+    parser = katsdpservices.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        '--cbf-spead', type=katsdptelstate.endpoint.endpoint_list_parser(7148),
+        default=':7148', metavar='ENDPOINTS',
+        help=('endpoints to listen for CBF SPEAD stream (including multicast IPs). '
+              '[<ip>[+<count>]][:port].'))
+    parser.add_argument(
+        '--stream-name', type=str, metavar='NAME',
+        help='Stream name for metadata in telstate')
+    parser.add_argument(
+        '--channels', type=Range.parse, metavar='A:B',
+        help='Output channels')
+    parser.add_argument(
+        '--log-level', '-l', type=str, metavar='LEVEL', default=None,
+        help='log level')
+    parser.add_argument(
+        '--file-base', type=str, metavar='DIR',
+        help='write HDF5 files in this directory if given')
+    parser.add_argument(
+        '--affinity', type=spead2.parse_range_list, metavar='CPU,CPU',
+        help='List of CPUs to which to bind threads')
+    parser.add_argument(
+        '--interface', type=str,
+        help='Network interface for multicast subscription')
+    parser.add_argument(
+        '--direct-io', action='store_true',
+        help='Use Direct I/O VFD for writing the file')
+    parser.add_argument(
+        '--ibv', action='store_true',
+        help='Use libibverbs when possible')
+    parser.add_argument(
+        '--buffer-size', type=int, metavar='BYTES', default=defaults.buffer_size,
+        help='Network buffer size [%(default)s]')
+    parser.add_argument(
+        '--max-packet', type=int, metavar='BYTES', default=defaults.max_packet,
+        help='Maximum packet size (UDP payload) [%(default)s]')
+    parser.add_argument(
+        '--stats', type=katsdptelstate.endpoint.endpoint_parser(7149), metavar='ENDPOINT',
+        help='Send statistics to a signal display server at this address')
+    parser.add_argument(
+        '--stats-int-time', type=float, default=1.0, metavar='SECONDS',
+        help='Interval between sending statistics to the signal displays')
+    parser.add_argument(
+        '--stats-interface', type=str,
+        help='Network interface for signal display stream')
+    parser.add_argument('--port', '-p', type=int, default=2050, help='katcp host port')
+    parser.add_argument('--host', '-a', type=str, default='', help='katcp host address')
+    args = parser.parse_args(args, namespace)
+    if args.affinity and len(args.affinity) < 2:
+        parser.error('At least 2 CPUs must be specified for --affinity')
+    if args.telstate is None:
+        parser.error('--telstate is required')
+    if args.stream_name is None:
+        parser.error('--stream-name is required')
+    return args
+
+
+__all__ = ['CaptureServer', 'KatcpCaptureServer', 'parse_args']

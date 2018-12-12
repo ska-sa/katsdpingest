@@ -85,23 +85,14 @@ slice receiver::make_slice()
 
 void receiver::emplace_readers()
 {
-    std::ostringstream endpoints_str;
-    bool first = true;
-    for (const auto &endpoint : config.endpoints)
-    {
-        if (!first)
-            endpoints_str << ',';
-        first = false;
-        endpoints_str << endpoint;
-    }
 #if SPEAD2_USE_IBV
     if (use_ibv)
     {
         log_format(spead2::log_level::info, "Listening on %1% with interface %2% using ibverbs",
-                   endpoints_str.str(), config.interface_address);
+                   config.endpoints_str, config.interface_address);
         stream.emplace_reader<spead2::recv::udp_ibv_reader>(
             config.endpoints, config.interface_address,
-            spead2::recv::udp_ibv_reader::default_max_size,
+            config.max_packet,
             config.buffer_size,
             config.comp_vector);
     }
@@ -111,18 +102,18 @@ void receiver::emplace_readers()
         if (!config.interface_address.is_unspecified())
         {
             log_format(spead2::log_level::info, "Listening on %1% with interface %2%",
-                       endpoints_str.str(), config.interface_address);
+                       config.endpoints_str, config.interface_address);
             for (const auto &endpoint : config.endpoints)
                 stream.emplace_reader<spead2::recv::udp_reader>(
-                    endpoint, spead2::recv::udp_reader::default_max_size, config.buffer_size,
+                    endpoint, config.max_packet, config.buffer_size,
                     config.interface_address);
         }
         else
         {
-            log_format(spead2::log_level::info, "Listening on %1%", endpoints_str.str());
+            log_format(spead2::log_level::info, "Listening on %1%", config.endpoints_str);
             for (const auto &endpoint : config.endpoints)
                 stream.emplace_reader<spead2::recv::udp_reader>(
-                    endpoint, spead2::recv::udp_reader::default_max_size, config.buffer_size);
+                    endpoint, config.max_packet, config.buffer_size);
         }
     }
 }
@@ -312,19 +303,26 @@ void receiver::heap_ready(const spead2::recv::heap &h)
     }
 }
 
-void receiver::refresh_counters(const boost::system::error_code &ec)
+void receiver::refresh_counters_periodic(const boost::system::error_code &ec)
 {
     using namespace std::placeholders;
     if (ec == boost::asio::error::operation_aborted)
         return;
     else if (ec)
         log_message(spead2::log_level::warning, "refresh_counters timer error");
-    counters_timer.expires_from_now(std::chrono::milliseconds(1));
-    counters_timer.async_wait(std::bind(&receiver::refresh_counters, this, _1));
+    counters_timer.expires_from_now(std::chrono::milliseconds(10));
+    counters_timer.async_wait(std::bind(&receiver::refresh_counters_periodic, this, _1));
+    refresh_counters();
+}
 
+void receiver::refresh_counters()
+{
     auto stream_stats = stream.get_stats();
     std::lock_guard<std::mutex> lock(counters_mutex);
     counters_public = counters;
+    counters_public.packets = stream_stats.packets;
+    counters_public.batches = stream_stats.batches;
+    counters_public.max_batch = stream_stats.max_batch;
     counters_public.incomplete_heaps = stream_stats.incomplete_heaps_evicted;
 }
 
@@ -348,6 +346,8 @@ void receiver::stop_received()
         }
     }
     ring.stop();
+    counters_timer.cancel();
+    refresh_counters();
     state = state_t::STOP;
 }
 
@@ -358,7 +358,6 @@ void receiver::graceful_stop()
 
 void receiver::stop()
 {
-    counters_timer.cancel();
     /* Stop the ring first, so that we unblock the internals if they
      * are waiting for space in ring.
      */
@@ -413,13 +412,13 @@ receiver::receiver(const session_config &config)
         for (std::size_t i = 0; i < window_size + config.ring_slots + 1; i++)
             free_ring.push(make_slice());
 
-        stream.set_memcpy(spead2::MEMCPY_NONTEMPORAL);
         std::shared_ptr<spead2::memory_allocator> allocator =
             std::make_shared<bf_raw_allocator>(*this);
         stream.set_memory_allocator(std::move(allocator));
 
         emplace_readers();
-        refresh_counters(boost::system::error_code());
+        // Start periodic updates
+        refresh_counters_periodic(boost::system::error_code());
     }
     catch (std::exception)
     {
