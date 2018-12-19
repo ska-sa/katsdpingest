@@ -442,8 +442,8 @@ class Client(object):
                 self._logger.debug('Set signal handler for %s', signal_number)
         except Exception as e:
             if isinstance(e, katportalclient.SensorLookupError):
-                self._logger.error("Error during sensor name lookup. Please check the state of "
-                                   "the CAM portal to make sure it is not in error. (%s)", e)
+                self._logger.error("Sensor name lookup failed. Please check the state of "
+                                   "the CAM sensor portal to make sure it is not in error. (%s)", e)
             else:
                 self._logger.error("Exception during startup", exc_info=True)
             if self._device_server is not None:
