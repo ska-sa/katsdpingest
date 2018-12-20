@@ -443,7 +443,7 @@ class Client(object):
         except Exception as e:
             if isinstance(e, katportalclient.SensorLookupError):
                 self._logger.error("Sensor name lookup failed. Please check the state of "
-                                   "the CAM sensor portal to make sure it is not in error. (%s)", e)
+                                   "the CAM subarray to make sure it is not in error. (%s)", e)
             else:
                 self._logger.error("Exception during startup", exc_info=True)
             if self._device_server is not None:
