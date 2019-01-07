@@ -1459,8 +1459,8 @@ class CBFIngest:
         for (name, tx) in self.tx.items():
             logger.info('Stopping %s tx stream...', name)
             await tx.stop()
-        for tx in self._sdisp_ips.values():
+        for sdisp_tx in self._sdisp_ips.values():
             logger.info('Stopping signal display stream...')
-            await self._stop_stream(tx, self.ig_sd)
+            await self._stop_stream(sdisp_tx, self.ig_sd)
         logger.info("CBF ingest complete")
         self.status_sensor.value = Status.COMPLETE
