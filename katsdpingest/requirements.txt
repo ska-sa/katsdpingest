@@ -38,7 +38,7 @@ redis                     # via katsdptelstate
 requests                  # via katdal
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
-spead2==1.9.2   # 1.11.2 seems to have bugs
+spead2
 terminaltables            # via aiomonitor
 toolz                     # via dask
 urllib3                   # via requests
