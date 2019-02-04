@@ -8,13 +8,15 @@
 class hdf5_bf_raw_writer
 {
 private:
-    const int channels;
-    const int spectra_per_heap;
+    units::freq_system freq_sys;
+    units::time_system time_sys;
+    std::size_t chunk_bytes;
     H5::DataSet dataset;
 
 public:
-    hdf5_bf_raw_writer(H5::Group &parent, int channels,
-                       int spectra_per_heap,
+    hdf5_bf_raw_writer(H5::Group &parent,
+                       const units::freq_system &freq_sys,
+                       const units::time_system &time_sys,
                        const char *name);
 
     void add(const slice &c);
@@ -28,17 +30,16 @@ private:
     std::unique_ptr<std::uint64_t[], free_delete<std::uint64_t>> buffer;
     hsize_t n_buffer = 0;
     hsize_t n_written = 0;
+    const units::time_system time_sys;
 
     void flush();
 public:
-    const int spectra_per_heap;
-    const std::uint64_t ticks_between_spectra;
 
-    hdf5_timestamps_writer(H5::Group &parent, int spectra_per_heap,
-                           std::uint64_t ticks_between_spectra, const char *name);
+    hdf5_timestamps_writer(H5::Group &parent, const units::time_system &time_sys,
+                           const char *name);
     ~hdf5_timestamps_writer();
     // Add a heap's worth of timestamps
-    void add(std::uint64_t timestamp);
+    void add(q::ticks timestamp);
 };
 
 /**
@@ -47,10 +48,10 @@ public:
  */
 struct flags_chunk
 {
-    std::int64_t spectrum = -1;
+    q::spectra spectrum{-1};
     aligned_ptr<std::uint8_t> data;
 
-    explicit flags_chunk(std::size_t size);
+    explicit flags_chunk(q::heaps size);
 };
 
 class hdf5_flags_writer : private window<flags_chunk, hdf5_flags_writer>
@@ -58,17 +59,25 @@ class hdf5_flags_writer : private window<flags_chunk, hdf5_flags_writer>
 private:
     friend class window<flags_chunk, hdf5_flags_writer>;
 
-    std::size_t spectra_per_heap;
-    std::size_t heaps_per_slice;
-    std::size_t heaps_per_chunk;
-    std::size_t slices_per_chunk;
-    hsize_t n_slices = 0;    ///< Total slices seen (including skipped ones)
+    const unit_system<std::int64_t, units::channels, units::heaps::freq, units::slices::freq, units::chunks::freq> freq_sys;
+    const unit_system<std::int64_t, units::ticks, units::spectra, units::heaps::time, units::slices::time, units::chunks::time> time_sys;
+    const std::size_t chunk_bytes;
+    q::slices_t n_slices{0};    ///< Total slices seen (including skipped ones)
     H5::DataSet dataset;
 
-    static std::size_t compute_chunk_size(int heaps_per_slice);
+    static q::heaps heaps_per_slice(
+        const units::freq_system &freq_sys, const units::time_system &time_sys);
+    static q::slices compute_chunk_size_slices(
+        const units::freq_system &freq_sys, const units::time_system &time_sys);
+    static q::heaps compute_chunk_size_heaps(
+        const units::freq_system &freq_sys, const units::time_system &time_sys);
+    static std::size_t bytes(q::heaps n);
+
     void flush(flags_chunk &chunk);
 public:
-    hdf5_flags_writer(H5::Group &parent, int heaps_per_slice, int spectra_per_heap,
+    hdf5_flags_writer(H5::Group &parent,
+                      const units::freq_system &freq_sys,
+                      const units::time_system &time_sys,
                       const char *name);
     ~hdf5_flags_writer();
     void add(const slice &s);
@@ -77,19 +86,21 @@ public:
 class hdf5_writer
 {
 private:
-    std::int64_t past_end_timestamp = -1;
+    q::ticks past_end_timestamp{-1};
     H5::H5File file;
     H5::Group group;
+    const units::freq_system freq_sys;
+    const units::time_system time_sys;
     hdf5_bf_raw_writer bf_raw;
-    hdf5_timestamps_writer captured_timestamps, all_timestamps;
+    hdf5_timestamps_writer timestamps;
     hdf5_flags_writer flags;
 
     static H5::FileAccPropList make_fapl(bool direct);
 
 public:
     hdf5_writer(const std::string &filename, bool direct,
-                int channels, int channels_per_heap, int spectra_per_heap,
-                std::int64_t ticks_between_spectra);
+                const units::freq_system &freq_sys,
+                const units::time_system &time_sys);
     void add(const slice &s);
     int get_fd() const;
 };

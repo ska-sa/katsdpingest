@@ -4,10 +4,10 @@ import argparse
 import tempfile
 import shutil
 import os.path
-import time
 import contextlib
 import socket
 import asyncio
+from unittest import mock
 
 import h5py
 import numpy as np
@@ -55,6 +55,7 @@ class TestSession:
         config.bandwidth = 856e6
         config.center_freq = 1284e6
         config.scale_factor_timestamp = 1712e6
+        config.heaps_per_slice_time = 2
         _bf_ingest.Session(config)
 
 
@@ -62,22 +63,18 @@ class TestCaptureServer(asynctest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmpdir)
-        # To avoid collisions when running tests in parallel on a single host,
-        # create a socket for the duration of the test and use its port as the
-        # port for the test. Sockets in the same network namespace should have
-        # unique ports.
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.addCleanup(self._sock.close)
-        self._sock.bind(('127.0.0.1', 0))
-        self.port = self._sock.getsockname()[1]
+        self.port = 7148
         self.n_channels = 1024
         self.spectra_per_heap = 256
+        # No data actually travels through these multicast groups;
+        # it gets mocks out to use the inproc transport instead.
         self.endpoints = endpoint.endpoint_list_parser(self.port)(
             '239.102.2.0+7:{}'.format(self.port))
+        self.inproc_queues = {endpoint: spead2.InprocQueue() for endpoint in self.endpoints}
         self.n_bengs = 16
         self.ticks_between_spectra = 8192
         self.adc_sample_rate = 1712000000.0
-        self.heaps_per_stats = 5
+        self.heaps_per_stats = 6
         self.channels_per_heap = self.n_channels // self.n_bengs
         attrs = {
             'i0_tied_array_channelised_voltage_0x_n_chans': self.n_channels,
@@ -108,6 +105,33 @@ class TestCaptureServer(asynctest.TestCase):
             '--stats-interface=lo'],
             argparse.Namespace(telstate=telstate))
         self.loop = asyncio.get_event_loop()
+        self.patch_add_endpoint()
+        self.patch_create_session_config()
+
+    def patch_add_endpoint(self):
+        def add_endpoint(config: _bf_ingest.SessionConfig, host: str, port: int) -> None:
+            config.add_inproc(self.inproc_queues[endpoint.Endpoint(host, port)])
+
+        patcher = mock.patch.object(_bf_ingest.SessionConfig, 'add_endpoint', add_endpoint)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def patch_create_session_config(self):
+        """Force heaps_per_slice_time to 2.
+
+        The test is written around this value, but the default is to compute
+        it from other parameters.
+        """
+        def create_session_config(args: argparse.Namespace) -> _bf_ingest.SessionConfig:
+            config = orig_create_session_config(args)
+            config.heaps_per_slice_time = 2
+            return config
+
+        orig_create_session_config = bf_ingest_server.create_session_config
+        patcher = mock.patch.object(
+            bf_ingest_server, 'create_session_config', create_session_config)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     async def test_manual_stop_no_data(self) -> None:
         """Manual stop before any data is received"""
@@ -120,7 +144,7 @@ class TestCaptureServer(asynctest.TestCase):
         assert_false(server.capturing)
 
     async def _test_stream(self, end: bool, write: bool) -> None:
-        n_heaps = 25              # number of heaps in time
+        n_heaps = 30              # number of heaps in time
         n_spectra = self.spectra_per_heap * n_heaps
         # Pick some heaps to drop, including an entire slice and
         # an entire channel for one stats dump
@@ -128,7 +152,7 @@ class TestCaptureServer(asynctest.TestCase):
         drop[:, 4] = True
         drop[2, 9] = True
         drop[7, 24] = True
-        drop[10, 15:20] = True
+        drop[10, 12:18] = True
         if not write:
             self.args.file_base = None
 
@@ -143,9 +167,9 @@ class TestCaptureServer(asynctest.TestCase):
         # Start up the server
         server = bf_ingest_server.CaptureServer(self.args, self.loop)
         filename = await server.start_capture('1122334455')
-        time.sleep(0.1)
-        # Send it a SPEAD stream
-        config = spead2.send.StreamConfig(max_packet_size=4196, rate=1e9 / 8)
+        # Send it a SPEAD stream. Use small packets to ensure that each heap is
+        # split into multiple packets, to check that the data scatter works.
+        config = spead2.send.StreamConfig(max_packet_size=256)
         flavour = spead2.Flavour(4, 64, 48, 0)
         ig = spead2.send.ItemGroup(flavour=flavour)
         ig.add_item(name='timestamp', id=0x1600,
@@ -156,10 +180,10 @@ class TestCaptureServer(asynctest.TestCase):
         ig.add_item(name='bf_raw', id=0x5000,
                     description='Beamformer data',
                     shape=(self.channels_per_heap, self.spectra_per_heap, 2), dtype=np.int8)
-        streams = [spead2.send.UdpStream(
-            spead2.ThreadPool(), ep.host, self.port, config, ttl=1, interface_address='127.0.0.1')
-            for ep in self.endpoints]
-        for stream in streams:
+        streams = [spead2.send.InprocStream(spead2.ThreadPool(), self.inproc_queues[ep], config)
+                   for ep in self.endpoints]
+        for i, stream in enumerate(streams):
+            stream.set_cnt_sequence(i, len(streams))
             stream.send_heap(ig.get_heap(descriptors='all'))
             stream.send_heap(ig.get_start())
         ts = 1234567890
@@ -175,7 +199,11 @@ class TestCaptureServer(asynctest.TestCase):
                 ig['bf_raw'].value = data[j * self.channels_per_heap
                                           : (j + 1) * self.channels_per_heap, ...]
                 if not drop[j, i]:
-                    streams[j // (self.n_bengs // len(self.endpoints))].send_heap(ig.get_heap())
+                    heap = ig.get_heap()
+                    # The receiver looks at inline items in each packet to place
+                    # data correctly.
+                    heap.repeat_pointers = True
+                    streams[j // (self.n_bengs // len(self.endpoints))].send_heap(heap)
             ts += self.spectra_per_heap * self.ticks_between_spectra
         if end:
             for stream in streams:
@@ -217,14 +245,6 @@ class TestCaptureServer(asynctest.TestCase):
                     + self.ticks_between_spectra * np.arange(self.spectra_per_heap * n_heaps)
                 np.testing.assert_equal(expected, timestamps)
 
-                captured_timestamps = h5file['/Data/captured_timestamps']
-                slice_drops = np.sum(drop, axis=0)
-                captured_slices = np.nonzero(slice_drops == 0)[0]
-                captured_spectra = captured_slices[:, np.newaxis] * self.spectra_per_heap + \
-                    np.arange(self.spectra_per_heap)[np.newaxis, :]
-                expected = 1234567890 + self.ticks_between_spectra * captured_spectra.flatten()
-                np.testing.assert_equal(expected, captured_timestamps)
-
                 flags = h5file['/Data/flags']
                 expected = np.where(drop, 8, 0).astype(np.uint8)
                 expected = expected[self.args.channels.start // self.channels_per_heap :
@@ -247,8 +267,8 @@ class TestCaptureServer(asynctest.TestCase):
         ig = spead2.send.ItemGroup()
         spectrum = 0
         spectra_per_stats = self.heaps_per_stats * self.spectra_per_heap
-        for heap in heaps[1:-1]:
-            updated = ig.update(heap)
+        for rx_heap in heaps[1:-1]:
+            updated = ig.update(rx_heap)
             rx_data = updated['sd_data'].value
             rx_flags = updated['sd_flags'].value
             rx_timestamp = updated['sd_timestamp'].value

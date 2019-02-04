@@ -92,14 +92,12 @@ private:
     bool use_ibv = false;
 
     /// Depth of window
-    static constexpr std::size_t window_size = 64;
+    static constexpr std::size_t window_size = 8;
 
     // Metadata copied from or computed from the session_config
-    const int channel_offset;
-    const int channels;
-    const std::int64_t ticks_between_spectra;
-    const int spectra_per_heap;
-    const int channels_per_heap;
+    const q::channels channel_offset;
+    const units::freq_system freq_sys;
+    const units::time_system time_sys;
     const std::size_t payload_size;
 
     // Hard-coded item IDs
@@ -108,7 +106,7 @@ private:
     static constexpr int frequency_id = 0x4103;
 
     state_t state = state_t::DATA;
-    std::int64_t first_timestamp = -1;
+    q::ticks first_timestamp{-1};
 
     spead2::thread_pool worker;
     bf_stream stream;
@@ -144,8 +142,9 @@ private:
      * @retval false otherwise, and a message is logged
      */
     bool parse_timestamp_channel(
-        std::int64_t timestamp, int channel,
-        std::int64_t &spectrum, std::size_t &heap_offset, std::size_t &present_idx);
+        q::ticks timestamp, q::channels channel,
+        q::spectra &spectrum,
+        std::size_t &heap_offset, q::heaps &present_idx);
 
     /**
      * Obtain a pointer to an allocated slice. It returns @c nullptr if the
@@ -153,7 +152,7 @@ private:
      *
      * This can block if @c free_ring is empty.
      */
-    slice *get_slice(std::int64_t timestamp, std::int64_t spectrum);
+    slice *get_slice(q::ticks timestamp, q::spectra spectrum);
 
     /**
      * Find space within a slice. This is the backing implementation for
@@ -166,6 +165,12 @@ private:
      *          valid data heap.
      */
     std::uint8_t *allocate(std::size_t size, const spead2::recv::packet_header &packet);
+
+    /**
+     * Copy contents of one packet to a slice.
+     */
+    void packet_memcpy(const spead2::memory_allocator::pointer &allocated,
+                       const spead2::recv::packet_header &packet);
 
     /// Flush a single slice to the ringbuffer, if it has data
     void flush(slice &s);
@@ -197,7 +202,7 @@ public:
      * Retrieve first timestamp, or -1 if no data was received.
      * It is only valid to call this once the receiver has been stopped.
      */
-    std::int64_t get_first_timestamp() const
+    q::ticks get_first_timestamp() const
     {
         assert(state == state_t::STOP);
         return first_timestamp;
