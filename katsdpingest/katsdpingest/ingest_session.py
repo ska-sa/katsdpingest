@@ -6,7 +6,6 @@ import logging
 import asyncio
 import enum
 import argparse
-from collections import OrderedDict
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
@@ -152,8 +151,8 @@ def _fix_descriptions(desc: Any) -> Any:
 
     It recursively:
     - Replaces Python types and numpy dtypes with their string form.
-    - Replaces dictionaries with OrderedDict so that the output is
-      reproducible across runs.
+    - Sorts dictionaries so that the output is reproducible across runs (this
+      will be reproducible only from Python 3.6 onwards).
     """
     if isinstance(desc, list):
         return [_fix_descriptions(item) for item in desc]
@@ -162,7 +161,7 @@ def _fix_descriptions(desc: Any) -> Any:
     elif isinstance(desc, set):
         return {_fix_descriptions(item) for item in desc}
     elif isinstance(desc, dict):
-        return OrderedDict(sorted(_fix_descriptions(item) for item in desc.items()))
+        return dict(sorted(_fix_descriptions(item) for item in desc.items()))
     elif isinstance(desc, np.dtype):
         return np.lib.format.dtype_to_descr(desc)
     elif isinstance(desc, type):
