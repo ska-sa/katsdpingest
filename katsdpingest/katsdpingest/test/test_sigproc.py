@@ -20,7 +20,7 @@ FLAG_SCALE_INV = np.float32(2) ** 64
 
 
 def random_vis(rs, shape):
-    """Generate random visibilities with mean 0 and standard deviation 1"""
+    """Generate random visibilities with mean 0 and standard deviation 1."""
     return (rs.standard_normal(shape) + rs.standard_normal(shape) * 1j).astype(np.complex64)
 
 
