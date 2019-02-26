@@ -19,6 +19,11 @@ FLAG_SCALE = np.float32(2) ** -64
 FLAG_SCALE_INV = np.float32(2) ** 64
 
 
+def random_vis(rs, shape):
+    """Generate random visibilities with mean 0 and standard deviation 1"""
+    return (rs.standard_normal(shape) + rs.standard_normal(shape) * 1j).astype(np.complex64)
+
+
 def random_flags(rs, shape, bits, p):
     """Generate random array of flag bits.
 
@@ -186,8 +191,7 @@ class TestAccum:
         outputs = 2
         rs = np.random.RandomState(1)
 
-        vis_in = (rs.standard_normal((baselines, channels)) +
-                  rs.standard_normal((baselines, channels)) * 1j).astype(np.complex64)
+        vis_in = random_vis(rs, (baselines, channels))
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
         flags_in = random_flags(rs, (baselines, channels), 7, p=0.2)
         channel_flags = random_flags(rs, (channels,), 7, p=0.02)
@@ -196,9 +200,7 @@ class TestAccum:
         weights_out = []
         flags_out = []
         for i in range(outputs):
-            vis_out.append((rs.standard_normal((kept_channels, baselines)) +
-                            rs.standard_normal((kept_channels, baselines)) * 1j)
-                           .astype(np.complex64))
+            vis_out.append(random_vis(rs, (kept_channels, baselines)))
             weights_out.append(rs.uniform(size=(kept_channels, baselines)).astype(np.float32))
             flags_out.append(random_flags(rs, (kept_channels, baselines), 8, p=0.02))
             # Where the unflagged bit is not set, we expect the current
@@ -276,8 +278,7 @@ class TestPostproc:
         baselines = 512
         cont_factor = 16
         rs = np.random.RandomState(1)
-        vis_in = (rs.standard_normal((channels, baselines)) +
-                  rs.standard_normal((channels, baselines)) * 1j).astype(np.complex64)
+        vis_in = random_vis(rs, (channels, baselines))
         weights_in = rs.uniform(0.5, 2.0, (channels, baselines)).astype(np.float32)
         flags_in = random_flags(rs, (channels, baselines), 8, 0.2)
         # Ensure that we test the case of none flagged and all flagged when

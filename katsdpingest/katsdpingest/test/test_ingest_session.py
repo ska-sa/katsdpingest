@@ -109,8 +109,8 @@ class TestTimeAverage:
 
 def test_split_array():
     """Test _split_array"""
-    c64 = (np.random.uniform(size=(4, 7)) +
-           1j * np.random.uniform(size=(4, 7))).astype(np.complex64)
+    c64 = (np.random.uniform(size=(4, 7))
+           + 1j * np.random.uniform(size=(4, 7))).astype(np.complex64)
     # Create a view which is discontiguous
     src = c64[:3, :5].T
     actual = ingest_session._split_array(src, np.float32)
