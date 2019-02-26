@@ -449,8 +449,8 @@ class Receiver:
                     _logger.warning("CBF heap without frequency received on stream %d", stream_idx)
                     return 'bad-heap'
                 heap_channel_range = Range(channel0, channel0 + heap_channels)
-                if not (heap_channel_range.isaligned(heap_channels) and
-                        heap_channel_range.issubset(self.channel_range)):
+                if not (heap_channel_range.isaligned(heap_channels)
+                        and heap_channel_range.issubset(self.channel_range)):
                     _logger.debug("CBF heap with invalid channel %d on stream %d",
                                   channel0, stream_idx)
                     return 'bad-channel'

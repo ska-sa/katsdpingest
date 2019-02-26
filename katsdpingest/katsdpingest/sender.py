@@ -33,8 +33,8 @@ class Data:
 
     @property
     def nbytes(self) -> int:
-        return (self.vis.nbytes + self.flags.nbytes +
-                self.weights.nbytes + self.weights_channel.nbytes)
+        return (self.vis.nbytes + self.flags.nbytes
+                + self.weights.nbytes + self.weights_channel.nbytes)
 
 
 async def async_send_heap(stream: spead2.send.asyncio.UdpStream,

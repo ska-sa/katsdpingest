@@ -483,8 +483,8 @@ class Accum(accel.Operation):
         # The minimum padded size for channel_flags is tricky because it is
         # the kept-channels part that needs to be aligned to be a multiple of
         # tilex.
-        channel_flags_size = max(channels, accel.roundup(kept_channels, tilex) +
-                                 channel_range.start)
+        channel_flags_size = max(channels,
+                                 accel.roundup(kept_channels, tilex) + channel_range.start)
         self.slots['channel_flags'] = accel.IOSlot(
             (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot(
@@ -1303,8 +1303,8 @@ class IngestOperation(accel.OperationSequence):
         a dictionary of parameters describing the operation."""
         def generate(operation, name):
             parameters = dict(operation.parameters())
-            parameters['class'] = (operation.__class__.__module__ + '.' +
-                                   operation.__class__.__name__)
+            parameters['class'] = (operation.__class__.__module__ + '.'
+                                   + operation.__class__.__name__)
             yield (name, parameters)
             if isinstance(operation, accel.OperationSequence):
                 for child_name, child_op in operation.operations.items():
