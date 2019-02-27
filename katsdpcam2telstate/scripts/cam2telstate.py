@@ -41,12 +41,10 @@ def recursive_decode(value, encoding):
     """Decode byte strings to unicode, recursing on lists, tuples and dicts"""
     if isinstance(value, bytes):
         return value.decode(encoding)
-    elif isinstance(value, list):
-        return [recursive_decode(item, encoding) for item in value]
-    elif isinstance(value, tuple):
-        return tuple(recursive_decode(item, encoding) for item in value)
+    elif isinstance(value, (list, tuple)):
+        return type(value)(recursive_decode(item, encoding) for item in value)
     elif isinstance(value, dict):
-        return dict([recursive_decode(item, encoding) for item in value.items()])
+        return type(value)(recursive_decode(item, encoding) for item in value.items())
     else:
         return value
 
