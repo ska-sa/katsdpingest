@@ -37,6 +37,20 @@ def convert_bitmask(value):
         return np.array([c == '1' for c in value])
 
 
+def recursive_decode(value, encoding):
+    """Decode byte strings to unicode, recursing on lists, tuples and dicts"""
+    if isinstance(value, bytes):
+        return value.decode(encoding)
+    elif isinstance(value, list):
+        return [recursive_decode(item, encoding) for item in value]
+    elif isinstance(value, tuple):
+        return tuple(recursive_decode(item, encoding) for item in value)
+    elif isinstance(value, dict):
+        return dict([recursive_decode(item, encoding) for item in value.items()])
+    else:
+        return value
+
+
 class Template(string.Template):
     """Template for a sensor name."""
 
@@ -63,18 +77,23 @@ class Sensor(object):
     convert : callable, optional
         If provided, it is used to transform the sensor value before storing
         it in telescope state.
+    encoding : str or None, optional
+        Encoding used to decode string sensors. If `convert` is also
+        specified, it is applied first, after which strings are decoded
+        recursively. Use ``None`` for binary data.
     ignore_missing : bool, optional
         If true, don't report an error if the sensor isn't present. This is
         used for sensors that only exist in RTS but not MeerKAT, or vice
         versa.
     """
     def __init__(self, cam_name, sdp_name=None, sampling_strategy_and_params='event',
-                 immutable=False, convert=None, ignore_missing=False):
+                 immutable=False, convert=None, encoding='utf-8', ignore_missing=False):
         self.cam_name = cam_name
         self.sdp_name = sdp_name or cam_name
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
         self.convert = convert
+        self.encoding = encoding
         self.ignore_missing = ignore_missing
         self.waiting = True     #: Waiting for an initial value
 
@@ -127,6 +146,7 @@ class Sensor(object):
                               self.sampling_strategy_and_params,
                               self.immutable,
                               self.convert,
+                              self.encoding,
                               self.ignore_missing))
         return ans
 
@@ -465,6 +485,12 @@ class Client(object):
             self._logger.warn('Failed to convert %s, ignoring (value was %r)',
                               name, value, exc_info=True)
             return
+        try:
+            if sensor.encoding is not None:
+                value = recursive_decode(value, sensor.encoding)
+        except UnicodeDecodeError:
+            self._logger.warn('Failed to decode %s, ignoring (value was %r)',
+                              name, value, exc_info=True)
         sdp_names = sensor.sdp_name
         if not isinstance(sdp_names, list):
             sdp_names = [sdp_names]
