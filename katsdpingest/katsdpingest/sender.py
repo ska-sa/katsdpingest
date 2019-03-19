@@ -61,7 +61,8 @@ class VisSender:
     flavour : `spead2.Flavour`
         SPEAD flavour to use on `stream`
     int_time : float
-        Time between dumps, in seconds
+        Time between dumps, in seconds of wall clock time (which may be
+        different to data timestamp time if ``--clock-ratio`` is used).
     channel_range : :class:`katsdpingest.utils.Range`
         Range of channel numbers to be placed into this stream (of those passed to :meth:`send`)
     channel0 : int
@@ -86,7 +87,7 @@ class VisSender:
         # Send slightly faster to allow for other network overheads (e.g. overhead per
         # packet, which is a fraction of total size) and to allow us to catch
         # up if we temporarily fall behind the rate.
-        rate = dump_size / int_time * 1.05
+        rate = dump_size / int_time * 1.05 if int_time else 0.0
         kwargs = {}      # type: Dict[str, Any]
         if interface_address is not None:
             kwargs['interface_address'] = interface_address

@@ -199,6 +199,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             excise=False,
             servers=4,
             server_id=2,
+            clock_ratio=1.0,
             host='127.0.0.1',
             port=7147,
             telstate=self._telstate,
