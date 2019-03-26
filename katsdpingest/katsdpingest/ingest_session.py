@@ -6,6 +6,7 @@ import logging
 import asyncio
 import enum
 import argparse
+import textwrap
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
@@ -351,7 +352,8 @@ def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict
     telstate = utils.cbf_telstate_view(telstate, cbf_name)
     for attr in CBF_CRITICAL_ATTRS:
         cbf_attr[attr] = telstate[attr]
-        logger.info('Setting cbf_attr %s to %r', attr, cbf_attr[attr])
+        logger.info('Setting cbf_attr %s to %r',
+                    attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
     logger.info('All metadata received from telstate')
     return cbf_attr
 
