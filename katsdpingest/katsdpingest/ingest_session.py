@@ -352,7 +352,7 @@ def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict
     telstate = utils.cbf_telstate_view(telstate, cbf_name)
     for attr in CBF_CRITICAL_ATTRS:
         cbf_attr[attr] = telstate[attr]
-        logger.info('Setting cbf_attr %s to %r',
+        logger.info('Setting cbf_attr %s to %s',
                     attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
     logger.info('All metadata received from telstate')
     return cbf_attr
