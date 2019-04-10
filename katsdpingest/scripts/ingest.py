@@ -132,6 +132,9 @@ def parse_args() -> argparse.Namespace:
         '--aioconsole-port', type=int, default=50102,
         help='port for aioconsole [default=%(default)s]')
     parser.add_argument(
+        '--clock-ratio', type=float, default=1.0,
+        help='Scale factor for transmission rate, smaller is faster [default=%(default)s]')
+    parser.add_argument(
         '-p', '--port', type=int, default=2040, metavar='N',
         help='katcp host port. [default=%(default)s]')
     parser.add_argument(

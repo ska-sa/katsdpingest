@@ -730,7 +730,7 @@ class CBFIngest:
             endpoints,
             katsdpservices.get_interface_address(getattr(args, 'l0_{}_interface'.format(arg_name))),
             l0_flavour,
-            int_time,
+            int_time * args.clock_ratio,
             channels,
             (self.channel_ranges.output.start - all_output.start) // cont_factor,
             len(all_output) // cont_factor,
@@ -881,7 +881,7 @@ class CBFIngest:
         self.rx_spead_max_streams = args.input_streams
         self.rx_spead_max_packet_size = args.input_max_packet_size
         self.rx_spead_buffer_size = args.input_buffer
-        self.sd_spead_rate = args.sd_spead_rate
+        self.sd_spead_rate = args.sd_spead_rate / args.clock_ratio if args.clock_ratio else 0.0
         self.sd_spead_ifaddr = katsdpservices.get_interface_address(args.sdisp_interface)
         self.channel_ranges = channel_ranges
         self.telstate = telstate
