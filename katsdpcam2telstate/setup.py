@@ -12,12 +12,14 @@ setup(
     setup_requires=['katversion'],
     install_requires=[
         'numpy',
-        'katcp',
+        'aiokatcp',
         'katsdpservices',
         'katsdptelstate',
         'katportalclient',
-        'tornado>=4.0, <5',
-        'six'
+        # Tornado is not used directly, but katportalclient uses it and we need
+        # 5.0+ to get seamless asyncio integration.
+        'tornado>=5.0',
     ],
+    python_requires='>=3.6',
     use_katversion=True
 )

@@ -1,52 +1,36 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-from __future__ import print_function, division
-
+import argparse
 import logging
 import collections
 import itertools
 import pprint
 import string
-import six
 import signal
 import re
 import json
+import asyncio
+from typing import List, Tuple, Dict, Set, Callable, Mapping, MutableMapping, Optional, Union, Any
 
-import tornado
-import tornado.ioloop
-import tornado.gen
-from tornado.gen import Return
 import numpy as np
 import katsdptelstate
 import katsdpservices
 import katportalclient
-import katcp
+import aiokatcp
 
 import katsdpcam2telstate
 
 
-def comma_split(value):
+def comma_split(value: str) -> List[str]:
     return value.split(',')
 
 
-def convert_bitmask(value):
+def convert_bitmask(value: str) -> np.ndarray:
     """Converts a string of 1's and 0's to a numpy array of bools"""
-    if not isinstance(value, six.string_types) or not re.match('^[01]*$', value):
+    if not isinstance(value, str) or not re.match('^[01]*$', value):
         return None
     else:
         return np.array([c == '1' for c in value])
-
-
-def recursive_decode(value, encoding):
-    """Decode byte strings to unicode, recursing on lists, tuples and dicts"""
-    if isinstance(value, bytes):
-        return value.decode(encoding)
-    elif isinstance(value, (list, tuple)):
-        return type(value)(recursive_decode(item, encoding) for item in value)
-    elif isinstance(value, dict):
-        return type(value)(recursive_decode(item, encoding) for item in value.items())
-    else:
-        return value
 
 
 class Template(string.Template):
@@ -56,7 +40,7 @@ class Template(string.Template):
     idpattern = '[A-Za-z0-9._]+'
 
 
-class Sensor(object):
+class Sensor:
     """Information about a sensor to be collected from CAM. This may later be
     replaced by a kattelmod class.
 
@@ -75,27 +59,25 @@ class Sensor(object):
     convert : callable, optional
         If provided, it is used to transform the sensor value before storing
         it in telescope state.
-    encoding : str or None, optional
-        Encoding used to decode string sensors. If `convert` is also
-        specified, it is applied first, after which strings are decoded
-        recursively. Use ``None`` for binary data.
     ignore_missing : bool, optional
         If true, don't report an error if the sensor isn't present. This is
         used for sensors that only exist in RTS but not MeerKAT, or vice
         versa.
     """
-    def __init__(self, cam_name, sdp_name=None, sampling_strategy_and_params='event',
-                 immutable=False, convert=None, encoding='utf-8', ignore_missing=False):
+    def __init__(self, cam_name: str, sdp_name: Union[None, str, List[str]] = None,
+                 sampling_strategy_and_params: str = 'event',
+                 immutable: bool = False,
+                 convert: Optional[Callable[[Any], Any]] = None,
+                 ignore_missing: bool = False) -> None:
         self.cam_name = cam_name
         self.sdp_name = sdp_name or cam_name
         self.sampling_strategy_and_params = sampling_strategy_and_params
         self.immutable = immutable
         self.convert = convert
-        self.encoding = encoding
         self.ignore_missing = ignore_missing
         self.waiting = True     #: Waiting for an initial value
 
-    def expand(self, substitutions):
+    def expand(self, substitutions: Mapping[str, List[Tuple[str, List[str]]]]) -> List['Sensor']:
         """Expand a template into a list of sensors. The sensor name may
         contain keys in braces. These are looked up in `substitutions` and
         replaced with each possible value to form the new sensors, taking the
@@ -133,9 +115,9 @@ class Sensor(object):
             sdp_names = []
             # sdp_dict maps each key to a list of values to substitute.
             # Check that they are lists and not a single string.
-            for value in six.itervalues(sdp_dict):
+            for value in sdp_dict.values():
                 assert isinstance(value, list)
-            for sdp_values in itertools.product(*six.itervalues(sdp_dict)):
+            for sdp_values in itertools.product(*sdp_dict.values()):
                 # Recombine this specific set of values with the keys
                 sdp_single_dict = dict(zip(sdp_dict.keys(), sdp_values))
                 sdp_names.append(substitute(self.sdp_name, sdp_single_dict))
@@ -144,7 +126,6 @@ class Sensor(object):
                               self.sampling_strategy_and_params,
                               self.immutable,
                               self.convert,
-                              self.encoding,
                               self.ignore_missing))
         return ans
 
@@ -244,7 +225,7 @@ SENSORS = [
 ]
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = katsdpservices.ArgumentParser()
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
@@ -263,86 +244,91 @@ def parse_args():
     return args
 
 
-class DeviceServer(katcp.AsyncDeviceServer):
-    VERSION_INFO = ("cam2telstate", 1, 0)
-    BUILD_INFO = ("cam2telstate",) + tuple(katsdpcam2telstate.__version__.split('.', 1)) + ('',)
-
-    def __init__(self, host, port):
-        super(DeviceServer, self).__init__(host, port)
-
-    def setup_sensors(self):
-        pass
+class DeviceServer(aiokatcp.DeviceServer):
+    VERSION = "cam2telstate-1.0"
+    BUILD_STATE = "cam2telstate-" + katsdpcam2telstate.__version__
 
 
-class Client(object):
-    def __init__(self, args, logger):
+class Client:
+    _device_server: Optional[DeviceServer]
+    _portal_client: Optional[katportalclient.KATPortalClient]
+    _namespace: Optional[str]
+    _sensors: Optional[Dict[str, Sensor]]
+    _instruments: Set[str]
+    _streams_with_type: Dict[str, str]
+    _sub_name: Optional[str]
+    _sdp_name: Optional[str]
+
+    def __init__(self, args: argparse.Namespace, logger: logging.Logger) -> None:
         self._args = args
         self._telstate = args.telstate
         self._device_server = None
         self._logger = logger
-        self._loop = tornado.ioloop.IOLoop.current()
         self._portal_client = None
-        self._namespace = None    #: Set after connecting
-        self._sensors = None  #: Dictionary from CAM name to sensor object
+        self._namespace = None     #: Set after connecting
+        self._sensors = None       #: Dictionary from CAM name to sensor object
         self._instruments = set()  #: Set of instruments available in the current subarray
         self._streams_with_type = {}  #: Dictionary mapping stream names to stream types
-        self._sub_name = None     #: Set once connected
-        self._cbf_name = None     #: Set once connected
-        self._sdp_name = None     #: Set once connected
-        self._waiting = 0         #: Number of sensors whose initial value is still outstanding
+        self._sub_name = None      #: Set once connected
+        self._cbf_name = None      #: Set once connected
+        self._sdp_name = None      #: Set once connected
+        self._waiting = 0          #: Number of sensors whose initial value is still outstanding
 
-    def parse_streams(self):
+    def parse_streams(self) -> None:
         """Parse the stream information from telstate to populate the
         instruments and the stream_types dictionary."""
         sdp_config = self._telstate['sdp_config']
-        for name, stream in six.iteritems(sdp_config.get('inputs', {})):
+        for name, stream in sdp_config.get('inputs', {}).items():
             if stream['type'].startswith('cbf.'):
                 instrument_name = stream['instrument_dev_name']
                 self._instruments.add(instrument_name)
                 self._streams_with_type[name] = stream['type']
 
-    @tornado.gen.coroutine
-    def get_sensor_value(self, sensor):
+    async def get_sensor_value(self, sensor: str) -> Any:
         """Get the current value of a sensor.
 
         This is only used for special sensors needed to bootstrap subscriptions.
         Multiple calls can proceed in parallel, provided that they do not
         duplicate any names.
         """
-        data = yield self._portal_client.sensor_value(sensor)
+        assert self._portal_client is not None
+        data = await self._portal_client.sensor_value(sensor)
         if data.status not in STATUS_VALID_VALUE:
             self._logger.warning('Status %s for sensor %s is invalid, but using the value anyway',
                                  data.status, sensor)
-        raise Return(data.value)
+        return data.value
 
-    @tornado.gen.coroutine
-    def get_receptors(self):
+    async def get_receptors(self) -> List[str]:
         """Get the list of receptors"""
-        value = yield self.get_sensor_value('{}_pool_resources'.format(self._sub_name))
+        value = await self.get_sensor_value('{}_pool_resources'.format(self._sub_name))
         resources = value.split(',')
         receptors = []
         for resource in resources:
             if re.match(r'^m\d+$', resource):
                 receptors.append(resource)
-        raise Return(receptors)
+        return receptors
 
-    @tornado.gen.coroutine
-    def get_sensors(self):
+    async def get_sensors(self) -> List[Sensor]:
         """Get list of sensors to be collected from CAM.
 
         Returns
         -------
         sensors : list of `Sensor`
         """
-        receptors = yield self.get_receptors()
-        input_labels = yield self.get_sensor_value('{}_input_labels'.format(self._cbf_name))
+        # Tell mypy that these must have been initialised
+        assert self._sub_name is not None
+        assert self._cbf_name is not None
+        assert self._sdp_name is not None
+
+        receptors = await self.get_receptors()
+        input_labels = await self.get_sensor_value('{}_input_labels'.format(self._cbf_name))
         input_labels = input_labels.split(',')
-        band = yield self.get_sensor_value('{}_band'.format(self._sub_name))
+        band = await self.get_sensor_value('{}_band'.format(self._sub_name))
 
         rx_name = 'rsc_rx{}'.format(band)
         dig_name = 'dig_{}_band'.format(band)
         # Build table of names for expanding sensor templates
-        substitutions = {
+        substitutions: Dict[str, List[Tuple[str, List[str]]]] = {
             'receptor': [(name, [name]) for name in receptors],
             'receiver': [(rx_name, [rx_name])],
             'digitiser': [(dig_name, [dig_name])],
@@ -368,7 +354,7 @@ class Client(object):
             sdp_instruments = [instrument]
             substitutions['instrument'].append((cam_instrument, sdp_instruments))
         # For each stream we add type specific sensors
-        for (full_stream_name, stream_type) in self._streams_with_type.iteritems():
+        for (full_stream_name, stream_type) in self._streams_with_type.items():
             if stream_type not in STREAM_TYPES:
                 self._logger.warning('Skipping stream %s with unknown type %s',
                                      full_stream_name, stream_type)
@@ -383,7 +369,7 @@ class Client(object):
             # only a subset of the inputs are used and only the corresponding
             # sensors exist.
             if stream_type == 'cbf.tied_array_channelised_voltage':
-                source_indices = yield self.get_sensor_value(cam_stream + '_source_indices')
+                source_indices = await self.get_sensor_value(cam_stream + '_source_indices')
                 source_indices = np.safe_eval(source_indices)
                 sublist = substitutions['stream.{}.inputn'.format(stream_type)]
                 for index in source_indices:
@@ -394,19 +380,18 @@ class Client(object):
                         self._logger.warning('Out of range source index %d on %s',
                                              index, full_stream_name)
 
-        sensors = []
+        sensors: List[Sensor] = []
         for template in SENSORS:
             expanded = template.expand(substitutions)
             sensors.extend(expanded)
-        raise Return(sensors)
+        return sensors
 
-    @tornado.gen.coroutine
-    def start(self):
+    async def start(self) -> None:
         try:
             self._logger.info('Connecting')
             self._portal_client = katportalclient.KATPortalClient(
-                self._args.url, self.update_callback, io_loop=self._loop, logger=self._logger)
-            yield self._portal_client.connect()
+                self._args.url, self.update_callback, logger=self._logger)
+            await self._portal_client.connect()
             if self._args.namespace is None:
                 sub_nr = self._portal_client.sitemap['sub_nr']
                 if sub_nr is None:
@@ -414,35 +399,35 @@ class Client(object):
                 self.namespace = 'sp_subarray_{}'.format(sub_nr)
             else:
                 self.namespace = self._args.namespace
-            self._sub_name = yield self._portal_client.sensor_subarray_lookup('sub', '')
-            self._cbf_name = yield self._portal_client.sensor_subarray_lookup('cbf', '')
-            self._sdp_name = yield self._portal_client.sensor_subarray_lookup('sdp', '')
+            self._sub_name = await self._portal_client.sensor_subarray_lookup('sub', '')
+            self._cbf_name = await self._portal_client.sensor_subarray_lookup('cbf', '')
+            self._sdp_name = await self._portal_client.sensor_subarray_lookup('sdp', '')
             self._logger.info('Initialising')
             # Now we can tell which sensors to subscribe to
-            sensors = yield self.get_sensors()
+            sensors = await self.get_sensors()
             self._sensors = {x.cam_name: x for x in sensors}
 
             self._waiting = len(self._sensors)
-            status = yield self._portal_client.subscribe(
-                self.namespace, self._sensors.keys())
+            status = await self._portal_client.subscribe(
+                self.namespace, list(self._sensors.keys()))
             self._logger.info("Subscribed to %d channels", status)
 
             # Group sensors by strategy to bulk-set sampling strategies
-            by_strategy = collections.defaultdict(list)
+            by_strategy: MutableMapping[str, List[Sensor]] = collections.defaultdict(list)
             for sensor in sensors:
                 by_strategy[sensor.sampling_strategy_and_params].append(sensor)
-            for (strategy, strategy_sensors) in six.iteritems(by_strategy):
+            for (strategy, strategy_sensors) in by_strategy.items():
                 regex = '^(?:' + '|'.join(re.escape(sensor.cam_name)
                                           for sensor in strategy_sensors) + ')$'
-                status = yield self._portal_client.set_sampling_strategies(
+                status = await self._portal_client.set_sampling_strategies(
                     self.namespace, regex, strategy)
-                for (sensor_name, result) in sorted(six.iteritems(status)):
-                    if result[u'success']:
+                for (sensor_name, result) in sorted(status.items()):
+                    if result['success']:
                         self._logger.info("Set sampling strategy on %s to %s",
                                           sensor_name, strategy)
                     else:
                         self._logger.error("Failed to set sampling strategy on %s: %s",
-                                           sensor_name, result[u'info'])
+                                           sensor_name, result['info'])
                         # Not going to get any values, so don't wait for it
                         self._waiting -= 1
                         self._sensors[sensor_name].waiting = False
@@ -453,10 +438,11 @@ class Client(object):
                         self._waiting -= 1
                         sensor.waiting = False
 
+            loop = asyncio.get_event_loop()
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
-                signal.signal(
+                loop.add_signal_handler(
                     signal_number,
-                    lambda sig, frame: self._loop.add_callback_from_signal(self.close))
+                    lambda sig, frame: loop.create_task(self.close()))
                 self._logger.debug('Set signal handler for %s', signal_number)
         except Exception as e:
             if isinstance(e, katportalclient.SensorLookupError):
@@ -465,12 +451,12 @@ class Client(object):
             else:
                 self._logger.error("Exception during startup", exc_info=True)
             if self._device_server is not None:
-                yield self._device_server.stop(timeout=None)
-            self._loop.stop()
+                await self._device_server.stop()
+            asyncio.get_event_loop().stop()
         else:
             self._logger.info("Startup complete")
 
-    def sensor_update(self, sensor, value, status, timestamp):
+    def sensor_update(self, sensor: Sensor, value: Any, status: str, timestamp: float) -> None:
         name = sensor.cam_name
         if status not in STATUS_VALID_VALUE:
             self._logger.info("Sensor {} received update '{}' with status '{}' (ignored)"
@@ -483,12 +469,6 @@ class Client(object):
             self._logger.warn('Failed to convert %s, ignoring (value was %r)',
                               name, value, exc_info=True)
             return
-        try:
-            if sensor.encoding is not None:
-                value = recursive_decode(value, sensor.encoding)
-        except UnicodeDecodeError:
-            self._logger.warn('Failed to decode %s, ignoring (value was %r)',
-                              name, value, exc_info=True)
         sdp_names = sensor.sdp_name
         if not isinstance(sdp_names, list):
             sdp_names = [sdp_names]
@@ -501,17 +481,15 @@ class Client(object):
                 self._logger.error('Failed to set %s to %s with timestamp %s',
                                    name, value, timestamp, exc_info=True)
 
-    def process_update(self, item):
+    def process_update(self, item: Mapping[str, Any]) -> None:
         self._logger.debug("Received update %s", pprint.pformat(item))
-        data = item[u'msg_data']
+        data = item['msg_data']
         if data is None:
             return
-        name = data[u'name'].encode('us-ascii')
-        timestamp = data[u'timestamp']
-        status = data[u'status'].encode('us-ascii')
-        value = data[u'value']
-        if isinstance(value, unicode):
-            value = value.encode('us-ascii')
+        name = data['name']
+        timestamp = data['timestamp']
+        status = data['status']
+        value = data['value']
 
         if self._sensors is None:   # We are still bootstrapping
             return
@@ -532,9 +510,9 @@ class Client(object):
                 if last:
                     self._logger.info('Initial values for all sensors seen, starting katcp server')
                     self._device_server = DeviceServer(self._args.host, self._args.port)
-                    self._device_server.start()
+                    asyncio.get_event_loop().create_task(self._device_server.start())
 
-    def update_callback(self, msg):
+    def update_callback(self, msg: Union[Dict[str, Any], List[Dict[str, Any]]]) -> None:
         self._logger.debug("update_callback: %s", pprint.pformat(msg))
         if isinstance(msg, list):
             for item in msg:
@@ -542,29 +520,32 @@ class Client(object):
         else:
             self.process_update(msg)
 
-    @tornado.gen.coroutine
-    def close(self):
-        yield self._portal_client.unsubscribe(self.namespace)
-        self._portal_client.disconnect()
-        self._logger.info("disconnected")
+    async def close(self) -> None:
+        if self._portal_client is not None:
+            await self._portal_client.unsubscribe(self.namespace)
+            self._portal_client.disconnect()
+            self._logger.info("disconnected")
         if self._device_server is not None:
-            yield self._device_server.stop(timeout=None)
+            await self._device_server.stop()
             self._device_server = None
         self._logger.info("device server shut down")
-        self._loop.stop()
+        asyncio.get_event_loop().stop()
 
 
-def main():
+async def main() -> None:
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
     logger = logging.getLogger("katsdpcam2telstate")
-    loop = tornado.ioloop.IOLoop.instance()
     client = Client(args, logger)
     client.parse_streams()
-    loop.add_callback(client.start)
-    loop.start()
+    await client.start()
+    # At this point we return, but things keep running until a signal handler
+    # causes loop.stop() to be called.
 
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
+    loop.run_forever()
+    loop.close()
