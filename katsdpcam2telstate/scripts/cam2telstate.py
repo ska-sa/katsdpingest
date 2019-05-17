@@ -13,6 +13,7 @@ import asyncio
 from typing import List, Tuple, Dict, Set, Callable, Mapping, MutableMapping, Optional, Union, Any
 
 import numpy as np
+import aiomonitor
 import katsdptelstate
 import katsdpservices
 import katportalclient
@@ -234,6 +235,12 @@ def parse_args() -> argparse.Namespace:
                         help='Hostname to bind for katcp interface')
     parser.add_argument('-p', '--port', type=int, metavar='N', default=2047,
                         help='Port to bind for katcp interface [%(default)s]')
+    parser.add_argument('--no-aiomonitor', dest='aiomonitor', default=True, action='store_false',
+                        help='disable aiomonitor debugging server')
+    parser.add_argument('--aiomonitor-port', type=int, default=50101,
+                        help='port for aiomonitor [%(default)s]')
+    parser.add_argument('--aioconsole-port', type=int, default=50102,
+                        help='port for aioconsole [%(default)s]')
     args = parser.parse_args()
     # Can't use required= on the parser, because telstate-provided arguments
     # are treated only as defaults rather than having set a value.
@@ -534,18 +541,39 @@ class Client:
     async def join(self) -> None:
         await self._stopped.wait()
 
+    async def run(self) -> None:
+        await self.start()
+        await self.join()
 
-async def main() -> None:
+
+class DummyMonitor:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+def main() -> None:
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
     logger = logging.getLogger("katsdpcam2telstate")
+
+    loop = asyncio.get_event_loop()
     client = Client(args, logger)
     client.parse_streams()
-    await client.start()
-    await client.join()
+    if args.aiomonitor:
+        monitor = aiomonitor.start_monitor(
+            loop=loop,
+            port=args.aiomonitor_port,
+            console_port=args.aioconsole_port,
+            locals=locals())
+    else:
+        monitor = DummyMonitor()
+    with monitor:
+        loop.run_until_complete(client.run())
+
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
-    loop.close()
+    main()
