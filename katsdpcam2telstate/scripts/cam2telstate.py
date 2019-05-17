@@ -273,6 +273,7 @@ class Client:
         self._cbf_name = None      #: Set once connected
         self._sdp_name = None      #: Set once connected
         self._waiting = 0          #: Number of sensors whose initial value is still outstanding
+        self._stopped = asyncio.Event()    #: Set after shutdown
 
     def parse_streams(self) -> None:
         """Parse the stream information from telstate to populate the
@@ -441,8 +442,7 @@ class Client:
             loop = asyncio.get_event_loop()
             for signal_number in [signal.SIGINT, signal.SIGTERM]:
                 loop.add_signal_handler(
-                    signal_number,
-                    lambda sig, frame: loop.create_task(self.close()))
+                    signal_number, lambda: loop.create_task(self.close()))
                 self._logger.debug('Set signal handler for %s', signal_number)
         except Exception as e:
             if isinstance(e, katportalclient.SensorLookupError):
@@ -452,7 +452,7 @@ class Client:
                 self._logger.error("Exception during startup", exc_info=True)
             if self._device_server is not None:
                 await self._device_server.stop()
-            asyncio.get_event_loop().stop()
+            self._stopped.set()
         else:
             self._logger.info("Startup complete")
 
@@ -529,7 +529,10 @@ class Client:
             await self._device_server.stop()
             self._device_server = None
         self._logger.info("device server shut down")
-        asyncio.get_event_loop().stop()
+        self._stopped.set()
+
+    async def join(self) -> None:
+        await self._stopped.wait()
 
 
 async def main() -> None:
@@ -540,12 +543,9 @@ async def main() -> None:
     client = Client(args, logger)
     client.parse_streams()
     await client.start()
-    # At this point we return, but things keep running until a signal handler
-    # causes loop.stop() to be called.
-
+    await client.join()
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    loop.run_until_complete(main())
     loop.close()
