@@ -9,7 +9,6 @@ import asyncio
 import argparse
 from typing import List, Callable, TypeVar
 
-import aiomonitor
 import katsdpservices
 from katsdpsigproc import accel
 from katsdptelstate import endpoint
@@ -122,15 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--server-id', type=int, default=1,
         help='index of this server amongst parallel servers (1-based) [default=%(default)s]')
-    parser.add_argument(
-        '--no-aiomonitor', dest='aiomonitor', default=True, action='store_false',
-        help='disable aiomonitor debugging server')
-    parser.add_argument(
-        '--aiomonitor-port', type=int, default=50101,
-        help='port for aiomonitor [default=%(default)s]')
-    parser.add_argument(
-        '--aioconsole-port', type=int, default=50102,
-        help='port for aioconsole [default=%(default)s]')
+    parser.add_aiomonitor_arguments()
     parser.add_argument(
         '--clock-ratio', type=float, default=1.0,
         help='Scale factor for transmission rate, smaller is faster [default=%(default)s]')
@@ -200,13 +191,7 @@ def main() -> None:
     loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
     loop.run_until_complete(server.start())
     logger.info("Started katsdpingest server.")
-    if args.aiomonitor:
-        with aiomonitor.start_monitor(loop=loop,
-                                      port=args.aiomonitor_port,
-                                      console_port=args.aioconsole_port,
-                                      locals=locals()):
-            loop.run_until_complete(server.join())
-    else:
+    with katsdpservices.start_aiomonitor(loop, args, locals()):
         loop.run_until_complete(server.join())
     logger.info("Shutdown complete")
     loop.close()

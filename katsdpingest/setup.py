@@ -23,7 +23,7 @@ setup(
         'numpy',
         'spead2>=1.8.0',   # Needed for inproc transport for unit tests
         'katsdpsigproc',
-        'katsdpservices',
+        'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate',
         'katdal'
     ],
