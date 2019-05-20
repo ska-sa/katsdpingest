@@ -14,7 +14,7 @@ setup(
         'numpy',
         'aiokatcp',
         'aiomonitor',
-        'katsdpservices',
+        'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate',
         'katportalclient',
         # Tornado is not used directly, but katportalclient uses it and we need
