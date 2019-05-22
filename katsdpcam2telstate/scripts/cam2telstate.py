@@ -10,6 +10,7 @@ import signal
 import re
 import json
 import asyncio
+import uuid
 from typing import List, Tuple, Dict, Set, Callable, Mapping, MutableMapping, Optional, Union, Any
 
 import numpy as np
@@ -228,7 +229,7 @@ def parse_args() -> argparse.Namespace:
     parser = katsdpservices.ArgumentParser()
     parser.add_argument('--url', type=str, help='WebSocket URL to connect to')
     parser.add_argument('--namespace', type=str,
-                        help='Namespace to create in katportal [sp_subarray_N]')
+                        help='Namespace to create in katportal [UUID]')
     parser.add_argument('-a', '--host', type=str, metavar='HOST', default='',
                         help='Hostname to bind for katcp interface')
     parser.add_argument('-p', '--port', type=int, metavar='N', default=2047,
@@ -394,10 +395,7 @@ class Client:
                 self._args.url, self.update_callback, logger=self._logger)
             await self._portal_client.connect()
             if self._args.namespace is None:
-                sub_nr = self._portal_client.sitemap['sub_nr']
-                if sub_nr is None:
-                    raise RuntimeError('subarray number not known')
-                self.namespace = 'sp_subarray_{}'.format(sub_nr)
+                self.namespace = uuid.uuid4()
             else:
                 self.namespace = self._args.namespace
             self._sub_name = await self._portal_client.sensor_subarray_lookup('sub', '')
