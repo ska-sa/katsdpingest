@@ -168,9 +168,8 @@ SENSORS = [
     Sensor('${cbf}_cmc_version_list', immutable=True),
     # SDP proxy sensors
     Sensor('${sdp}_spmc_version_list', immutable=True),
-    # CBF sensors that are instrument specific
+    # CBF sensors that are instrument-specific
     Sensor('${instrument}_adc_sample_rate', immutable=True),
-    Sensor('${instrument}_bandwidth', immutable=True),
     Sensor('${instrument}_n_inputs', immutable=True),
     Sensor('${instrument}_scale_factor_timestamp', immutable=True),
     Sensor('${instrument}_sync_time', immutable=True),
