@@ -18,7 +18,7 @@ import spead2.send.asyncio
 import spead2.recv.asyncio
 
 import katsdpsigproc.accel
-from katsdpsigproc.asyncio import resource
+from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 
 import katsdpservices
@@ -302,9 +302,9 @@ class _ResourceSet:
     """Collection of device buffers with host staging areas.
 
     A resource set groups together
-    - a :class:`katsdpsigproc.asyncio.resource.Resource` containing a dict mapping
+    - a :class:`katsdpsigproc.resource.Resource` containing a dict mapping
       names to :class:`katsdpsigproc.accel.DeviceArray`s.
-    - N :class:`katsdpsigproc.asyncio.resource.Resource`s containing dicts mapping
+    - N :class:`katsdpsigproc.resource.Resource`s containing dicts mapping
       names to :class:`katsdpsigproc.accel.HostArray`s.
     This provides N-buffered staging of data into or out of the device buffers.
 
@@ -518,7 +518,7 @@ class CBFIngest:
         processing (currently `timeseries_weights`).
     sd_output_resource : :class:`_ResourceSet`
         Wrapper of the signal display output device buffers.
-    proc_resource : :class:`katsdpsigproc.asyncio.resource.Resource`
+    proc_resource : :class:`katsdpsigproc.resource.Resource`
         The proc object, and the contents of all its buffers except for those
         covered by other resources above.
     rx : :class:`katsdpingest.receiver.Receiver`
