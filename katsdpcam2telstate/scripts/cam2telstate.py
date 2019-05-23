@@ -395,7 +395,8 @@ class Client:
                 self._args.url, self.update_callback, logger=self._logger)
             await self._portal_client.connect()
             if self._args.namespace is None:
-                self.namespace = uuid.uuid4()
+                self.namespace = uuid.uuid4().hex
+                self._logger.info('Using %s as katportalclient namespace', self.namespace)
             else:
                 self.namespace = self._args.namespace
             self._sub_name = await self._portal_client.sensor_subarray_lookup('sub', '')
