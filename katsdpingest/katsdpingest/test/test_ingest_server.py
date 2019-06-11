@@ -208,10 +208,9 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
         self.channel_mask = self.fake_channel_mask()
         # Put them in at the beginning of time, to ensure they apply to every dump
-        self._telstate.add('i0_baseline_correlation_products_src_streams',
-                           ['i0_antenna_channelised_voltage'], immutable=True)
-        self._telstate.add('i0_antenna_channelised_voltage_instrument_dev_name',
-                           'i0', immutable=True)
+        self._telstate['i0_baseline_correlation_products_src_streams'] = \
+            ['i0_antenna_channelised_voltage']
+        self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask', self.channel_mask, ts=0)
         self._telstate.add('m090_data_suspect', False, ts=0)
         self._telstate.add('m091_data_suspect', True, ts=0)

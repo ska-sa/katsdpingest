@@ -59,7 +59,7 @@ class TestGetCbfAttr:
         self.telstate = TelescopeState()
         self.telstate.clear()
         for key, value in values.items():
-            self.telstate.add(key, value, immutable=True)
+            self.telstate[key] = value
         self.expected = {
             'n_chans': 4096,
             'n_chans_per_substream': 256,
