@@ -33,8 +33,9 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
     prefixes.append(src)
     instrument = telstate.view(src, exclusive=True)['instrument_dev_name']
     prefixes.append(instrument)
-    prefixes = [prefix + telstate.SEPARATOR for prefix in prefixes]
-    return telstate.__class__(prefixes=prefixes, base=telstate)
+    for i, prefix in enumerate(reversed(prefixes)):
+        telstate = telstate.view(prefix, exclusive=(i == 0))
+    return telstate
 
 
 def set_telstate_entry(telstate: katsdptelstate.TelescopeState,

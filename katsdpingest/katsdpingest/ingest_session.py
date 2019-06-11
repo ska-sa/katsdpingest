@@ -490,8 +490,8 @@ class TelstateReceiver(receiver.Receiver):
         scaled = candidate / self.cbf_attr['scale_factor_timestamp'] + 0.5 * self._l0_int_time
         try:
             for telstate in self._telstates:
-                telstate.add('first_timestamp_adc', candidate, immutable=True)
-                telstate.add('first_timestamp', scaled, immutable=True)
+                telstate['first_timestamp_adc'] = candidate
+                telstate['first_timestamp'] = scaled
             return candidate
         except katsdptelstate.ImmutableKeyError:
             # A different ingest process beat us to it. Use its value.
@@ -1429,7 +1429,7 @@ class CBFIngest:
         for tx in self.tx.values():
             await tx.start()
         # Initialise the input stream
-        prefixes = [self.telstate.SEPARATOR.join([self.capture_block_id, l0_name])
+        prefixes = [self.telstate.join(self.capture_block_id, l0_name)
                     for l0_name in self.l0_names]
         telstates = [self.telstate.view(prefix) for prefix in prefixes]
         self.rx = TelstateReceiver(
