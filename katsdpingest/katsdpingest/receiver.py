@@ -375,7 +375,10 @@ class Receiver:
                     return 'no-descriptor'
                 else:
                     try:
-                        updated = self._ig_cbf.update(heap)
+                        # We suppress the conversion to little endian. The data
+                        # gets copied later anyway and numpy will do the endian
+                        # swapping then without an extraneous copy.
+                        updated = self._ig_cbf.update(heap, new_order='|')
                     except ValueError:
                         _logger.warning('Exception updating item group from heap', exc_info=True)
                         return 'bad-heap'
