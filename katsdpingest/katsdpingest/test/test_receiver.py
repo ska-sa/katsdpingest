@@ -75,7 +75,7 @@ class TestReceiver(asynctest.TestCase):
                         'for all baselines (n_bls given by SPEAD Id=0x1008). '
                         'Each value is a complex number - '
                         'two (real and imaginary) signed integers.',
-                        (self.n_chans // self.n_xengs, self.n_bls, 2), np.int32)
+                        (self.n_chans // self.n_xengs, self.n_bls, 2), np.dtype('>i4'))
         for ig, tx in zip(self.tx_ig, self.tx):
             tx.send_heap(ig.get_heap())
 
@@ -111,7 +111,7 @@ class TestReceiver(asynctest.TestCase):
         xeng_raw = np.random.uniform(
             -1000, 1000,
             size=(n_frames, self.n_xengs, self.n_chans // self.n_xengs, self.n_bls, 2))
-        xeng_raw = xeng_raw.astype(np.int32)
+        xeng_raw = xeng_raw.astype('>i4')
         interval = self.cbf_attr['ticks_between_spectra'] * self.cbf_attr['n_accs']
         indices = np.arange(n_frames, dtype=np.uint64)
         timestamps = indices * interval + 1234567890123
