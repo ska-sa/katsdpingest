@@ -283,8 +283,8 @@ class Receiver:
         #   - active frames
         #   - complete frames queue (1)
         #   - frame being processed by ingest_session (which could be several, depending on
-        #     latency of the pipeline, but assume 3 to be on the safe side)
-        memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
+        #     latency of the pipeline, but assume 4 to be on the safe side)
+        memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 6)
         stream = spead2.recv.asyncio.Stream(
             spead2.ThreadPool(),
             max_heaps=max_heaps,
