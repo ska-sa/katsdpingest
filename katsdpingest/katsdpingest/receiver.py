@@ -283,8 +283,8 @@ class Receiver:
         #   - active frames
         #   - complete frames queue (1)
         #   - frame being processed by ingest_session (which could be several, depending on
-        #     latency of the pipeline, but assume 3 to be on the safe side)
-        memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 5)
+        #     latency of the pipeline, but assume 4 to be on the safe side)
+        memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 6)
         stream = spead2.recv.asyncio.Stream(
             spead2.ThreadPool(),
             max_heaps=max_heaps,
@@ -375,7 +375,10 @@ class Receiver:
                     return 'no-descriptor'
                 else:
                     try:
-                        updated = self._ig_cbf.update(heap)
+                        # We suppress the conversion to little endian. The data
+                        # gets copied later anyway and numpy will do the endian
+                        # swapping then without an extraneous copy.
+                        updated = self._ig_cbf.update(heap, new_order='|')
                     except ValueError:
                         _logger.warning('Exception updating item group from heap', exc_info=True)
                         return 'bad-heap'

@@ -1279,6 +1279,7 @@ class CBFIngest:
                     vis_in[dest_range.asslice()] = 0
                 else:
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]
+            del frame      # Free the memory back to the frame pool as soon as possible
 
             # Transfer data to the device
             events = await input_a.wait()
@@ -1412,6 +1413,7 @@ class CBFIngest:
             logger.debug(
                 "Captured CBF frame with timestamp %i (process_time: %.2f, index: %i)",
                 current_ts, tt, frame.idx)
+            del frame       # Frees memory back to the memory pool
             # Clear completed processing, so that any related exceptions are
             # thrown as soon as possible.
             self.jobs.clean()
