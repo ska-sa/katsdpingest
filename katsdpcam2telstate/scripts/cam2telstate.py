@@ -169,6 +169,13 @@ SENSORS = [
     # SDP proxy sensors
     Sensor('${sdp}_spmc_version_list', immutable=True),
     # CBF sensors that are instrument-specific
+    Sensor('${instrument}_compile_date_feng', immutable=True),
+    # An instrument with combined X/B engines has only compile_date_xeng;
+    # one with B engines only has compile_date_beng.
+    Sensor('${instrument}_compile_date_xeng', immutable=True, ignore_missing=True),
+    Sensor('${instrument}_compile_date_beng', immutable=True, ignore_missing=True),
+    Sensor('${instrument}_compile_date_corr2', immutable=True),
+    Sensor('${instrument}_corr2_version', immutable=True),
     Sensor('${instrument}_adc_sample_rate', immutable=True),
     Sensor('${instrument}_n_inputs', immutable=True),
     Sensor('${instrument}_scale_factor_timestamp', immutable=True),
