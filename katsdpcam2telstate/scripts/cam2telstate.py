@@ -197,11 +197,18 @@ SENSORS = [
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_centre_frequency',
            sdp_name='${sub_stream.cbf.antenna_channelised_voltage}_center_freq', immutable=True),
+    # TODO: all the inputn sensors are currently marked ignore_missing=True
+    # because they're substituted with both the input number and input label,
+    # to support multiple versions of CBF. Once CBF have settled on one, remove
+    # it again.
     # TODO: need to figure out how to deal with multi-stage FFT instruments
     Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_fft0_shift',
-           sdp_name='${stream.cbf.antenna_channelised_voltage}_fft_shift'),
-    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay', convert=np.safe_eval),
-    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_eq', convert=np.safe_eval),
+           sdp_name='${stream.cbf.antenna_channelised_voltage}_fft_shift',
+           ignore_missing=True),
+    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay',
+           ignore_missing=True, convert=np.safe_eval),
+    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_eq',
+           ignore_missing=True, convert=np.safe_eval),
     # Subarray sensors
     Sensor('${subarray}_config_label', immutable=True),
     Sensor('${subarray}_band', immutable=True),
@@ -349,7 +356,10 @@ class Client:
 
         cam_prefix = self._cbf_name
         for (number, name) in enumerate(input_labels):
+            # input{} is the old version, input name is the new version. For
+            # now try with both and one of them won't exist.
             substitutions['inputn'].append(('input{}'.format(number), [name]))
+            substitutions['inputn'].append((name, [name]))
         # Add the per instrument specific sensors for every instrument we know about
         for instrument in self._instruments:
             cam_instrument = "{}_{}".format(cam_prefix, instrument)
