@@ -62,8 +62,7 @@ class Sensor:
         it in telescope state.
     ignore_missing : bool, optional
         If true, don't report an error if the sensor isn't present. This is
-        used for sensors that only exist in RTS but not MeerKAT, or vice
-        versa.
+        used for sensors that only exist in some CBF systems but not all.
     """
     def __init__(self, cam_name: str, sdp_name: Union[None, str, List[str]] = None,
                  sampling_strategy_and_params: str = 'event',
@@ -184,10 +183,7 @@ SENSORS = [
     Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_source_indices',
            immutable=True, convert=np.safe_eval),
-    Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight',
-           ignore_missing=True),   # CBF-CAM ICD v5 - remove in future
-    Sensor('${stream.cbf.tied_array_channelised_voltage}_weight',
-           ignore_missing=True, convert=np.safe_eval),   # CBF-CAM ICD v6 (draft)
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_weight', convert=np.safe_eval),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
     Sensor('${stream.cbf.antenna_channelised_voltage}_n_samples_between_spectra',
