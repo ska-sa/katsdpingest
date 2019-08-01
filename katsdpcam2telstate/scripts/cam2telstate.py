@@ -62,8 +62,7 @@ class Sensor:
         it in telescope state.
     ignore_missing : bool, optional
         If true, don't report an error if the sensor isn't present. This is
-        used for sensors that only exist in RTS but not MeerKAT, or vice
-        versa.
+        used for sensors that only exist in some CBF systems but not all.
     """
     def __init__(self, cam_name: str, sdp_name: Union[None, str, List[str]] = None,
                  sampling_strategy_and_params: str = 'event',
@@ -184,10 +183,7 @@ SENSORS = [
     Sensor('${sub_stream.cbf.tied_array_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_source_indices',
            immutable=True, convert=np.safe_eval),
-    Sensor('${stream.cbf.tied_array_channelised_voltage.inputn}_weight',
-           ignore_missing=True),   # CBF-CAM ICD v5 - remove in future
-    Sensor('${stream.cbf.tied_array_channelised_voltage}_weight',
-           ignore_missing=True, convert=np.safe_eval),   # CBF-CAM ICD v6 (draft)
+    Sensor('${stream.cbf.tied_array_channelised_voltage}_weight', convert=np.safe_eval),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_n_chans_per_substream', immutable=True),
     Sensor('${stream.cbf.tied_array_channelised_voltage}_spectra_per_heap', immutable=True),
     Sensor('${stream.cbf.antenna_channelised_voltage}_n_samples_between_spectra',
@@ -197,11 +193,18 @@ SENSORS = [
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_bandwidth', immutable=True),
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_centre_frequency',
            sdp_name='${sub_stream.cbf.antenna_channelised_voltage}_center_freq', immutable=True),
+    # TODO: all the inputn sensors are currently marked ignore_missing=True
+    # because they're substituted with both the input number and input label,
+    # to support multiple versions of CBF. Once CBF have settled on one, remove
+    # it again.
     # TODO: need to figure out how to deal with multi-stage FFT instruments
     Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_fft0_shift',
-           sdp_name='${stream.cbf.antenna_channelised_voltage}_fft_shift'),
-    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay', convert=np.safe_eval),
-    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_eq', convert=np.safe_eval),
+           sdp_name='${stream.cbf.antenna_channelised_voltage}_fft_shift',
+           ignore_missing=True),
+    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_delay',
+           ignore_missing=True, convert=np.safe_eval),
+    Sensor('${stream.cbf.antenna_channelised_voltage}_${inputn}_eq',
+           ignore_missing=True, convert=np.safe_eval),
     # Subarray sensors
     Sensor('${subarray}_config_label', immutable=True),
     Sensor('${subarray}_band', immutable=True),
@@ -349,7 +352,10 @@ class Client:
 
         cam_prefix = self._cbf_name
         for (number, name) in enumerate(input_labels):
+            # input{} is the old version, input name is the new version. For
+            # now try with both and one of them won't exist.
             substitutions['inputn'].append(('input{}'.format(number), [name]))
+            substitutions['inputn'].append((name, [name]))
         # Add the per instrument specific sensors for every instrument we know about
         for instrument in self._instruments:
             cam_instrument = "{}_{}".format(cam_prefix, instrument)
