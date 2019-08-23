@@ -175,6 +175,8 @@ SENSORS = [
     Sensor('${instrument}_compile_date_xeng', immutable=True, ignore_missing=True),
     Sensor('${instrument}_compile_date_beng', immutable=True, ignore_missing=True),
     Sensor('${instrument}_compile_date_corr2', immutable=True),
+    Sensor('${instrument}_md5_bitstream_feng', immutable=True),
+    Sensor('${instrument}_md5_bitstream_xeng', immutable=True),
     Sensor('${instrument}_corr2_version', immutable=True),
     Sensor('${instrument}_adc_sample_rate', immutable=True),
     Sensor('${instrument}_n_inputs', immutable=True),
