@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Attributes that are required for data to be correctly ingested
 CBF_CRITICAL_ATTRS = frozenset([
     'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
-    'bandwidth', 'center_freq',
+    'bandwidth', 'center_freq', 'input_labels',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
 
 
@@ -1197,32 +1197,64 @@ class CBFIngest:
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    def _set_baseline_flags(self, baseline_flags: np.ndarray, timestamp: float) -> None:
-        """Query telstate for per-baseline flags to set.
+    def _set_external_flags(self, baseline_flags: np.ndarray, channel_flags: np.ndarray,
+                            timestamp: float) -> None:
+        """Query telstate for per-baseline flags and per-channel flags to set.
 
         The last value set prior to the end of the dump is used.
         """
+        def sensor_value(telstate, name):
+            value = None
+            if telstate is None:
+                return None
+            if name not in cache:
+                try:
+                    values = telstate.get_range(name, et=end_time)
+                    value = values[-1][0]     # Last entry, value element of pair
+                except (KeyError, IndexError):
+                    pass
+                except (ValueError, TypeError):
+                    logger.warn('Error loading %s from telstate, using a default', exc_info=True)
+                cache[name] = value
+                return value
+            else:
+                return cache[name]
+
+        cache = {}   # type: Dict[str, Any]
+        static_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('static'))
+        cam_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('cam'))
         end_time = timestamp + self.cbf_attr['int_time']
-        if self.telstate is None:
-            baseline_flags.fill(0)
-            return
-        cache = {}   # type: Dict[str, bool]
+
+        channel_slice = self.channel_ranges.input.asslice()
+        channel_mask = sensor_value(self.telstate_cbf, 'channel_mask')
+        if channel_mask is not None:
+            channel_flags[:] = channel_mask[channel_slice] * static_flag
+        else:
+            channel_flags.fill(0)
+        channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
+        if channel_data_suspect is not None:
+            channel_flags |= channel_data_suspect[channel_slice] * cam_flag
+
         baselines = self.bls_ordering.sdp_bls_ordering
-        cam_flag = 1 << sigproc.IngestTemplate.flag_names.index('cam')
+        input_labels = self.cbf_attr['input_labels']
+        input_suspect_sensor = sensor_value(
+            self.telstate_cbf, 'input_data_suspect')
+        if input_suspect_sensor is not None:
+            input_suspect = {label: input_suspect_sensor[i] for i, label in enumerate(input_labels)}
+        else:
+            input_suspect = {}
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
             a = baseline[0][:-1]
             b = baseline[1][:-1]
+            flagged = False
             for antenna in (a, b):
-                if antenna not in cache:
-                    sensor_name = '{}_data_suspect'.format(antenna)
-                    try:
-                        values = self.telstate.get_range(sensor_name, et=end_time)
-                        value = values[-1][0]     # Last entry, value element of pair
-                    except (KeyError, IndexError):
-                        value = False
-                    cache[antenna] = value
-            baseline_flags[i] = cam_flag if cache[a] or cache[b] else 0
+                if sensor_value(self.telstate, '{}_data_suspect'.format(antenna)):
+                    flagged = True
+            for input_ in baseline:
+                if input_suspect.get(input_):
+                    flagged = True
+            baseline_flags[i] = cam_flag if flagged else 0
 
     async def _frame_job(
             self,
@@ -1253,18 +1285,7 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            try:
-                channel_mask = self.telstate_cbf['channel_mask']
-                channel_mask = channel_mask[self.channel_ranges.input.asslice()]
-                static_flag = 1 << sigproc.IngestTemplate.flag_names.index('static')
-                channel_flags[:] = channel_mask * np.uint8(static_flag)
-            except KeyError:
-                channel_flags.fill(0)
-            except (ValueError, TypeError):
-                # Could happen if the telstate key has the wrong shape or type
-                logger.warn('Error loading channel flags from telstate', exc_info=True)
-                channel_flags.fill(0)
-            self._set_baseline_flags(baseline_flags, frame.timestamp)
+            self._set_external_flags(baseline_flags, channel_flags, frame.timestamp)
             data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
