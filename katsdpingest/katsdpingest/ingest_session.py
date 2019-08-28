@@ -1214,7 +1214,8 @@ class CBFIngest:
                 except (KeyError, IndexError):
                     pass
                 except (ValueError, TypeError):
-                    logger.warn('Error loading %s from telstate, using a default', exc_info=True)
+                    logger.warning('Error loading %s from telstate, using a default',
+                                   name, exc_info=True)
                 cache[name] = value
                 return value
             else:
