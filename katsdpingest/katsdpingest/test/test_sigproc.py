@@ -439,7 +439,8 @@ class TestIngestOperation:
             ('ingest:flagger', {'class': 'katsdpsigproc.rfi.device.FlaggerDevice'}),
             ('ingest:flagger:background', {
                 'baselines': 192, 'channels': 128,
-                'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice', 'width': 13
+                'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice',
+                'use_flags': 'NONE', 'width': 13
             }),
             ('ingest:flagger:transpose_deviations', {
                 'class': 'katsdpsigproc.transpose.Transpose',

@@ -1191,8 +1191,8 @@ class IngestOperation(accel.OperationSequence):
         assert 'flags_t' in self.flagger.slots
         compounds = {
             'vis_in':         ['prepare:vis_in'],
-            'channel_flags':  ['flagger:channel_flags', 'accum:channel_flags',
-                               'count_flags:channel_flags'],
+            'channel_flags':  ['flagger:input_flags',
+                               'accum:channel_flags', 'count_flags:channel_flags'],
             'baseline_flags': ['accum:baseline_flags', 'count_flags:baseline_flags'],
             'permutation':    ['prepare:permutation'],
             'vis_t':          ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
