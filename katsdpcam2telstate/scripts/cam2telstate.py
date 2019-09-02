@@ -26,7 +26,7 @@ def comma_split(value: str) -> List[str]:
     return value.split(',')
 
 
-def convert_bitmask(value: str) -> np.ndarray:
+def convert_bitmask(value: object) -> np.ndarray:
     """Converts a string of 1's and 0's to a numpy array of bools"""
     if not isinstance(value, str) or not re.match('^[01]*$', value):
         return None
@@ -34,7 +34,7 @@ def convert_bitmask(value: str) -> np.ndarray:
         return np.array([c == '1' for c in value])
 
 
-def convert_channel_mask(value: str) -> np.ndarray:
+def convert_channel_mask(value: object) -> np.ndarray:
     """Converts the channel-mask sensor to a numpy array.
 
     This sensor has two possible formats:
