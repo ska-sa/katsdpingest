@@ -6,6 +6,7 @@ certifi                      # via tornado
 decorator                    # via aiokatcp
 future                       # via katportalclient
 hiredis                      # via katsdptelstate
+katportalclient
 katversion
 msgpack                      # via katsdptelstate
 netifaces                    # via katsdpservices
@@ -18,4 +19,3 @@ tornado==6.0.2
 ujson==1.35                  # via katportalclient
 katsdpservices @ git+ssh://git@github.com/ska-sa/katsdpservices
 katsdptelstate @ git+ssh://git@github.com/ska-sa/katsdptelstate
-katportalclient @ git+ssh://git@github.com/ska-sa/katportalclient
