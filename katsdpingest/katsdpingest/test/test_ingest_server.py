@@ -29,8 +29,8 @@ from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
 
 
-STATIC_FLAG = 1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('static')
-CAM_FLAG = 1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('cam')
+STATIC_FLAG = np.uint8(1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('static'))
+CAM_FLAG = np.uint8(1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('cam'))
 
 
 class MockReceiver:
@@ -164,6 +164,12 @@ class TestIngestDeviceServer(asynctest.TestCase):
         channel_mask[900] = True
         return channel_mask
 
+    def fake_channel_data_suspect(self):
+        bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
+        bad[300] = True
+        bad[650:750] = True
+        return bad
+
     @device_test
     async def setUp(self, context, command_queue):
         done_future = asyncio.Future(loop=self.loop)
@@ -206,14 +212,20 @@ class TestIngestDeviceServer(asynctest.TestCase):
             name='sdp.ingest.1'
         )
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
-        self.channel_mask = self.fake_channel_mask()
         # Put them in at the beginning of time, to ensure they apply to every dump
         self._telstate['i0_baseline_correlation_products_src_streams'] = \
             ['i0_antenna_channelised_voltage']
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
-        self._telstate.add('i0_antenna_channelised_voltage_channel_mask', self.channel_mask, ts=0)
+        self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
+                           self.fake_channel_mask(), ts=0)
         self._telstate.add('m090_data_suspect', False, ts=0)
         self._telstate.add('m091_data_suspect', True, ts=0)
+        input_data_suspect = np.zeros(len(self.cbf_attr['input_labels']), np.bool_)
+        input_data_suspect[1] = True     # Corresponds to m090v
+        self._telstate.add('i0_antenna_channelised_voltage_input_data_suspect',
+                           input_data_suspect, ts=0)
+        self._telstate.add('i0_baseline_correlation_products_channel_data_suspect',
+                           self.fake_channel_data_suspect(), ts=0)
         self.channel_ranges = ChannelRanges(
             user_args.servers, user_args.server_id - 1,
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
@@ -306,10 +318,16 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self._telstate['sdp_l0_bls_ordering'],
             self.cbf_attr['bls_ordering'][inv_permutation])
         flags = np.empty(vis.shape, np.uint8)
-        flags[:] = self.channel_mask[np.newaxis, :, np.newaxis] * np.uint8(STATIC_FLAG)
+        channel_mask = self.fake_channel_mask()[np.newaxis, :, np.newaxis]
+        channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
+        flags[:] = channel_mask * STATIC_FLAG
+        flags |= channel_data_suspect * CAM_FLAG
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):
                 # data suspect sensor is True
+                flags[:, :, i] |= CAM_FLAG
+            if a == 'm090v' or b == 'm090v':
+                # input_data_suspect is True
                 flags[:, :, i] |= CAM_FLAG
         return vis, flags, timestamps
 

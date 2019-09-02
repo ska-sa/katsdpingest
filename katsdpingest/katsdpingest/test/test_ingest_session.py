@@ -26,15 +26,18 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
     cbf_attr['int_time'] = (cbf_attr['n_accs'] * cbf_attr['ticks_between_spectra']
                             / cbf_attr['scale_factor_timestamp'])
     bls_ordering = []
+    input_labels = []
     antennas = ['m{:03}'.format(90 + i) for i in range(n_antennas)]
-    # This ordering matches what's currently produced by CBF
     for ib, b in enumerate(antennas):
         for a in antennas[:ib+1]:
             bls_ordering.append((a + 'h', b + 'h'))
             bls_ordering.append((a + 'v', b + 'v'))
             bls_ordering.append((a + 'h', b + 'v'))
             bls_ordering.append((a + 'v', b + 'h'))
+        input_labels.append(b + 'h')
+        input_labels.append(b + 'v')
     cbf_attr['bls_ordering'] = np.array(bls_ordering)
+    cbf_attr['input_labels'] = input_labels
     return cbf_attr
 
 
@@ -48,13 +51,14 @@ class TestGetCbfAttr:
             'i0_antenna_channelised_voltage_n_chans': 262144,  # Different, to check precedence
             'i0_antenna_channelised_voltage_center_freq': 1284000000.0,
             'i0_antenna_channelised_voltage_ticks_between_spectra': 8192,
+            'i0_antenna_channelised_voltage_input_labels': ['m001h', 'm001v'],
             'i1_baseline_correlation_products_src_streams': ['i0_antenna_channelised_voltage'],
             'i1_baseline_correlation_products_instrument_dev_name': 'i1',
             'i1_baseline_correlation_products_int_time': 0.499,
             'i1_baseline_correlation_products_n_chans': 4096,
             'i1_baseline_correlation_products_n_chans_per_substream': 256,
             'i1_baseline_correlation_products_n_accs': 104448,
-            'i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')]
+            'i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')],
         }
         self.telstate = TelescopeState()
         self.telstate.clear()
@@ -65,6 +69,7 @@ class TestGetCbfAttr:
             'n_chans_per_substream': 256,
             'n_accs': 104448,
             'bls_ordering': [('m001h', 'm001h')],
+            'input_labels': ['m001h', 'm001v'],
             'bandwidth': 856000000.0,
             'center_freq': 1284000000.0,
             'sync_time': 1234567890.0,
