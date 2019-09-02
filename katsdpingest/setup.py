@@ -25,6 +25,7 @@ setup(
         'katsdpsigproc',
         'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate',
+        'katpoint',
         'katdal'
     ],
     extras_require={

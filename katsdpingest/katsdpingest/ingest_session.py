@@ -24,6 +24,7 @@ import katsdpsigproc.rfi.device as rfi
 import katsdpservices
 
 from katdal import SpectralWindow
+import katpoint
 import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
 
@@ -527,6 +528,9 @@ class CBFIngest:
         Input stream attributes, as returned by :func:`get_cbf_attr`
     bls_ordering : :class:`BaselineOrdering`
         Baseline ordering and related tables
+    bls_channel_mask_idx : :class:`np.ndarray`, 1D
+        Index into list of channel masks for each baseline. The baselines
+        correspond to `bls_ordering.sdp_bls_ordering`.
     telstate : :class:`katsdptelstate.TelescopeState`
         Global view of telescope state
     l0_names : list of str
@@ -611,6 +615,20 @@ class CBFIngest:
         if not len(self.bls_ordering.sdp_bls_ordering):
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 self.cbf_attr['bls_ordering'], antenna_mask))
+
+        # Determine which channel mask to use for each baseline
+        thresholds = np.array(self.telstate_cbf.get('channel_mask_max_baseline_lengths', []))
+        bls = self.bls_ordering.sdp_bls_ordering
+        antenna_names = set(input_name[:-1] for input_name in bls.flat)
+        antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
+                    for name in antenna_names]
+        ref = antennas[0].array_reference_antenna()
+        # Turn each antenna into a location East/North/Up of the reference
+        locations = {antenna.name: np.array(ref.baseline_toward(antenna))
+                     for antenna in antennas}
+        lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
+                            for (a, b) in bls])
+        self.bls_channel_mask_idx = np.searchsorted(thresholds, lengths, 'right').astype(np.int32)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
@@ -1229,7 +1247,8 @@ class CBFIngest:
         channel_slice = self.channel_ranges.input.asslice()
         channel_mask = sensor_value(self.telstate_cbf, 'channel_mask')
         if channel_mask is not None:
-            flags_in[:] = channel_mask[channel_slice, np.newaxis] * static_flag
+            channel_mask = np.atleast_2d(channel_mask)
+            flags_in[:] = channel_mask[self.bls_channel_mask_idx, channel_slice].T * static_flag
         else:
             flags_in.fill(0)
         channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')

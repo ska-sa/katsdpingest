@@ -158,10 +158,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
         return data, timestamps
 
     def fake_channel_mask(self):
-        channel_mask = np.zeros(self.cbf_attr['n_chans'], np.bool_)
-        channel_mask[464] = True
-        channel_mask[700:800] = True
-        channel_mask[900] = True
+        channel_mask = np.zeros((2, self.cbf_attr['n_chans']), np.bool_)
+        channel_mask[0, 464] = True
+        channel_mask[0, 700:800] = True
+        channel_mask[0, 900] = True
+        channel_mask[1, 500] = True
+        channel_mask[1, 200:330] = True
+        channel_mask[1, 900:905] = True
         return channel_mask
 
     def fake_channel_data_suspect(self):
@@ -192,7 +195,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             l0_continuum_name='sdp_l0_continuum',
             output_int_time=4.0,
             sd_int_time=4.0,
-            antenna_mask=['m090', 'm091', 'm092'],
+            antenna_mask=['m090', 'm091', 'm093'],
             output_channels=Range(464, 1744),
             sd_output_channels=Range(640, 1664),
             continuum_factor=16,
@@ -218,6 +221,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
                            self.fake_channel_mask(), ts=0)
+        self._telstate['i0_antenna_channelised_voltage_channel_mask_max_baseline_lengths'] = \
+            [1500.0]
         self._telstate.add('m090_data_suspect', False, ts=0)
         self._telstate.add('m091_data_suspect', True, ts=0)
         input_data_suspect = np.zeros(len(self.cbf_attr['input_labels']), np.bool_)
@@ -226,6 +231,12 @@ class TestIngestDeviceServer(asynctest.TestCase):
                            input_data_suspect, ts=0)
         self._telstate.add('i0_baseline_correlation_products_channel_data_suspect',
                            self.fake_channel_data_suspect(), ts=0)
+        # These correspond to three core and one outlying MeerKAT antennas,
+        # so that baselines to m093 are long while the others are short.
+        self._telstate['m090_observer'] = 'm090, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -8.258 -207.289 1.2075 5874.184 5875.444, -0:00:39.7 0 -0:04:04.4 -0:04:53.0 0:00:57.8 -0:00:13.9 0:13:45.2 0:00:59.8, 1.14'     # noqa: E501
+        self._telstate['m091_observer'] = 'm091, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14'      # noqa: E501
+        self._telstate['m092_observer'] = 'm002, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -32.1085 -224.2365 1.248 5871.207 5872.205, 0:40:20.2 0 -0:02:41.9 -0:03:46.8 0:00:09.4 -0:00:01.1 0:03:04.7, 1.14'              # noqa: E501
+        self._telstate['m093_observer'] = 'm093, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -1440.6235 -2503.7705 14.288 5932.94 5934.732, -0:15:23.0 0 0:00:04.6 -0:03:30.4 0:01:12.2 0:00:37.5 0:00:15.6 0:01:11.8, 1.14'  # noqa: E501
         self.channel_ranges = ChannelRanges(
             user_args.servers, user_args.server_id - 1,
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
@@ -318,10 +329,9 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self._telstate['sdp_l0_bls_ordering'],
             self.cbf_attr['bls_ordering'][inv_permutation])
         flags = np.empty(vis.shape, np.uint8)
-        channel_mask = self.fake_channel_mask()[np.newaxis, :, np.newaxis]
+        channel_mask = self.fake_channel_mask()
         channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
-        flags[:] = channel_mask * STATIC_FLAG
-        flags |= channel_data_suspect * CAM_FLAG
+        flags[:] = channel_data_suspect * CAM_FLAG
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):
                 # data suspect sensor is True
@@ -329,6 +339,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
             if a == 'm090v' or b == 'm090v':
                 # input_data_suspect is True
                 flags[:, :, i] |= CAM_FLAG
+            if a.startswith('m093') ^ b.startswith('m093'):
+                # Long baseline
+                flags[:, :, i] |= channel_mask[1] * STATIC_FLAG
+            else:
+                # Short baseline
+                print(flags.shape, channel_mask.shape)
+                flags[:, :, i] |= channel_mask[0] * STATIC_FLAG
         return vis, flags, timestamps
 
     def _channel_average(self, vis, factor):
