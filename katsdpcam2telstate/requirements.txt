@@ -6,16 +6,16 @@ certifi                      # via tornado
 decorator                    # via aiokatcp
 future                       # via katportalclient
 hiredis                      # via katsdptelstate
+katportalclient
 katversion
 msgpack                      # via katsdptelstate
 netifaces                    # via katsdpservices
 numpy
 pygelf                       # via katsdpservices
-omnijson==0.1.2              # via katportalclient
+omnijson                     # via katportalclient
 redis                        # via katsdptelstate
 terminaltables               # via aiomonitor
 tornado==6.0.2
-ujson==1.35                  # via katportalclient
+ujson                        # via katportalclient
 katsdpservices @ git+ssh://git@github.com/ska-sa/katsdpservices
 katsdptelstate @ git+ssh://git@github.com/ska-sa/katsdptelstate
-katportalclient @ git+ssh://git@github.com/ska-sa/katportalclient
