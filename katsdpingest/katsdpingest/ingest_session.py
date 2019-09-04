@@ -531,6 +531,8 @@ class CBFIngest:
     bls_channel_mask_idx : :class:`np.ndarray`, 1D
         Index into list of channel masks for each baseline. The baselines
         correspond to `bls_ordering.sdp_bls_ordering`.
+    n_channel_masks : int
+        Number of channel masks indexed by bls_channel_mask_idx
     telstate : :class:`katsdptelstate.TelescopeState`
         Global view of telescope state
     l0_names : list of str
@@ -628,7 +630,8 @@ class CBFIngest:
                      for antenna in antennas}
         lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
                             for (a, b) in bls])
-        self.bls_channel_mask_idx = np.searchsorted(thresholds, lengths, 'right').astype(np.int32)
+        self.bls_channel_mask_idx = np.searchsorted(thresholds, lengths, 'right').astype(np.uint32)
+        self.n_channel_masks = len(thresholds) + 1
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
@@ -673,6 +676,7 @@ class CBFIngest:
             self.channel_ranges.sd_output.relative_to(self.channel_ranges.input),
             len(self.cbf_attr['bls_ordering']),
             len(self.bls_ordering.sdp_bls_ordering),
+            self.n_channel_masks,
             self.channel_ranges.cont_factor,
             self.channel_ranges.sd_cont_factor,
             self.bls_ordering.percentile_ranges,
@@ -681,6 +685,7 @@ class CBFIngest:
         self.proc.ensure_all_bound()
         self.proc.buffer('permutation').set(
             self.command_queue, np.asarray(self.bls_ordering.permutation, dtype=np.int16))
+        self.proc.buffer('channel_mask_idx').set(self.command_queue, self.bls_channel_mask_idx)
         self.proc.start_sum()
         self.proc.start_sd_sum()
         logger.debug("\nProcessing Blocks\n=================\n")
@@ -691,7 +696,7 @@ class CBFIngest:
         self.jobs = resource.JobQueue()
         self.proc_resource = resource.Resource(self.proc)
         self.input_resource = _ResourceSet(
-            self.proc, ['vis_in', 'flags_in', 'baseline_flags'], 2)
+            self.proc, ['vis_in', 'channel_mask', 'baseline_flags'], 2)
         self.output_resource = _ResourceSet(
             self.proc, [prefix + '_' + suffix
                         for prefix in self.tx
@@ -1215,7 +1220,7 @@ class CBFIngest:
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    def _set_external_flags(self, baseline_flags: np.ndarray, flags_in: np.ndarray,
+    def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
                             timestamp: float) -> None:
         """Query telstate for per-baseline flags and per-channel flags to set.
 
@@ -1243,17 +1248,17 @@ class CBFIngest:
         static_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('static'))
         cam_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('cam'))
         end_time = timestamp + self.cbf_attr['int_time']
-
         channel_slice = self.channel_ranges.input.asslice()
-        channel_mask = sensor_value(self.telstate_cbf, 'channel_mask')
-        if channel_mask is not None:
-            channel_mask = np.atleast_2d(channel_mask)
-            flags_in[:] = channel_mask[self.bls_channel_mask_idx, channel_slice].T * static_flag
+
+        channel_mask_sensor = sensor_value(self.telstate_cbf, 'channel_mask')
+        if channel_mask_sensor is not None:
+            channel_mask[:] = channel_mask_sensor[:, channel_slice] * static_flag
         else:
-            flags_in.fill(0)
+            channel_mask.fill(0)
+
         channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
         if channel_data_suspect is not None:
-            flags_in |= channel_data_suspect[channel_slice, np.newaxis] * cam_flag
+            channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
@@ -1285,8 +1290,8 @@ class CBFIngest:
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
-            flags_in = host_input['flags_in']
             baseline_flags = host_input['baseline_flags']
+            channel_mask = host_input['channel_mask']
             # Load data
             await host_input_a.wait_events()
             # First channel of the current item
@@ -1305,7 +1310,7 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            self._set_external_flags(baseline_flags, flags_in, frame.timestamp)
+            self._set_external_flags(baseline_flags, channel_mask, frame.timestamp)
             data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
@@ -1316,7 +1321,7 @@ class CBFIngest:
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
                 if item is None:
-                    flags_in[dest_range.asslice(), :] = data_lost_flag
+                    channel_mask[:, dest_range.asslice()] = data_lost_flag
                     vis_in[dest_range.asslice()] = 0
                 else:
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]
