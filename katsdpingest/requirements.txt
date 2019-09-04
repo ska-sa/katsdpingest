@@ -44,7 +44,7 @@ toolz                     # via dask
 urllib3                   # via requests
 # TODO: eventually switch to using a release of katdal, once the enhanced
 # SpectralWindow class has shipped.
-git+ssh://git@github.com/ska-sa/katdal#egg=katdal
-git+ssh://git@github.com/ska-sa/katsdpsigproc#egg=katsdpsigproc
-git+ssh://git@github.com/ska-sa/katsdpservices#egg=katsdpservices
-git+ssh://git@github.com/ska-sa/katsdptelstate#egg=katsdptelstate
+katdal @ git+https://git@github.com/ska-sa/katdal
+katsdpsigproc @ git+https://git@github.com/ska-sa/katsdpsigproc
+katsdpservices @ git+https://git@github.com/ska-sa/katsdpservices
+katsdptelstate @ git+https://git@github.com/ska-sa/katsdptelstate
