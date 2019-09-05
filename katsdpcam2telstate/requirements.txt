@@ -17,5 +17,5 @@ redis                        # via katsdptelstate
 terminaltables               # via aiomonitor
 tornado==6.0.2
 ujson                        # via katportalclient
-katsdpservices @ git+https://git@github.com/ska-sa/katsdpservices
-katsdptelstate @ git+https://git@github.com/ska-sa/katsdptelstate
+katsdpservices @ git+https://github.com/ska-sa/katsdpservices
+katsdptelstate @ git+https://github.com/ska-sa/katsdptelstate
