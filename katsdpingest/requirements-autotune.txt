@@ -1,11 +1,11 @@
 backports.ssl-match-hostname    # via docker
 certifi                   # via requests
-chardet==3.0.4            # via requests
-docker-pycreds==0.2.3     # via docker
-docker==3.3.0
-idna==2.6                 # via requests
+chardet                   # via requests
+docker-pycreds==0.4.0     # via docker
+docker==4.0.2
+idna                      # via requests
 ipaddress                 # via docker
-requests==2.18.4          # via docker
+requests                  # via docker
 six                       # via docker, docker-pycreds
-urllib3==1.22             # via requests
-websocket-client==0.47.0  # via docker
+urllib3                   # via requests
+websocket-client==0.56.0  # via docker
