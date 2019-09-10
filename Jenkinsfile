@@ -38,15 +38,6 @@ if (!katsdp.isAborted()) {
                 }
             }
         }
-
-        stage('digitiser_capture') {
-            katsdp.simpleNode {
-                deleteDir()
-                katsdp.unpackGit()
-                katsdp.unpackKatsdpdockerbase()
-                katsdp.makeDocker('katsdpingest_digitiser_capture', 'git/digitiser_capture')
-            }
-        }
     }
 }
 katsdp.mail('bmerry@ska.ac.za')
