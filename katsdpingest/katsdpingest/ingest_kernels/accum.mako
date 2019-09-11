@@ -27,8 +27,6 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
     const GLOBAL float2 * RESTRICT in_vis,
     const GLOBAL float * RESTRICT in_weights,
     const GLOBAL unsigned char * RESTRICT in_flags,
-    const GLOBAL unsigned char * RESTRICT channel_flags,
-    const GLOBAL unsigned char * RESTRICT baseline_flags,
     int out_stride,
     int in_full_stride,
     int in_kept_stride,
@@ -41,16 +39,13 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
 
     transpose_coords_init_simple(&coords);
 
-    // channel_flags use full indexes rather than kept indexes
-    channel_flags += channel_start;
-
     // Load a block of data, for all channels
     <%transpose:transpose_load coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         int full_addr = ${r} * in_full_stride + ${c} + channel_start;
         int kept_addr = ${r} * in_kept_stride + ${c};
         local_vis.arr[${lr}][${lc}] = in_vis[full_addr];
         local_weights.arr[${lr}][${lc}] = in_weights[kept_addr];
-        local_flags.arr[${lr}][${lc}] = in_flags[full_addr] | baseline_flags[${r}];
+        local_flags.arr[${lr}][${lc}] = in_flags[full_addr];
     </%transpose:transpose_load>
 
     BARRIER();
@@ -60,7 +55,6 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void accum(
         float2 vis = local_vis.arr[${lr}][${lc}];
         float weight = local_weights.arr[${lr}][${lc}];
         unsigned int flag = local_flags.arr[${lr}][${lc}];
-        flag |= channel_flags[${r}];
 % if excise:
         if (flag != 0)
             weight *= 5.42101086e-20f;  // 2^-64

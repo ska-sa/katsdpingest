@@ -189,6 +189,133 @@ class Prepare(accel.Operation):
         }
 
 
+class MergeFlagsTemplate:
+    """Template for combining several sources of flags.
+
+    Combines:
+    - Per-baseline flags, provided externally
+    - Per-visibility flags (in channel × baseline shape), used as input to the flagger
+    - Per-visibility flags (in baseline × channel shape), output by the flagger.
+    The result is written back into the last of these.
+
+    Parameters
+    ----------
+    context : |Context|
+        Context for which kernels will be compiled
+    tuning : mapping, optional
+        Kernel tuning parameters; if omitted, will autotune. The possible
+        parameters are
+
+        - block: number of workitems per workgroup in each dimension
+        - vtx, vty: number of elements handled by each workitem, per dimension
+    """
+    autotune_version = 1
+
+    def __init__(self, context, tuning=None):
+        if tuning is None:
+            tuning = self.autotune(context)
+        self.context = context
+        self.block = tuning['block']
+        self.vtx = tuning['vtx']
+        self.vty = tuning['vty']
+        program = accel.build(
+            context, 'ingest_kernels/merge_flags.mako',
+            {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
+            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+        self.kernel = program.get_kernel('merge_flags')
+
+    @classmethod
+    @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
+    def autotune(cls, context):
+        queue = context.create_tuning_command_queue()
+        baselines = 1024
+        channels = 2048
+
+        flags_in = accel.DeviceArray(context, (channels, baselines), np.uint8)
+        flags_out = accel.DeviceArray(context, (baselines, channels), np.uint8)
+        baseline_flags = accel.DeviceArray(context, (baselines,), np.uint8)
+
+        def generate(block, vtx, vty):
+            fn = cls(context, {
+                'block': block,
+                'vtx': vtx,
+                'vty': vty}).instantiate(queue, channels, baselines)
+            fn.bind(flags_in=flags_in, flags_out=flags_out, baseline_flags=baseline_flags)
+            return tune.make_measure(queue, fn)
+        return tune.autotune(
+            generate,
+            block=[8, 16, 32],
+            vtx=[1, 2, 3, 4],
+            vty=[1, 2, 3, 4])
+
+    def instantiate(self, command_queue, channels, baselines):
+        return MergeFlags(self, command_queue, channels, baselines)
+
+
+class MergeFlags(accel.Operation):
+    """Concrete instance of :class:`MergeFlagsTemplate`.
+
+    .. rubric:: Slots
+
+    **flags_in** : channels × baselines, uint8
+        One set of flags to merge
+    **flags_out** : baselines × channels, uint8
+        Another set of flags to merge, and also the output
+    **baseline_flags** : baselines, uint8
+        Per-baseline flags to merge with the others
+
+    Parameters
+    ----------
+    template : :class:`MergeFlagsTemplate`
+        Template containing the code
+    command_queue : |CommandQueue|
+        Command queue for the operation
+    channels : int
+        Number of channels
+    baselines : int
+        Number of baselines
+    """
+    def __init__(self, template, command_queue, channels, baselines):
+        super().__init__(command_queue)
+        self.template = template
+        self.channels = channels
+        self.baselines = baselines
+        tilex = template.block * template.vtx
+        tiley = template.block * template.vty
+        padded_channels = accel.Dimension(channels, tiley)
+        padded_baselines = accel.Dimension(baselines, tilex)
+        self.slots['flags_in'] = accel.IOSlot((padded_channels, padded_baselines), np.uint8)
+        self.slots['flags_out'] = accel.IOSlot((padded_baselines, padded_channels), np.uint8)
+        self.slots['baseline_flags'] = accel.IOSlot((padded_baselines,), np.uint8)
+
+    def _run(self):
+        flags_in = self.buffer('flags_in')
+        flags_out = self.buffer('flags_out')
+        baseline_flags = self.buffer('baseline_flags')
+        block = self.template.block
+        tilex = block * self.template.vtx
+        tiley = block * self.template.vty
+        xblocks = accel.divup(self.baselines, tilex)
+        yblocks = accel.divup(self.channels, tiley)
+        self.command_queue.enqueue_kernel(
+            self.template.kernel,
+            [
+                flags_out.buffer,
+                flags_in.buffer,
+                baseline_flags.buffer,
+                np.int32(flags_out.padded_shape[1]),
+                np.int32(flags_in.padded_shape[1])
+            ],
+            global_size=(xblocks * block, yblocks * block),
+            local_size=(block, block))
+
+    def parameters(self):
+        return {
+            'channels': self.channels,
+            'baselines': self.baselines
+        }
+
+
 class CountFlagsTemplate:
     """Template for counting the number of flags of each type.
 
@@ -206,7 +333,8 @@ class CountFlagsTemplate:
 
         - wgs: number of workitems per workgroup in channel dimension
     """
-    autotune_version = 1
+
+    autotune_version = 2
 
     def __init__(self, context, tuning=None):
         if tuning is None:
@@ -252,10 +380,6 @@ class CountFlags(accel.Operation):
 
     **flags** : baselines × channels, uint8
         Input flags
-    **channel_flags** : channels, uint8
-        Extra flags applied per channel
-    **baseline_flags** : baselines, uint8
-        Extra flags applied per baseline
     **counts** : baselines × 8, uint32
         Number of times each bit is set per baseline. Bits are counted
         from the LSB.
@@ -277,6 +401,7 @@ class CountFlags(accel.Operation):
     mask : int
         Mask of flag bits to count
     """
+
     def __init__(self, template, command_queue, channels, channel_range, baselines, mask=0xff):
         super().__init__(command_queue)
         self.template = template
@@ -286,8 +411,6 @@ class CountFlags(accel.Operation):
         self.mask = mask
         bits = accel.Dimension(8, exact=True)
         self.slots['flags'] = accel.IOSlot((baselines, channels), np.uint8)
-        self.slots['channel_flags'] = accel.IOSlot((channels,), np.uint8)
-        self.slots['baseline_flags'] = accel.IOSlot((baselines,), np.uint8)
         self.slots['counts'] = accel.IOSlot((baselines, bits), np.uint32)
         self.slots['any_counts'] = accel.IOSlot((baselines,), np.uint32)
 
@@ -300,8 +423,6 @@ class CountFlags(accel.Operation):
                 counts.buffer,
                 any_counts.buffer,
                 flags.buffer,
-                self.buffer('channel_flags').buffer,
-                self.buffer('baseline_flags').buffer,
                 np.int32(flags.padded_shape[1]),
                 np.int32(len(self.channel_range)),
                 np.int32(self.channel_range.start),
@@ -344,7 +465,8 @@ class AccumTemplate:
         - block: number of workitems per workgroup in each dimension
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
-    autotune_version = 2
+
+    autotune_version = 3
 
     def __init__(self, context, outputs, unflagged_bit, excise, tuning=None):
         if tuning is None:
@@ -364,7 +486,8 @@ class AccumTemplate:
                 'vty': self.vty,
                 'unflagged_bit': self.unflagged_bit,
                 'excise': self.excise,
-                'outputs': self.outputs},
+                'outputs': self.outputs
+            },
             extra_dirs=[pkg_resources.resource_filename(__name__, '')])
         self.kernel = program.get_kernel('accum')
 
@@ -430,10 +553,6 @@ class Accum(accel.Operation):
         Input weights
     **flags_in** : baselines × channels, uint8
         Input flags: non-zero values cause downweighting by 2^-64
-    **channel_flags** : channels, uint8
-        Predetermined flags per channel
-    **baseline_flags** : baselines, uint8
-        Predetermined flags per baseline
     **vis_outN** : kept-channels × baselines, complex64
         Incremented by weight × visibility
     **weights_outN** : kept-channels × baselines, float32
@@ -480,15 +599,6 @@ class Accum(accel.Operation):
             (padded_baselines, padded_kept_channels), np.float32)
         self.slots['flags_in'] = accel.IOSlot(
             (padded_baselines, padded_channels), np.uint8)
-        # The minimum padded size for channel_flags is tricky because it is
-        # the kept-channels part that needs to be aligned to be a multiple of
-        # tilex.
-        channel_flags_size = max(channels,
-                                 accel.roundup(kept_channels, tilex) + channel_range.start)
-        self.slots['channel_flags'] = accel.IOSlot(
-            (accel.Dimension(channels, min_padded_size=channel_flags_size),), np.uint8)
-        self.slots['baseline_flags'] = accel.IOSlot(
-            (accel.Dimension(baselines, tiley),), np.uint8)
         for i in range(self.template.outputs):
             label = str(i)
             self.slots['vis_out' + label] = accel.IOSlot(
@@ -503,12 +613,12 @@ class Accum(accel.Operation):
         for i in range(self.template.outputs):
             label = str(i)
             buffer_names.extend(['vis_out' + label, 'weights_out' + label, 'flags_out' + label])
-        buffer_names.extend(['vis_in', 'weights_in', 'flags_in', 'channel_flags', 'baseline_flags'])
+        buffer_names.extend(['vis_in', 'weights_in', 'flags_in'])
         buffers = [self.buffer(x) for x in buffer_names]
         args = [x.buffer for x in buffers] + [
             np.int32(buffers[0].padded_shape[1]),
-            np.int32(buffers[-5].padded_shape[1]),
-            np.int32(buffers[-4].padded_shape[1]),
+            np.int32(buffers[-3].padded_shape[1]),
+            np.int32(buffers[-2].padded_shape[1]),
             np.int32(self.channel_range.start)]
 
         kept_channels = len(self.channel_range)
@@ -966,6 +1076,7 @@ class IngestTemplate:
         self.transpose_vis = transpose.TransposeTemplate(
             context, np.complex64, 'float2')
         self.flagger = flagger
+        self.merge_flags = MergeFlagsTemplate(context)
         self.count_flags = CountFlagsTemplate(context)
         # We need a spare bit that won't be present in any actual flags. Since
         # cal RFI detection happens later in the pipeline, it is definitely
@@ -1008,8 +1119,8 @@ class IngestOperation(accel.OperationSequence):
 
     **vis_in** : channels × baselines × 2, int32
         Input visibilities from the correlator
-    **channel_flags** : channels, uint8
-        Predefined per-channel flags
+    **flags_in** : channels × baselines, uint8
+        Predefined per-visibility flags, with post-permutation baseline ordering
     **baseline_flags** : baselines, uint8
         Predefined per-baseline flags, in the post-permutation ordering
     **permutation** : baselines, int16
@@ -1117,6 +1228,8 @@ class IngestOperation(accel.OperationSequence):
             command_queue, (baselines, channels))
         self.flagger = template.flagger.instantiate(
             command_queue, channels, baselines, background_args, noise_est_args, threshold_args)
+        self.merge_flags = template.merge_flags.instantiate(
+            command_queue, channels, baselines)
         self.count_flags = template.count_flags.instantiate(
             command_queue, channels, count_flags_channel_range, baselines,
             0xff - self.template.accum.unflagged_bit)
@@ -1175,6 +1288,7 @@ class IngestOperation(accel.OperationSequence):
             ('zero_sd_spec', self.zero_sd_spec),
             ('transpose_vis', self.transpose_vis),
             ('flagger', self.flagger),
+            ('merge_flags', self.merge_flags),
             ('count_flags', self.count_flags),
             ('accum', self.accum),
             ('finalise', self.finalise),
@@ -1187,20 +1301,21 @@ class IngestOperation(accel.OperationSequence):
             operations.append((name, self.percentiles[i]))
             operations.append((name + '_flags', self.percentiles_flags[i]))
 
-        # TODO: eliminate transposition of flags, which aren't further used
+        # TODO: eliminate final transposition of flags by the flagger, which
+        # aren't further used.
         assert 'flags_t' in self.flagger.slots
         compounds = {
             'vis_in':         ['prepare:vis_in'],
-            'channel_flags':  ['flagger:channel_flags', 'accum:channel_flags',
-                               'count_flags:channel_flags'],
-            'baseline_flags': ['accum:baseline_flags', 'count_flags:baseline_flags'],
+            'flags_in':       ['flagger:input_flags', 'merge_flags:flags_in'],
+            'baseline_flags': ['merge_flags:baseline_flags'],
             'permutation':    ['prepare:permutation'],
             'vis_t':          ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
             'weights':        ['init_weights:data', 'accum:weights_in'],
             'vis_mid':        ['transpose_vis:dest', 'flagger:vis'],
             'deviations':     ['flagger:deviations'],
             'noise':          ['flagger:noise'],
-            'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags'],
+            'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags',
+                               'merge_flags:flags_out'],
             'sd_flag_counts': ['count_flags:counts'],
             'sd_flag_any_counts': ['count_flags:any_counts'],
             'spec_vis':       ['accum:vis_out0', 'zero_spec:vis'],
@@ -1256,6 +1371,7 @@ class IngestOperation(accel.OperationSequence):
         self.init_weights()
         self.transpose_vis()
         self.flagger()
+        self.merge_flags()
         # The per-bit flags are sent to the signal displays, so are
         # accumulated across signal display intervals. The overall flagged
         # count is done at CBF cadence so they're reset here immediately

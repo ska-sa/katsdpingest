@@ -86,6 +86,32 @@ class TestPrepare:
         sigproc.PrepareTemplate(context)
 
 
+class TestMergeFlags:
+    """Test :class:`katsdpingest.sigproc.MergeFlags`"""
+
+    @device_test
+    def test_random(self, context, queue):
+        """Basic test using random data"""
+        channels = 643
+        baselines = 497
+        rs = np.random.RandomState(seed=1)
+        flags_in = random_flags(rs, (channels, baselines), 8, 0.1)
+        flags_out = random_flags(rs, (baselines, channels), 8, 0.1)
+        baseline_flags = random_flags(rs, (baselines,), 8, 0.2)
+
+        template = sigproc.MergeFlagsTemplate(context)
+        fn = template.instantiate(queue, channels, baselines)
+        fn.ensure_all_bound()
+        fn.buffer('flags_in').set(queue, flags_in)
+        fn.buffer('flags_out').set(queue, flags_out)
+        fn.buffer('baseline_flags').set(queue, baseline_flags)
+        fn()
+        output = fn.buffer('flags_out').get(queue)
+
+        expected = flags_out | flags_in.T | baseline_flags[:, np.newaxis]
+        np.testing.assert_equal(expected, output)
+
+
 class TestCountFlags:
     """Test :class:`katsdpingest.sigproc.CountFlags`"""
 
@@ -99,8 +125,6 @@ class TestCountFlags:
 
         rs = np.random.RandomState(seed=1)
         flags = rs.randint(0, 256, size=(baselines, channels)).astype(np.uint8)
-        baseline_flags = random_flags(rs, (baselines,), 2, 0.05)
-        channel_flags = random_flags(rs, (channels,), 3, 0.05)
         orig_counts = rs.randint(0, 10000, size=(baselines, 8)).astype(np.uint32)
         orig_any_counts = rs.randint(0, 10000, size=baselines).astype(np.uint32)
 
@@ -110,16 +134,13 @@ class TestCountFlags:
         fn.buffer('flags').set(queue, flags)
         fn.buffer('counts').set(queue, orig_counts)
         fn.buffer('any_counts').set(queue, orig_any_counts)
-        fn.buffer('baseline_flags').set(queue, baseline_flags)
-        fn.buffer('channel_flags').set(queue, channel_flags)
         fn()
         counts = fn.buffer('counts').get(queue)
         any_counts = fn.buffer('any_counts').get(queue)
 
         assert_equal((baselines, 8), counts.shape)
         expected = orig_counts[:]
-        combined_flags = flags | baseline_flags[:, np.newaxis] | channel_flags[np.newaxis, :]
-        combined_flags &= mask
+        combined_flags = flags & mask
         included_flags = combined_flags[:, channel_range.asslice()]
         for i in range(8):
             expected[:, i] += np.count_nonzero(included_flags & (1 << i), axis=1).astype(np.uint32)
@@ -147,8 +168,6 @@ class TestAccum:
             'vis_in':         np.array([[1+2j, 2+5j, 3-3j, 2+1j, 4]], dtype=np.complex64),
             'weights_in':     np.array([[2.0, 4.0, 3.0]], dtype=np.float32),
             'flags_in':       np.array([[5, 0, 10, 0, 4]], dtype=np.uint8),
-            'channel_flags':  np.array([0, 2, 0, 0, 2], dtype=np.uint8),
-            'baseline_flags': np.array([0], dtype=np.uint8),
             'vis_out0':       np.array([[7-3j, 0+0j, 0+5j]], dtype=np.complex64).T,
             'weights_out0':   np.array([[1.5, 0.0, 4.5]], dtype=np.float32).T,
             'flags_out0':     np.array([[1 | unflagged, 9, unflagged]], dtype=np.uint8).T
@@ -168,9 +187,9 @@ class TestAccum:
     def test_small_excise(self, context, queue):
         """Hand-coded test data, to test various cases, with excision"""
         expected = {
-            'vis_out0':     np.array([[7-3j, (12-12j) * FLAG_SCALE, 6+8j]], dtype=np.complex64).T,
-            'weights_out0': np.array([[1.5, 4.0 * FLAG_SCALE, 7.5]], dtype=np.float32).T,
-            'flags_out0':   np.array([[3 | UNFLAGGED_BIT, 11, UNFLAGGED_BIT]], dtype=np.uint8).T
+            'vis_out0':     np.array([[11+7j, (12-12j) * FLAG_SCALE, 6+8j]], dtype=np.complex64).T,
+            'weights_out0': np.array([[3.5, 4.0 * FLAG_SCALE, 7.5]], dtype=np.float32).T,
+            'flags_out0':   np.array([[1 | UNFLAGGED_BIT, 11, UNFLAGGED_BIT]], dtype=np.uint8).T
         }
         self._test_small(context, queue, True, expected)
 
@@ -179,7 +198,7 @@ class TestAccum:
         expected = {
             'vis_out0':     np.array([[11+7j, 12-12j, 6+8j]], dtype=np.complex64).T,
             'weights_out0': np.array([[3.5, 4.0, 7.5]], dtype=np.float32).T,
-            'flags_out0':   np.array([[3, 11, 0]], dtype=np.uint8).T
+            'flags_out0':   np.array([[1, 11, 0]], dtype=np.uint8).T
         }
         self._test_small(context, queue, False, expected)
 
@@ -194,8 +213,6 @@ class TestAccum:
         vis_in = random_vis(rs, (baselines, channels))
         weights_in = rs.uniform(size=(baselines, kept_channels)).astype(np.float32)
         flags_in = random_flags(rs, (baselines, channels), 7, p=0.2)
-        channel_flags = random_flags(rs, (channels,), 7, p=0.02)
-        baseline_flags = random_flags(rs, (baselines,), 7, p=0.01)
         vis_out = []
         weights_out = []
         flags_out = []
@@ -214,8 +231,7 @@ class TestAccum:
         fn = template.instantiate(queue, channels, channel_range, baselines)
         fn.ensure_all_bound()
         for (name, value) in [('vis_in', vis_in), ('weights_in', weights_in),
-                              ('flags_in', flags_in), ('channel_flags', channel_flags),
-                              ('baseline_flags', baseline_flags)]:
+                              ('flags_in', flags_in)]:
             fn.buffer(name).set(queue, value)
         for (name, value) in [('vis_out', vis_out), ('weights_out', weights_out),
                               ('flags_out', flags_out)]:
@@ -225,17 +241,16 @@ class TestAccum:
 
         # Perform the operation on the host
         kept_vis = vis_in[:, channel_range.start : channel_range.stop]
-        kept_flags = flags_in[:, channel_range.start : channel_range.stop] \
-            | channel_flags[np.newaxis, channel_range.start : channel_range.stop] \
-            | baseline_flags[:, np.newaxis]
+        kept_flags = flags_in[:, channel_range.start : channel_range.stop]
         if excise:
             flagged_weights = weights_in * ((kept_flags == 0) + FLAG_SCALE)
             # unflagged inputs need the UNFLAGGED_BIT set
-            kept_flags |= np.where(kept_flags, 0, UNFLAGGED_BIT).astype(np.uint8)
+            kept_flags = kept_flags | np.where(kept_flags, 0, UNFLAGGED_BIT).astype(np.uint8)
         else:
             flagged_weights = weights_in
         for i in range(outputs):
-            vis_out[i] += (kept_vis * flagged_weights).T
+            # The GPU uses an FMA - simulate it by computing in double precision first
+            vis_out[i][:] = vis_out[i] + (kept_vis.astype(np.complex128) * flagged_weights).T
             weights_out[i] += flagged_weights.T
             flags_out[i] |= kept_flags.T
 
@@ -439,7 +454,8 @@ class TestIngestOperation:
             ('ingest:flagger', {'class': 'katsdpsigproc.rfi.device.FlaggerDevice'}),
             ('ingest:flagger:background', {
                 'baselines': 192, 'channels': 128,
-                'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice', 'width': 13
+                'class': 'katsdpsigproc.rfi.device.BackgroundMedianFilterDevice',
+                'use_flags': 'NONE', 'width': 13
             }),
             ('ingest:flagger:transpose_deviations', {
                 'class': 'katsdpsigproc.transpose.Transpose',
@@ -458,6 +474,10 @@ class TestIngestOperation:
             ('ingest:flagger:transpose_flags', {
                 'class': 'katsdpsigproc.transpose.Transpose',
                 'ctype': 'unsigned char', 'dtype': 'uint8', 'shape': (192, 128)
+            }),
+            ('ingest:merge_flags', {
+                'channels': 128, 'baselines': 192,
+                'class': 'katsdpingest.sigproc.MergeFlags'
             }),
             ('ingest:count_flags', {
                 'channels': 128, 'baselines': 192, 'channel_range': (8, 104),
@@ -534,7 +554,7 @@ class TestIngestOperation:
         weights = (weights * inv_weights_channel[..., np.newaxis]).astype(np.uint8)
         return vis, flags, weights, weights_channel
 
-    def run_host_basic(self, vis, channel_flags, baseline_flags, n_accs, permutation,
+    def run_host_basic(self, vis, flags, baseline_flags, n_accs, permutation,
                        cont_factor, channel_range, count_flags_channel_range, n_sigma, excise):
         """Simple CPU implementation. All inputs and outputs are channel-major.
         There is no support for separate cadences for main and signal display
@@ -546,8 +566,8 @@ class TestIngestOperation:
         ----------
         vis : array-like
             Input dump visibilities (first axis being time)
-        channel_flags : array-like
-            Input per-channel flags (indexed by time and channel)
+        flags : array-like
+            Input per-channel flags (indexed by time, channel and post-permutation baseline)
         baseline_flags : array-like
             Input per-baseline flags (indexed by time and post-permutation baseline)
         n_accs : int
@@ -593,11 +613,9 @@ class TestIngestOperation:
         # Compute initial weights
         weights[:] = np.float32(n_accs)
         # Compute flags
-        flags = np.empty(vis.shape, dtype=np.uint8)
+        flags = flags.copy()
         for i in range(len(vis)):
-            flags[i, ...] = flagger(vis[i, ...]) | \
-                channel_flags[i, :, np.newaxis] | \
-                baseline_flags[i, np.newaxis, :]
+            flags[i, ...] |= flagger(vis[i, ...]) | baseline_flags[i, np.newaxis, :]
         # Apply flags to weights
         if excise:
             weights *= (flags == 0).astype(np.float32) + 2**-64
@@ -650,7 +668,7 @@ class TestIngestOperation:
         return ans
 
     def run_host(
-            self, vis, channel_flags, baseline_flags,
+            self, vis, flags, baseline_flags,
             n_vis, n_sd_vis, n_accs, permutation,
             cont_factor, sd_cont_factor, channel_range, count_flags_channel_range,
             n_sigma, excise, timeseries_weights, percentile_ranges):
@@ -661,9 +679,9 @@ class TestIngestOperation:
         Parameters
         ----------
         vis : array-like
-            Input dump visibilities (first axis being time)
-        channel_flags : array-like
-            Input per-channel flags (indexed by time and channel)
+            Input dump visibilities (indexed by time, channel, baseline)
+        flags : array-like
+            Input per-visibility flags (indexed by time, channel, post-permutation baseline)
         baseline_flags : array-like
             Input per-baseline flags (indexed by time and post-permutation baseline)
         n_vis : int
@@ -701,11 +719,11 @@ class TestIngestOperation:
             - percentileN (where N is a non-negative integer)
         """
         expected = self.run_host_basic(
-            vis[:n_vis], channel_flags[:n_vis], baseline_flags[:n_vis],
+            vis[:n_vis], flags[:n_vis], baseline_flags[:n_vis],
             n_accs, permutation,
             cont_factor, channel_range, None, n_sigma, excise)
         sd_expected = self.run_host_basic(
-            vis[:n_sd_vis], channel_flags[:n_sd_vis], baseline_flags[:n_sd_vis],
+            vis[:n_sd_vis], flags[:n_sd_vis], baseline_flags[:n_sd_vis],
             n_accs, permutation,
             sd_cont_factor, channel_range, count_flags_channel_range, n_sigma, excise)
         for (name, value) in sd_expected.items():
@@ -770,7 +788,7 @@ class TestIngestOperation:
         permutation[permutation >= baselines] = -1
         timeseries_weights = rs.random_integers(0, 1, kept_channels).astype(np.float32)
         timeseries_weights /= np.sum(timeseries_weights)
-        channel_flags = random_flags(rs, (dumps, channels), 2, p=0.05)
+        flags_in = random_flags(rs, (dumps, channels, baselines), 2, p=0.05)
         baseline_flags = random_flags(rs, (dumps, baselines), 2, p=0.05)
 
         flagger_template = self._make_flagger_template(context)
@@ -802,7 +820,7 @@ class TestIngestOperation:
         fn.start_sd_sum()
         for i in range(max(dumps, sd_dumps)):
             fn.buffer('vis_in').set(queue, vis_in[i])
-            fn.buffer('channel_flags').set(queue, channel_flags[i])
+            fn.buffer('flags_in').set(queue, flags_in[i])
             fn.buffer('baseline_flags').set(queue, baseline_flags[i])
             fn()
             if i + 1 == dumps:
@@ -815,7 +833,7 @@ class TestIngestOperation:
                     actual[name] = fn.buffer(name).get(queue)
 
         expected = self.run_host(
-            vis_in, channel_flags, baseline_flags,
+            vis_in, flags_in, baseline_flags,
             dumps, sd_dumps, n_accs, permutation,
             cont_factor, sd_cont_factor, channel_range, count_flags_channel_range,
             n_sigma, excise, timeseries_weights, percentile_ranges)
@@ -867,7 +885,7 @@ class TestIngestOperation:
         fn.start_sd_sum()
         for i in range(dumps):
             fn.buffer('vis_in').zero(queue)
-            fn.buffer('channel_flags').zero(queue)
+            fn.buffer('flags_in').zero(queue)
             fn.buffer('baseline_flags').zero(queue)
             fn()
         fn.end_sum()

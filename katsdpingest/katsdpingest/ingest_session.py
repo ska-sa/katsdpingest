@@ -587,7 +587,7 @@ class CBFIngest:
 
         flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
-            context, width=13, use_flags=True)
+            context, width=13, use_flags=rfi.BackgroundFlags.FULL)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
             context, transposed=True, flag_value=flag_value)
@@ -673,7 +673,7 @@ class CBFIngest:
         self.jobs = resource.JobQueue()
         self.proc_resource = resource.Resource(self.proc)
         self.input_resource = _ResourceSet(
-            self.proc, ['vis_in', 'channel_flags', 'baseline_flags'], 2)
+            self.proc, ['vis_in', 'flags_in', 'baseline_flags'], 2)
         self.output_resource = _ResourceSet(
             self.proc, [prefix + '_' + suffix
                         for prefix in self.tx
@@ -1197,7 +1197,7 @@ class CBFIngest:
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    def _set_external_flags(self, baseline_flags: np.ndarray, channel_flags: np.ndarray,
+    def _set_external_flags(self, baseline_flags: np.ndarray, flags_in: np.ndarray,
                             timestamp: float) -> None:
         """Query telstate for per-baseline flags and per-channel flags to set.
 
@@ -1229,12 +1229,12 @@ class CBFIngest:
         channel_slice = self.channel_ranges.input.asslice()
         channel_mask = sensor_value(self.telstate_cbf, 'channel_mask')
         if channel_mask is not None:
-            channel_flags[:] = channel_mask[channel_slice] * static_flag
+            flags_in[:] = channel_mask[channel_slice, np.newaxis] * static_flag
         else:
-            channel_flags.fill(0)
+            flags_in.fill(0)
         channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
         if channel_data_suspect is not None:
-            channel_flags |= channel_data_suspect[channel_slice] * cam_flag
+            flags_in |= channel_data_suspect[channel_slice, np.newaxis] * cam_flag
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
@@ -1266,7 +1266,7 @@ class CBFIngest:
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
-            channel_flags = host_input['channel_flags']
+            flags_in = host_input['flags_in']
             baseline_flags = host_input['baseline_flags']
             # Load data
             await host_input_a.wait_events()
@@ -1286,7 +1286,7 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            self._set_external_flags(baseline_flags, channel_flags, frame.timestamp)
+            self._set_external_flags(baseline_flags, flags_in, frame.timestamp)
             data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
@@ -1297,7 +1297,7 @@ class CBFIngest:
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
                 if item is None:
-                    channel_flags[dest_range.asslice()] = data_lost_flag
+                    flags_in[dest_range.asslice(), :] = data_lost_flag
                     vis_in[dest_range.asslice()] = 0
                 else:
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]

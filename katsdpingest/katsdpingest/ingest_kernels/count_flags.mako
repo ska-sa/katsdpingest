@@ -16,21 +16,17 @@ ${wg_reduce.define_function('unsigned int', wgs, 'reduce', 'scratch_t', wg_reduc
  * - Have each workitem load 32 bits at a time instead of 8 (has some
  *   complications if the number of channels is odd).
  * - Have each workgroup handle several baselines and fewer channels. It would
- *   lower reduction costs and amortise the cost of loading channel_flags, but
- *   could also reduce parallelism.
+ *   lower reduction costs, but could also reduce parallelism.
  * - Have each workgroup handle only some of the channels, and do a final
  *   CPU-side reduction (more parallelism).
  * - Do the reduction on all the counts jointly, instead of one at a time.
- * - Handle baseline_flags right at the end, instead of inside the loop.
  *
  * @param[out] counts         Output counts, shape (baselines, 8), contiguous
  * @param[out] any_counts     Count of visibilities with any flag, per baseline
  * @param      flags          Per-visibility input flags, shape (baselines, flags_stride)
- * @param      channel_flags  Per-channel flags to be combined into flags for counting
- * @param      baseline_flags Per-baseline flags to be combined into flags for counting
  * @param      flags_stride   Stride for @a flags
  * @param      channels       Number of channels over which to do count
- * @param      channel_start  Offset to first channel to count in @a flags and @a channel_flags
+ * @param      channel_start  Offset to first channel to count in @a flags
  * @param      mask           Mask ANDed with the flags before counting (used to eliminate the
  *                            pseudo-flag used to mark unflagged data).
  */
@@ -38,8 +34,6 @@ KERNEL REQD_WORK_GROUP_SIZE(WGS, 1, 1) void count_flags(
     GLOBAL unsigned int * RESTRICT counts,
     GLOBAL unsigned int * RESTRICT any_counts,
     const GLOBAL unsigned char * RESTRICT flags,
-    const GLOBAL unsigned char * RESTRICT channel_flags,
-    const GLOBAL unsigned char * RESTRICT baseline_flags,
     int flags_stride,
     int channels,
     int channel_start,
@@ -49,15 +43,13 @@ KERNEL REQD_WORK_GROUP_SIZE(WGS, 1, 1) void count_flags(
 
     int lid = get_local_id(0);
     int baseline = get_global_id(1);
-    unsigned char baseline_flag = baseline_flags[baseline];
     // Adjust pointer to start of current baseline
     flags += baseline * flags_stride + channel_start;
-    channel_flags += channel_start;
     unsigned int sums[BITS] = {};
     unsigned int any = 0;
     for (int i = lid; i < channels; i += WGS)
     {
-        unsigned char flag = (flags[i] | channel_flags[i] | baseline_flag) & mask;
+        unsigned char flag = flags[i] & mask;
         any += (flag != 0);
         for (int j = 0; j < 8; j++)
         {
