@@ -6,3 +6,4 @@ cover
 .coverage
 doc/_build
 *.egg-info
+.mypy_cache
