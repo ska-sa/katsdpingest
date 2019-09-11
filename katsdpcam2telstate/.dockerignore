@@ -1,9 +1,0 @@
-build
-dist
-temp
-cover
-.coverage
-*.egg-info
-*.pyc
-__pycache__
-Dockerfile
