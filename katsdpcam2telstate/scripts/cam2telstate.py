@@ -26,12 +26,28 @@ def comma_split(value: str) -> List[str]:
     return value.split(',')
 
 
-def convert_bitmask(value: str) -> np.ndarray:
+def convert_bitmask(value: object) -> np.ndarray:
     """Converts a string of 1's and 0's to a numpy array of bools"""
     if not isinstance(value, str) or not re.match('^[01]*$', value):
         return None
     else:
         return np.array([c == '1' for c in value])
+
+
+def convert_channel_mask(value: object) -> np.ndarray:
+    """Converts the channel-mask sensor to a numpy array.
+
+    This sensor has two possible formats:
+    - old: single string of 0's and 1's
+    - new: JSON array of strings, each consistenting of 0's and 1's
+    """
+    if not isinstance(value, str):
+        return None
+    elif value[0] in ['0', '1']:
+        return convert_bitmask(value)[np.newaxis, :]
+    else:
+        values = json.loads(value)
+        return np.array([[c == '1' for c in row] for row in values])
 
 
 class Template(string.Template):
@@ -221,7 +237,11 @@ SENSORS = [
     Sensor('${subarray}_sub_nr', immutable=True),
     Sensor('${subarray}_dump_rate', immutable=True),
     Sensor('${subarray}_pool_resources', immutable=True),
-    Sensor('${sub_stream.cbf.antenna_channelised_voltage}_channel_mask', convert=convert_bitmask),
+    Sensor('${sub_stream.cbf.antenna_channelised_voltage}_channel_mask',
+           convert=convert_channel_mask),
+    # TODO: remove ignore_missing once CAM implements this
+    Sensor('${sub_stream.cbf.antenna_channelised_voltage}_channel_mask_max_baseline_lengths',
+           convert=json.loads, immutable=True, ignore_missing=True),
     Sensor('${sub_stream.cbf.antenna_channelised_voltage}_input_data_suspect',
            convert=convert_bitmask),
     Sensor('${sub_stream.cbf.baseline_correlation_products}_channel_data_suspect',
