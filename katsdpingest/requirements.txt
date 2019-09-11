@@ -16,7 +16,6 @@ h5py                      # via katdal
 hiredis                   # via katsdptelstate
 idna                      # via requests
 ipaddress                 # via katsdptelstate
-katpoint==0.7             # via katdal
 katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
@@ -45,6 +44,7 @@ urllib3                   # via requests
 # TODO: eventually switch to using a release of katdal, once the enhanced
 # SpectralWindow class has shipped.
 katdal @ git+https://github.com/ska-sa/katdal
+katpoint @ git+https://github.com/ska-sa/katpoint
 katsdpsigproc @ git+https://github.com/ska-sa/katsdpsigproc
 katsdpservices @ git+https://github.com/ska-sa/katsdpservices
 katsdptelstate @ git+https://github.com/ska-sa/katsdptelstate
