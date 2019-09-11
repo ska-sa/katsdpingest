@@ -344,7 +344,6 @@ class TestIngestDeviceServer(asynctest.TestCase):
                 flags[:, :, i] |= channel_mask[1] * STATIC_FLAG
             else:
                 # Short baseline
-                print(flags.shape, channel_mask.shape)
                 flags[:, :, i] |= channel_mask[0] * STATIC_FLAG
         return vis, flags, timestamps
 
