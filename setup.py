@@ -8,7 +8,8 @@ tests_require = ['nose', 'asynctest', 'async_timeout', 'katsdpsigproc[test]']
 setup(
     name="katsdpingest",
     description="Karoo Array Telescope Data Capture",
-    author="Simon Ratcliffe",
+    author="MeerKAT SDP Team",
+    author_email="sdpdev+katsdpingest@ska.ac.za",
     packages=find_packages(),
     package_data={'': ['ingest_kernels/*.mako']},
     include_package_data=True,
