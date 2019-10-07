@@ -7,6 +7,7 @@ import asyncio
 import enum
 import argparse
 import textwrap
+import gc
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
@@ -1392,6 +1393,10 @@ class CBFIngest:
                 self._run_future = None
                 self.capture_block_id = None
                 self.rx = None
+            # spead2 versions up to 1.14.0 were known to produce cyclic
+            # garbage, which could lead to OOM errors if not explicitly
+            # collected.
+            gc.collect()
         return ret
 
     async def run(self) -> None:
