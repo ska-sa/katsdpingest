@@ -15,8 +15,8 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
     """Create a telstate view that allows querying properties from a stream.
     It supports only baseline-correlation-products and
     tied-array-channelised-voltage streams. Properties that don't exist on the
-    stream are searched on the upstream antenna-channelised-voltage stream, and
-    then the instrument of that stream.
+    stream are searched on the upstream antenna-channelised-voltage stream,
+    the instrument of that stream, and finally the 'cbf' namespace.
 
     Returns
     -------
@@ -33,6 +33,7 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
     prefixes.append(src)
     instrument = telstate.view(src, exclusive=True)['instrument_dev_name']
     prefixes.append(instrument)
+    prefixes.append('cbf')
     # Create a telstate view that has exactly the given prefixes (and no root prefix).
     for i, prefix in enumerate(reversed(prefixes)):
         telstate = telstate.view(prefix, exclusive=(i == 0))
