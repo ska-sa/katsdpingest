@@ -1257,14 +1257,13 @@ class CBFIngest:
         else:
             channel_mask.fill(0)
 
-        channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
+        channel_data_suspect = None #sensor_value(self.telstate_cbf, 'channel_data_suspect')
         if channel_data_suspect is not None:
             channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
-        input_suspect_sensor = sensor_value(
-            self.telstate_cbf, 'input_data_suspect')
+        input_suspect_sensor = None #sensor_value(self.telstate_cbf, 'input_data_suspect')
         if input_suspect_sensor is not None:
             input_suspect = {label: input_suspect_sensor[i] for i, label in enumerate(input_labels)}
         else:
