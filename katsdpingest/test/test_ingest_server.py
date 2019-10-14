@@ -206,6 +206,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             input_buffer=32*1024**2,
             sd_spead_rate=1000000000.0,
             excise=False,
+            use_data_suspect=True,
             servers=4,
             server_id=2,
             clock_ratio=1.0,
