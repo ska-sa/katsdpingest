@@ -116,6 +116,10 @@ def parse_args() -> argparse.Namespace:
         '--no-excise', dest='excise', action='store_false',
         help='disable excision of flagged data [default=no]')
     parser.add_argument(
+        '--use-data-suspect', dest='use_data_suspect', action='store_false',
+        help=('use the CAM provided input-data-suspect and channel-data-suspect '
+              'sensors to flag data [default=no]'))
+    parser.add_argument(
         '--servers', type=int, default=1,
         help='number of parallel servers producing the output [default=%(default)s]')
     parser.add_argument(

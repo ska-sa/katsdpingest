@@ -913,6 +913,7 @@ class CBFIngest:
         self.telstate_sdisp = telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
         self.cbf_attr = cbf_attr
         self.src_stream = args.cbf_name
+        self.use_data_suspect = args.use_data_suspect
 
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
@@ -1257,18 +1258,21 @@ class CBFIngest:
         else:
             channel_mask.fill(0)
 
-        channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
-        if channel_data_suspect is not None:
-            channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
+        if self.use_data_suspect:
+            channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
+            if channel_data_suspect is not None:
+                channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
-        input_suspect_sensor = sensor_value(
-            self.telstate_cbf, 'input_data_suspect')
-        if input_suspect_sensor is not None:
-            input_suspect = {label: input_suspect_sensor[i] for i, label in enumerate(input_labels)}
-        else:
-            input_suspect = {}
+        input_suspect = {}    # type: Dict[str, int]
+        if self.use_data_suspect:
+            input_suspect_sensor = sensor_value(
+                self.telstate_cbf, 'input_data_suspect')
+            if input_suspect_sensor is not None:
+                input_suspect = \
+                    {label: input_suspect_sensor[i] for i, label in enumerate(input_labels)}
+
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
             a = baseline[0][:-1]
