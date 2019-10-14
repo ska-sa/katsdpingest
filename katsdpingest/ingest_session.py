@@ -1265,13 +1265,13 @@ class CBFIngest:
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
-        input_suspect = {}    # type: Dict[str, int]
+        input_suspect = {}    # type: Dict[str, bool]
         if self.use_data_suspect:
             input_suspect_sensor = sensor_value(
                 self.telstate_cbf, 'input_data_suspect')
             if input_suspect_sensor is not None:
-                input_suspect = \
-                    {label: input_suspect_sensor[i] for i, label in enumerate(input_labels)}
+                input_suspect = {label: input_suspect_sensor[i]
+                                 for i, label in enumerate(input_labels)}
 
         for i, baseline in enumerate(baselines):
             # [:-1] indexing strips off h/v pol
