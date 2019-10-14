@@ -20,17 +20,14 @@ import aiokatcp
 import katsdptelstate
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
-import katsdpingest.sigproc
+from katdal.flags import CAM, STATIC
+
 from katsdpingest.utils import Range
 from katsdpingest.ingest_server import IngestDeviceServer
 from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
-
-
-STATIC_FLAG = np.uint8(1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('static'))
-CAM_FLAG = np.uint8(1 << katsdpingest.sigproc.IngestTemplate.flag_names.index('cam'))
 
 
 class MockReceiver:
@@ -331,20 +328,20 @@ class TestIngestDeviceServer(asynctest.TestCase):
         flags = np.empty(vis.shape, np.uint8)
         channel_mask = self.fake_channel_mask()
         channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
-        flags[:] = channel_data_suspect * CAM_FLAG
+        flags[:] = channel_data_suspect * np.uint8(CAM)
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):
                 # data suspect sensor is True
-                flags[:, :, i] |= CAM_FLAG
+                flags[:, :, i] |= CAM
             if a == 'm090v' or b == 'm090v':
                 # input_data_suspect is True
-                flags[:, :, i] |= CAM_FLAG
+                flags[:, :, i] |= CAM
             if a.startswith('m093') ^ b.startswith('m093'):
                 # Long baseline
-                flags[:, :, i] |= channel_mask[1] * STATIC_FLAG
+                flags[:, :, i] |= channel_mask[1] * np.uint8(STATIC)
             else:
                 # Short baseline
-                flags[:, :, i] |= channel_mask[0] * STATIC_FLAG
+                flags[:, :, i] |= channel_mask[0] * np.uint8(STATIC)
         return vis, flags, timestamps
 
     def _channel_average(self, vis, factor):

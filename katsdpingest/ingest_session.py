@@ -25,6 +25,7 @@ import katsdpsigproc.rfi.device as rfi
 import katsdpservices
 
 from katdal import SpectralWindow
+from katdal.flags import CAM, DATA_LOST, INGEST_RFI, STATIC
 import katpoint
 import katsdptelstate
 from katsdptelstate.endpoint import endpoints_to_str
@@ -592,12 +593,11 @@ class CBFIngest:
         max_percentile_sizes = list(sorted(set(max_percentile_sizes)))
         max_channels = cls._tune_next(max_channels, cls.tune_channels)
 
-        flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
         background_template = rfi.BackgroundMedianFilterDeviceTemplate(
             context, width=13, use_flags=rfi.BackgroundFlags.FULL)
         noise_est_template = rfi.NoiseEstMADTDeviceTemplate(context, max_channels=max_channels)
         threshold_template = rfi.ThresholdSimpleDeviceTemplate(
-            context, transposed=True, flag_value=flag_value)
+            context, transposed=True, flag_value=INGEST_RFI)
         flagger_template = rfi.FlaggerDeviceTemplate(
             background_template, noise_est_template, threshold_template)
         return sigproc.IngestTemplate(context, flagger_template,
@@ -1246,8 +1246,8 @@ class CBFIngest:
                 return cache[name]
 
         cache = {}   # type: Dict[str, Any]
-        static_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('static'))
-        cam_flag = np.uint8(1 << sigproc.IngestTemplate.flag_names.index('cam'))
+        static_flag = np.uint8(STATIC)
+        cam_flag = np.uint8(CAM)
         end_time = timestamp + self.cbf_attr['int_time']
         channel_slice = self.channel_ranges.input.asslice()
 
@@ -1312,7 +1312,6 @@ class CBFIngest:
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
             self._set_external_flags(baseline_flags, channel_mask, frame.timestamp)
-            data_lost_flag = 1 << sigproc.IngestTemplate.flag_names.index('data_lost')
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1322,7 +1321,7 @@ class CBFIngest:
                 dest_range = use_range.relative_to(self.channel_ranges.input)
                 src_range = use_range.relative_to(item_range)
                 if item is None:
-                    channel_mask[:, dest_range.asslice()] = data_lost_flag
+                    channel_mask[:, dest_range.asslice()] = DATA_LOST
                     vis_in[dest_range.asslice()] = 0
                 else:
                     vis_in[dest_range.asslice()] = item[src_range.asslice()]

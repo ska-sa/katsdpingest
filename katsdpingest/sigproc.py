@@ -9,6 +9,8 @@
 import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
+from katdal.flags import CAL_RFI
+
 from .utils import Range
 
 
@@ -1200,9 +1202,6 @@ class IngestTemplate:
         Perform continuum averaging of L0 data.
     """
 
-    flag_names = ['reserved0', 'static', 'cam', 'data_lost', 'ingest_rfi',
-                  'predicted_rfi', 'cal_rfi', 'reserved7']
-
     def __init__(self, context, flagger, percentile_sizes, excise, continuum):
         self.context = context
         self.prepare = PrepareTemplate(context)
@@ -1217,7 +1216,7 @@ class IngestTemplate:
         # cal RFI detection happens later in the pipeline, it is definitely
         # safe to use (unlike reserved flags, which might have new meanings
         # defined in future).
-        unflagged_bit = 1 << self.flag_names.index('cal_rfi')
+        unflagged_bit = CAL_RFI
         self.accum = AccumTemplate(context, 2, unflagged_bit, excise)
         self.finalise = FinaliseTemplate(context, unflagged_bit, excise, continuum)
         if continuum:
