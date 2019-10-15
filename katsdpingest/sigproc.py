@@ -56,7 +56,7 @@ class PrepareTemplate:
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
 
-    autotune_version = 1
+    autotune_version = 2
 
     def __init__(self, context, tuning=None):
         if tuning is None:
@@ -74,8 +74,10 @@ class PrepareTemplate:
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
     def autotune(cls, context):
         queue = context.create_tuning_command_queue()
-        baselines = 1024
-        channels = 2048
+        # These need to be multiples of 3 and of 128 to ensure alignment
+        # will all possible tuning parameters.
+        baselines = 768
+        channels = 3072
 
         vis_in = accel.DeviceArray(context, (channels, baselines, 2), np.int32)
         vis_out = accel.DeviceArray(context, (baselines, channels), np.complex64)
@@ -207,7 +209,7 @@ class PrepareFlagsTemplate:
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
 
-    autotune_version = 1
+    autotune_version = 2
 
     def __init__(self, context, tuning=None):
         if tuning is None:
@@ -226,8 +228,10 @@ class PrepareFlagsTemplate:
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
     def autotune(cls, context):
         queue = context.create_tuning_command_queue()
-        baselines = 1024
-        channels = 2048
+        # These need to be multiples of 3 and of 128 to ensure alignment
+        # will all possible tuning parameters.
+        baselines = 768
+        channels = 3072
         masks = 3
         rs = np.random.RandomState(1)
 
@@ -343,7 +347,7 @@ class MergeFlagsTemplate:
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
 
-    autotune_version = 1
+    autotune_version = 2
 
     def __init__(self, context, tuning=None):
         if tuning is None:
@@ -362,8 +366,10 @@ class MergeFlagsTemplate:
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
     def autotune(cls, context):
         queue = context.create_tuning_command_queue()
-        baselines = 1024
-        channels = 2048
+        # These need to be multiples of 3 and of 128 to ensure alignment
+        # will all possible tuning parameters.
+        baselines = 768
+        channels = 3072
 
         flags_in = accel.DeviceArray(context, (channels, baselines), np.uint8)
         flags_out = accel.DeviceArray(context, (baselines, channels), np.uint8)
@@ -600,7 +606,7 @@ class AccumTemplate:
         - vtx, vty: number of elements handled by each workitem, per dimension
     """
 
-    autotune_version = 3
+    autotune_version = 4
 
     def __init__(self, context, outputs, unflagged_bit, excise, tuning=None):
         if tuning is None:
@@ -629,10 +635,13 @@ class AccumTemplate:
     @tune.autotuner(test={'block': 8, 'vtx': 2, 'vty': 3})
     def autotune(cls, context, outputs, excise):
         queue = context.create_tuning_command_queue()
-        baselines = 1024
+        # baselines and kept_channels need to be multiples of 3 and of 128 to ensure alignment
+        # will all possible tuning parameters.
+        baselines = 768
         channels = 2048
-        channel_range = Range(128, channels - 128)
+        channel_range = Range(64, channels - 64)
         kept_channels = len(channel_range)
+        assert kept_channels % (3 * 128) == 0
 
         vis_in = accel.DeviceArray(context, (baselines, channels), np.complex64)
         weights_in = accel.DeviceArray(context, (baselines, kept_channels), np.float32)
