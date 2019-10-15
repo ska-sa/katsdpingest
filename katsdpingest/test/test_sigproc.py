@@ -8,6 +8,7 @@ from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
+from katdal.flags import INGEST_RFI, CAL_RFI
 from nose.tools import assert_equal, assert_raises
 
 from katsdpingest import sigproc
@@ -427,8 +428,8 @@ class TestCompressWeights:
 
 
 class TestIngestOperation:
-    flag_value = 1 << sigproc.IngestTemplate.flag_names.index('ingest_rfi')
-    unflagged_bit = 1 << sigproc.IngestTemplate.flag_names.index('cal_rfi')
+    flag_value = INGEST_RFI
+    unflagged_bit = CAL_RFI
 
     @mock.patch('katsdpsigproc.tune.autotuner_impl', new=tune.stub_autotuner)
     @mock.patch('katsdpsigproc.accel.build', spec=True)
