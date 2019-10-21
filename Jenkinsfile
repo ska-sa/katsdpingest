@@ -29,6 +29,7 @@ catchError {
                     dir('git') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
                             sh './jenkins-autotune.sh titanx'
+                            sh './jenkins-autotune.sh geforce_gtx_titan_x'
                         }
                     }
                 }
