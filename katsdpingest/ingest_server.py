@@ -6,7 +6,7 @@ import argparse
 from typing import List, Dict, Mapping, Any, cast   # noqa: F401
 
 import aiokatcp
-from aiokatcp import FailReply
+from aiokatcp import FailReply, SensorSampler
 from katsdptelstate.endpoint import endpoint_parser
 
 import katsdpingest
@@ -64,6 +64,18 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         super().__init__(*args, **kwargs)
         self._stopping = False
 
+        def counter(name: str, description: str, *,
+                    event_rate: bool = False,
+                    warn_if_positive: bool = False,
+                    **kwargs: Any) -> Sensor:
+            if event_rate:
+                kwargs['auto_strategy'] = SensorSampler.Strategy.EVENT_RATE
+                kwargs['auto_strategy_parameters'] = (0.05, 10.0)
+            if warn_if_positive:
+                kwargs['status_func'] = _warn_if_positive
+            return Sensor(int, name, description + ' (prometheus: counter)',
+                          initial_status=Sensor.Status.NOMINAL, **kwargs)
+
         sensors = [
             Sensor(int, "output-n-ants",
                    "Number of antennas in L0 stream (prometheus: gauge)"),
@@ -90,53 +102,38 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
                    "Health status",
                    default=DeviceStatus.OK, initial_status=Sensor.Status.NOMINAL,
                    status_func=_device_status_status),
-            Sensor(int, "input-bytes-total",
-                   "Number of payload bytes received from CBF in this session "
-                   "(prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "input-heaps-total",
-                   "Number of payload heaps received from CBF in this session "
-                   "(prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "input-dumps-total",
-                   "Number of CBF dumps received in this session "
-                   "(prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "input-metadata-heaps-total",
-                   "Number of heaps that do not contain payload in this session "
-                   "(prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "output-bytes-total",
-                   "Number of payload bytes sent on L0 in this session "
-                   " (prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "output-heaps-total",
-                   "Number of payload heaps sent on L0 in this session "
-                   " (prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "output-dumps-total",
-                   "Number of payload dumps sent on L0 in this session "
-                   " (prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "output-vis-total",
-                   "Number of spectral visibilities computed for signal displays in this session "
-                   " (prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
-            Sensor(int, "output-flagged-total",
-                   "Number of flagged visibilities (out of output-vis-total) "
-                   " (prometheus: counter)",
-                   initial_status=Sensor.Status.NOMINAL),
+            counter("input-bytes-total",
+                    "Number of payload bytes received from CBF in this session",
+                    event_rate=True),
+            counter("input-heaps-total",
+                    "Number of payload heaps received from CBF in this session",
+                    event_rate=True),
+            counter("input-dumps-total",
+                    "Number of CBF dumps received in this session",
+                    event_rate=True),
+            counter("input-metadata-heaps-total",
+                    "Number of heaps that do not contain payload in this session",
+                    event_rate=True),
+            counter("output-bytes-total",
+                   "Number of payload bytes sent on L0 in this session"),
+            counter("output-heaps-total",
+                   "Number of payload heaps sent on L0 in this session"),
+            counter("output-dumps-total",
+                    "Number of payload dumps sent on L0 in this session"),
+            counter("output-vis-total",
+                   "Number of spectral visibilities computed for signal displays in this session"),
+            counter("output-flagged-total",
+                   "Number of flagged visibilities (out of output-vis-total)"),
             Sensor(bool, "descriptors-received",
                    "Whether the SPEAD descriptors have been received "
                    " (prometheus: gauge)",
                    initial_status=Sensor.Status.NOMINAL)
         ]   # type: List[Sensor]
         for key, value in receiver.REJECT_HEAP_TYPES.items():
-            sensors.append(Sensor(
-                int, "input-" + key + "-heaps-total",
-                "Number of heaps rejected because {} (prometheus: counter)".format(value),
-                initial_status=Sensor.Status.NOMINAL,
-                status_func=_warn_if_positive))
+            sensors.append(counter(
+                "input-" + key + "-heaps-total",
+                "Number of heaps rejected because {}".format(value),
+                event_rate=True, warn_if_positive=True))
         for sensor in sensors:
             self.sensors.add(sensor)
 

@@ -19,7 +19,7 @@ setup(
     ],
     setup_requires=['katversion'],
     install_requires=[
-        'aiokatcp',
+        'aiokatcp>=0.7.0',   # Need 0.7 for auto_strategy
         'aiomonitor',
         'numpy',
         'spead2>=1.8.0',   # Needed for inproc transport for unit tests
