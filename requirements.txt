@@ -39,6 +39,7 @@ scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
 spead2
 terminaltables            # via aiomonitor
+typing_extensions         # via katsdpsigproc
 toolz                     # via dask
 urllib3                   # via requests
 # TODO: eventually switch to using a release of katdal, once the enhanced
