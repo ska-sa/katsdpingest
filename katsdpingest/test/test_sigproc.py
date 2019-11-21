@@ -326,6 +326,11 @@ class TestPostproc:
         # doing continuum reduction
         flags_in[:, 123] = 1
         flags_in[:, 234] = UNFLAGGED_BIT
+        # Test the flush-to-zero behaviour
+        flags_in[:cont_factor, 1] &= ~np.uint8(UNFLAGGED_BIT)
+        flags_in[1, 1] = UNFLAGGED_BIT
+        weights_in[1, 1] = 2.0
+        vis_in[1, 1] = 1e-10 + 1e-10j
         if excise:
             # Where UNFLAGGED_BIT is not set, weights should be much smaller
             scale = np.where(flags_in & UNFLAGGED_BIT, 1, FLAG_SCALE)
@@ -357,6 +362,9 @@ class TestPostproc:
             # UNFLAGGED_BIT gets cleared
             cont_flags = np.where(cont_flags & UNFLAGGED_BIT, 0, cont_flags)
             expected_flags = np.where(flags_in & UNFLAGGED_BIT, 0, flags_in)
+            # Gets flushed to zero
+            expected_vis[1, 1] = 0
+            cont_vis[0, 1] = 0
         else:
             expected_weights = weights_in
             expected_flags = flags_in
