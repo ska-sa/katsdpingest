@@ -99,7 +99,7 @@ class TestPrepareFlags:
         rs = np.random.RandomState(seed=1)
         vis = random_vis(rs, (baselines, channels))
         # Create some zero visibilities to ensure they're flagged
-        vis[rs.random((baselines, channels)) < 0.3] = 0
+        vis[rs.rand(baselines, channels) < 0.3] = 0
         channel_mask = random_flags(rs, (masks, channels), 7, 0.1)
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
