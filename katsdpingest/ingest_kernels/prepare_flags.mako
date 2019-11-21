@@ -6,11 +6,14 @@
 
 KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     GLOBAL uchar * RESTRICT flags,
+    const GLOBAL float2 * RESTRICT vis,
     const GLOBAL uchar * RESTRICT channel_mask,
     const GLOBAL uint * RESTRICT channel_mask_idx,
     int flags_stride,
+    int vis_stride,
     int channel_mask_stride,
-    uint max_mask)
+    uint max_mask,
+    uchar zero_flag)
 {
     LOCAL_DECL transpose_flags local_flags;
     transpose_coords coords;
@@ -19,7 +22,11 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     // Compute flags into shared memory
     <%transpose:transpose_load coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         int idx = min(max_mask, channel_mask_idx[${r}]);
-        local_flags.arr[${lr}][${lc}] = channel_mask[idx * channel_mask_stride + ${c}];
+        uchar f = channel_mask[idx * channel_mask_stride + ${c}];
+        float2 v = vis[${r} * vis_stride + ${c}];
+        if (v.x == 0 && v.y == 0)
+            f |= zero_flag;
+        local_flags.arr[${lr}][${lc}] = f;
     </%transpose:transpose_load>
 
     BARRIER();
