@@ -1,5 +1,29 @@
 <%include file="/port.mako"/>
 
+/* If there was partial excision and the sum of the non-excised visibilities is
+ * zero, the visibility will come out infinitesimal rather than zero due to the
+ * 2^-64 scaling trick. If it's an auto-correlation, it may get inverted later
+ * to compute statistical weights, which leads to numerical issues, so we flush
+ * it to zero.
+ *
+ * The minimum non-zero absolute value for the weighted sum is 1/n_accs, while
+ * the largest possible spurious value is 2^-33 * (m-1)/n_accs, where m is the
+ * number of input dumps added together (potentially somewhat large for
+ * continuum) and n_accs is the number of accumulations in the correlator.
+ * If one needs to support a very large range of n_accs then it should be
+ * an extra parameter (or scaling by n_accs should be delayed until this
+ * stage), but 2e-9 should be safe for all reasonable cases for now.
+ */
+DEVICE_FN float flush_zero(float x)
+{
+    return fabsf(x) < 2e-9f ? 0.0f : x;
+}
+
+DEVICE_FN float2 flush_zero2(float2 vis)
+{
+    return make_float2(flush_zero(vis.x), flush_zero(vis.y));
+}
+
 KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     GLOBAL float2 * RESTRICT vis,
     GLOBAL float * RESTRICT weights,
@@ -48,7 +72,10 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         if (!(f & ${unflagged_bit}))
             *wptr = 1.8446744e19f * w;  // scale by 2^64, to compensate for previous 2^-64
         else
+        {
             *fptr = 0;
+            v = flush_zero2(v);
+        }
 % endif
         v.x *= scale;
         v.y *= scale;
@@ -63,7 +90,10 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
     if (!(cf & ${unflagged_bit}))
         cw *= 1.8446744e19;     // scale by 2^64, to compensate for previous 2^-64
     else
+    {
         cf = 0;
+        cv = flush_zero2(cv);
+    }
 % endif
     int cont_addr = cont_channel * stride + baseline;
     cont_vis[cont_addr] = cv;
