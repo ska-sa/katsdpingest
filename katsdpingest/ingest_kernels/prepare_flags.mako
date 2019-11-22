@@ -22,11 +22,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     // Compute flags into shared memory
     <%transpose:transpose_load coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         int idx = min(max_mask, channel_mask_idx[${r}]);
-        uchar f = channel_mask[idx * channel_mask_stride + ${c}];
-        float2 v = vis[${r} * vis_stride + ${c}];
-        if (v.x == 0 && v.y == 0)
-            f |= zero_flag;
-        local_flags.arr[${lr}][${lc}] = f;
+        local_flags.arr[${lr}][${lc}] = channel_mask[idx * channel_mask_stride + ${c}];
     </%transpose:transpose_load>
 
     BARRIER();
@@ -34,7 +30,10 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     // Write flags back to global memory in channel-major order
     <%transpose:transpose_store coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         int addr = ${r} * flags_stride + ${c};
-        flags[addr] = local_flags.arr[${lr}][${lc}];
+        uchar f = local_flags.arr[${lr}][${lc}];
+        float2 v = vis[${r} * vis_stride + ${c}];
+        if (v.x == 0 && v.y == 0)
+            f |= zero_flag;
+        flags[addr] = f;
     </%transpose:transpose_store>
 }
-

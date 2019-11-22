@@ -97,9 +97,9 @@ class TestPrepareFlags:
         baselines = 497
         masks = 17
         rs = np.random.RandomState(seed=1)
-        vis = random_vis(rs, (baselines, channels))
+        vis = random_vis(rs, (channels, baselines))
         # Create some zero visibilities to ensure they're flagged
-        vis[rs.rand(baselines, channels) < 0.3] = 0
+        vis[rs.rand(channels, baselines) < 0.3] = 0
         channel_mask = random_flags(rs, (masks, channels), 7, 0.1)
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
@@ -113,7 +113,7 @@ class TestPrepareFlags:
         flags = fn.buffer('flags').get(queue)
 
         expected = channel_mask[channel_mask_idx, :].T
-        expected = expected | np.where(vis.T == 0, 2**7, 0)
+        expected = expected | np.where(vis == 0, 2**7, 0)
         np.testing.assert_equal(expected, flags)
 
 

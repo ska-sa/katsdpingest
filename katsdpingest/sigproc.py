@@ -266,7 +266,7 @@ class PrepareFlags(accel.Operation):
 
     .. rubric:: Slots
 
-    **vis** : baselines × channels, complex64
+    **vis** : channels × baselines, complex64
         Input visibilities (output from :class:`Prepare`)
     **flags** : channels × baselines, uint8
         Output channels
@@ -299,12 +299,20 @@ class PrepareFlags(accel.Operation):
         self.zero_flag = zero_flag
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
-        padded_channels = accel.Dimension(channels, tilex)
-        padded_baselines = accel.Dimension(baselines, tiley)
-        self.slots['vis'] = accel.IOSlot((padded_baselines, padded_channels), np.complex64)
-        self.slots['flags'] = accel.IOSlot((padded_channels, padded_baselines), np.uint8)
-        self.slots['channel_mask'] = accel.IOSlot((masks, padded_channels), np.uint8)
-        self.slots['channel_mask_idx'] = accel.IOSlot((padded_baselines,), np.uint32)
+
+        def padded_channels():
+            return accel.Dimension(channels, tilex)
+
+        def padded_baselines():
+            return accel.Dimension(baselines, tiley)
+
+        def padded_shape():
+            return (padded_channels(), padded_baselines())
+
+        self.slots['vis'] = accel.IOSlot(padded_shape(), np.complex64)
+        self.slots['flags'] = accel.IOSlot(padded_shape(), np.uint8)
+        self.slots['channel_mask'] = accel.IOSlot((masks, padded_channels()), np.uint8)
+        self.slots['channel_mask_idx'] = accel.IOSlot((padded_baselines(),), np.uint32)
 
     def _run(self):
         vis = self.buffer('vis')
@@ -1475,10 +1483,9 @@ class IngestOperation(accel.OperationSequence):
                                'merge_flags:flags_in'],
             'baseline_flags': ['merge_flags:baseline_flags'],
             'permutation':    ['prepare:permutation'],
-            'vis_t':          ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in',
-                               'prepare_flags:vis'],
+            'vis_t':          ['prepare:vis_out', 'transpose_vis:src', 'accum:vis_in'],
             'weights':        ['init_weights:data', 'accum:weights_in'],
-            'vis_mid':        ['transpose_vis:dest', 'flagger:vis'],
+            'vis_mid':        ['transpose_vis:dest', 'prepare_flags:vis', 'flagger:vis'],
             'deviations':     ['flagger:deviations'],
             'noise':          ['flagger:noise'],
             'flags':          ['flagger:flags_t', 'accum:flags_in', 'count_flags:flags',
@@ -1535,9 +1542,9 @@ class IngestOperation(accel.OperationSequence):
     def _run(self):
         """Process a single input dump"""
         self.prepare()
-        self.prepare_flags()
         self.init_weights()
         self.transpose_vis()
+        self.prepare_flags()
         self.flagger()
         self.merge_flags()
         # The per-bit flags are sent to the signal displays, so are
