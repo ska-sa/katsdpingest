@@ -8,7 +8,7 @@ from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
-from katdal.flags import INGEST_RFI, CAL_RFI
+from katdal.flags import INGEST_RFI, CAL_RFI, CAM
 from nose.tools import assert_equal, assert_raises
 
 from katsdpingest import sigproc
@@ -97,18 +97,23 @@ class TestPrepareFlags:
         baselines = 497
         masks = 17
         rs = np.random.RandomState(seed=1)
-        channel_mask = random_flags(rs, (masks, channels), 8, 0.1)
+        vis = random_vis(rs, (channels, baselines))
+        # Create some zero visibilities to ensure they're flagged
+        vis[rs.rand(channels, baselines) < 0.3] = 0
+        channel_mask = random_flags(rs, (masks, channels), 7, 0.1)
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
         template = sigproc.PrepareFlagsTemplate(context)
-        fn = template.instantiate(queue, channels, baselines, masks)
+        fn = template.instantiate(queue, channels, baselines, masks, 2**7)
         fn.ensure_all_bound()
+        fn.buffer('vis').set(queue, vis)
         fn.buffer('channel_mask').set(queue, channel_mask)
         fn.buffer('channel_mask_idx').set(queue, channel_mask_idx)
         fn()
         flags = fn.buffer('flags').get(queue)
 
         expected = channel_mask[channel_mask_idx, :].T
+        expected = expected | np.where(vis == 0, 2**7, 0)
         np.testing.assert_equal(expected, flags)
 
 
@@ -475,7 +480,7 @@ class TestIngestOperation:
             ('ingest:prepare_flags', {
                 'baselines': 192, 'channels': 128,
                 'class': 'katsdpingest.sigproc.PrepareFlags',
-                'masks': 3
+                'masks': 3, 'zero_flag': CAM
             }),
             ('ingest:init_weights', {
                 'class': 'katsdpsigproc.fill.Fill', 'shape': (192, 80),
@@ -948,6 +953,6 @@ class TestIngestOperation:
         cont_vis = fn.buffer('cont_vis').get(queue)
         cont_flags = fn.buffer('cont_flags').get(queue)
         np.testing.assert_equal(0 + 0j, spec_vis)
-        np.testing.assert_equal(0, spec_flags)
+        np.testing.assert_equal(CAM, spec_flags)
         np.testing.assert_equal(0 + 0j, cont_vis)
-        np.testing.assert_equal(0, cont_flags)
+        np.testing.assert_equal(CAM, cont_flags)
