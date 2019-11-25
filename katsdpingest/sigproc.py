@@ -1,36 +1,34 @@
 # coding: utf-8
 
-"""
-.. |CommandQueue| replace:: :class:`katsdpsigproc.cuda.CommandQueue` \
-        or :class:`katsdpsigproc.opencl.CommandQueue`
-.. |Context| replace:: :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
-"""
+from typing import List, Tuple, Iterable, Mapping, Callable, Optional, Generator, Any
 
 import pkg_resources
 import numpy as np
-from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce, rfi
+from katsdpsigproc.abc import AbstractContext, AbstractCommandQueue
 from katdal.flags import CAL_RFI, CAM
 
 from .utils import Range
 
 
 class Zero(accel.Operation):
-    """Zeros out a set of visibilities, flags and weights with the same shape"""
-    def __init__(self, command_queue, channels, baselines):
+    """Zero out a set of visibilities, flags and weights with the same shape."""
+
+    def __init__(self, command_queue: AbstractCommandQueue, channels: int, baselines: int) -> None:
         super().__init__(command_queue)
         self.slots['vis'] = accel.IOSlot((channels, baselines), np.complex64)
         self.slots['weights'] = accel.IOSlot((channels, baselines), np.float32)
         self.slots['flags'] = accel.IOSlot((channels, baselines), np.uint8)
 
-    def _run(self):
+    def _run(self) -> None:
         self.buffer('vis').zero(self.command_queue)
         self.buffer('weights').zero(self.command_queue)
         self.buffer('flags').zero(self.command_queue)
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
-            'channels': self.slots['vis'].shape[0],
-            'baselines': self.slots['vis'].shape[1]
+            'channels': self.slots['vis'].shape[0],     # type: ignore
+            'baselines': self.slots['vis'].shape[1]     # type: ignore
         }
 
 
@@ -48,9 +46,9 @@ class PrepareTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -60,7 +58,8 @@ class PrepareTemplate:
 
     autotune_version = 2
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context: AbstractContext,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context)
         self.block = tuning['block']
@@ -74,7 +73,7 @@ class PrepareTemplate:
 
     @classmethod
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
-    def autotune(cls, context):
+    def autotune(cls, context: AbstractContext):
         queue = context.create_tuning_command_queue()
         # These need to be multiples of 3 and of 128 to ensure alignment
         # will all possible tuning parameters.
@@ -87,7 +86,7 @@ class PrepareTemplate:
         vis_in.set(queue, np.zeros(vis_in.shape, np.int32))
         permutation.set(queue, np.arange(baselines).astype(np.int16))
 
-        def generate(block, vtx, vty):
+        def generate(block: int, vtx: int, vty: int) -> Callable[[int], float]:
             local_mem = (block * vtx + 1) * (block * vty) * 8
             if local_mem > 32768:
                 # Skip configurations using lots of lmem
@@ -105,7 +104,8 @@ class PrepareTemplate:
             vtx=[1, 2, 3, 4],
             vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, in_baselines, out_baselines):
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, in_baselines: int, out_baselines: int) -> 'Prepare':
         return Prepare(self, command_queue, channels, in_baselines, out_baselines)
 
 
@@ -126,19 +126,20 @@ class Prepare(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`PrepareTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    in_baselines : int
+    in_baselines
         Number of baselines in the input
-    out_baselines : int
+    out_baselines
         Number of baselines in the output
     """
-    def __init__(self, template, command_queue, channels,
-                 in_baselines, out_baselines):
+    def __init__(self, template: PrepareTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, in_baselines: int, out_baselines: int) -> None:
         if in_baselines < out_baselines:
             raise ValueError('Baselines can only be discarded, not amplified')
         super().__init__(command_queue)
@@ -160,7 +161,7 @@ class Prepare(accel.Operation):
             (out_baselines, padded_channels), np.complex64)
         self.slots['permutation'] = accel.IOSlot((in_baselines,), np.int16)
 
-    def _run(self):
+    def _run(self) -> None:
         vis_in = self.buffer('vis_in')
         permutation = self.buffer('permutation')
         vis_out = self.buffer('vis_out')
@@ -184,7 +185,7 @@ class Prepare(accel.Operation):
             global_size=(xblocks * block, yblocks * block),
             local_size=(block, block))
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'channels': self.channels,
             'in_baselines': self.in_baselines,
@@ -203,9 +204,9 @@ class PrepareFlagsTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -215,7 +216,8 @@ class PrepareFlagsTemplate:
 
     autotune_version = 2
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context: AbstractContext,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context)
         self.context = context
@@ -230,7 +232,7 @@ class PrepareFlagsTemplate:
 
     @classmethod
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
-    def autotune(cls, context):
+    def autotune(cls, context: AbstractContext) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         # These need to be multiples of 3 and of 128 to ensure alignment
         # will all possible tuning parameters.
@@ -244,7 +246,7 @@ class PrepareFlagsTemplate:
         channel_mask_idx = accel.DeviceArray(context, (baselines,), np.uint32)
         channel_mask_idx.set(queue, rs.randint(0, masks, (baselines,)).astype(np.uint32))
 
-        def generate(block, vtx, vty):
+        def generate(block: int, vtx: int, vty: int) -> Callable[[int], float]:
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
@@ -257,7 +259,8 @@ class PrepareFlagsTemplate:
             vtx=[1, 2, 3, 4],
             vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, baselines, masks, zero_flag):
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, baselines: int, masks: int, zero_flag: int) -> 'PrepareFlags':
         return PrepareFlags(self, command_queue, channels, baselines, masks, zero_flag)
 
 
@@ -277,20 +280,22 @@ class PrepareFlags(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`PrepareFlagsTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    baselines : int
+    baselines
         Number of baselines
-    masks : int
+    masks
         Number of masks in **channel_masks**
-    zero_flag : int
+    zero_flag
         Flag value to merge in to flags for zero visibilities
     """
-    def __init__(self, template, command_queue, channels, baselines, masks, zero_flag):
+    def __init__(self, template: PrepareFlagsTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, baselines: int, masks: int, zero_flag: int) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
@@ -314,7 +319,7 @@ class PrepareFlags(accel.Operation):
         self.slots['channel_mask'] = accel.IOSlot((masks, padded_channels()), np.uint8)
         self.slots['channel_mask_idx'] = accel.IOSlot((padded_baselines(),), np.uint32)
 
-    def _run(self):
+    def _run(self) -> None:
         vis = self.buffer('vis')
         flags = self.buffer('flags')
         channel_mask = self.buffer('channel_mask')
@@ -340,7 +345,7 @@ class PrepareFlags(accel.Operation):
             global_size=(xblocks * block, yblocks * block),
             local_size=(block, block))
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'channels': self.channels,
             'baselines': self.baselines,
@@ -360,9 +365,9 @@ class MergeFlagsTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -372,7 +377,8 @@ class MergeFlagsTemplate:
 
     autotune_version = 2
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context: AbstractContext,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context)
         self.context = context
@@ -387,7 +393,7 @@ class MergeFlagsTemplate:
 
     @classmethod
     @tune.autotuner(test={'block': 16, 'vtx': 2, 'vty': 3})
-    def autotune(cls, context):
+    def autotune(cls, context: AbstractContext) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         # These need to be multiples of 3 and of 128 to ensure alignment
         # will all possible tuning parameters.
@@ -398,7 +404,7 @@ class MergeFlagsTemplate:
         flags_out = accel.DeviceArray(context, (baselines, channels), np.uint8)
         baseline_flags = accel.DeviceArray(context, (baselines,), np.uint8)
 
-        def generate(block, vtx, vty):
+        def generate(block: int, vtx: int, vty: int) -> Callable[[int], float]:
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
@@ -411,7 +417,8 @@ class MergeFlagsTemplate:
             vtx=[1, 2, 3, 4],
             vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, baselines):
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, baselines: int) -> 'MergeFlags':
         return MergeFlags(self, command_queue, channels, baselines)
 
 
@@ -429,16 +436,18 @@ class MergeFlags(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`MergeFlagsTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    baselines : int
+    baselines
         Number of baselines
     """
-    def __init__(self, template, command_queue, channels, baselines):
+    def __init__(self, template: MergeFlagsTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, baselines: int) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
@@ -451,7 +460,7 @@ class MergeFlags(accel.Operation):
         self.slots['flags_out'] = accel.IOSlot((padded_baselines, padded_channels), np.uint8)
         self.slots['baseline_flags'] = accel.IOSlot((padded_baselines,), np.uint8)
 
-    def _run(self):
+    def _run(self) -> None:
         flags_in = self.buffer('flags_in')
         flags_out = self.buffer('flags_out')
         baseline_flags = self.buffer('baseline_flags')
@@ -472,7 +481,7 @@ class MergeFlags(accel.Operation):
             global_size=(xblocks * block, yblocks * block),
             local_size=(block, block))
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'channels': self.channels,
             'baselines': self.baselines
@@ -488,9 +497,9 @@ class CountFlagsTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -499,7 +508,8 @@ class CountFlagsTemplate:
 
     autotune_version = 2
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context: AbstractContext,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context)
         self.context = context
@@ -512,7 +522,7 @@ class CountFlagsTemplate:
 
     @classmethod
     @tune.autotuner(test={'wgs': 128})
-    def autotune(cls, context):
+    def autotune(cls, context: AbstractContext) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         channels = 2048
         baselines = 1024
@@ -522,15 +532,17 @@ class CountFlagsTemplate:
         counts = accel.DeviceArray(context, (baselines, 8), np.uint32)
         any_counts = accel.DeviceArray(context, (baselines,), np.uint32)
 
-        def generate(wgs):
+        def generate(wgs: int) -> Callable[[int], float]:
             template = cls(context, tuning={'wgs': wgs})
             fn = template.instantiate(queue, channels, Range(0, channels), baselines)
             fn.bind(flags=flags, counts=counts, any_counts=any_counts)
             return tune.make_measure(queue, fn)
         return tune.autotune(generate, wgs=[64, 128, 256, 512])
 
-    def instantiate(self, *args, **kwargs):
-        return CountFlags(self, *args, **kwargs)
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, channel_range: Range, baselines: int,
+                    mask: int = 0xff) -> 'CountFlags':
+        return CountFlags(self, command_queue, channels, channel_range, baselines, mask)
 
 
 class CountFlags(accel.Operation):
@@ -551,21 +563,24 @@ class CountFlags(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`CountFlagsTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    channel_range : :class:`.Range`
+    channel_range
         Interval of channels that will be counted
-    baselines : int
+    baselines
         Number of baselines
-    mask : int
+    mask
         Mask of flag bits to count
     """
 
-    def __init__(self, template, command_queue, channels, channel_range, baselines, mask=0xff):
+    def __init__(self, template: CountFlagsTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, channel_range: Range, baselines: int,
+                 mask: int = 0xff) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
@@ -577,7 +592,7 @@ class CountFlags(accel.Operation):
         self.slots['counts'] = accel.IOSlot((baselines, bits), np.uint32)
         self.slots['any_counts'] = accel.IOSlot((baselines,), np.uint32)
 
-    def _run(self):
+    def _run(self) -> None:
         flags = self.buffer('flags')
         counts = self.buffer('counts')
         any_counts = self.buffer('any_counts')
@@ -595,7 +610,7 @@ class CountFlags(accel.Operation):
             local_size=(self.template.wgs, 1)
         )
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'channels': self.channels,
             'channel_range': (self.channel_range.start, self.channel_range.stop),
@@ -612,16 +627,16 @@ class AccumTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    outputs : int
+    outputs
         Number of outputs in which to accumulate
-    unflagged_bit : int
+    unflagged_bit
         Flag value used to indicate that at least one sample was not flagged.
         This is only used when `excise` is true.
-    excise : bool
+    excise
         Excise flagged data by downweighting it massively.
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -631,7 +646,8 @@ class AccumTemplate:
 
     autotune_version = 4
 
-    def __init__(self, context, outputs, unflagged_bit, excise, tuning=None):
+    def __init__(self, context: AbstractContext, outputs: int, unflagged_bit: int,
+                 excise: bool, tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context, outputs, excise)
         self.context = context
@@ -656,7 +672,7 @@ class AccumTemplate:
 
     @classmethod
     @tune.autotuner(test={'block': 8, 'vtx': 2, 'vty': 3})
-    def autotune(cls, context, outputs, excise):
+    def autotune(cls, context: AbstractContext, outputs: int, excise: bool) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         # baselines and kept_channels need to be multiples of 3 and of 128 to ensure alignment
         # will all possible tuning parameters.
@@ -685,7 +701,7 @@ class AccumTemplate:
         flags_in.set(queue, rs.choice([0, 16], size=flags_in.shape,
                                       p=[0.95, 0.05]).astype(np.uint8))
 
-        def generate(block, vtx, vty):
+        def generate(block: int, vtx: int, vty: int) -> Callable[[int], float]:
             local_mem = (block * vtx + 1) * (block * vty) * 13
             if local_mem > 32768:
                 # Skip configurations using lots of lmem
@@ -702,7 +718,8 @@ class AccumTemplate:
             vtx=[1, 2, 3, 4],
             vty=[1, 2, 3, 4])
 
-    def instantiate(self, command_queue, channels, channel_range, baselines):
+    def instantiate(self, command_queue: AbstractCommandQueue, channels: int,
+                    channel_range: Range, baselines: int) -> 'Accum':
         return Accum(self, command_queue, channels, channel_range, baselines)
 
 
@@ -730,19 +747,20 @@ class Accum(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`AccumTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    change_range : :class:`.Range`
+    change_range
         Interval of channels that will appear in the output and in **weights_in**
-    baselines : int
+    baselines
         Number of baselines
     """
 
-    def __init__(self, template, command_queue, channels, channel_range, baselines):
+    def __init__(self, template: AccumTemplate, command_queue: AbstractCommandQueue,
+                 channels: int, channel_range: Range, baselines: int) -> None:
         super().__init__(command_queue)
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
@@ -774,7 +792,7 @@ class Accum(accel.Operation):
             self.slots['flags_out' + label] = accel.IOSlot(
                 (padded_kept_channels, padded_baselines), np.uint8)
 
-    def _run(self):
+    def _run(self) -> None:
         buffer_names = []
         for i in range(self.template.outputs):
             label = str(i)
@@ -800,7 +818,7 @@ class Accum(accel.Operation):
             global_size=(xblocks * block, yblocks * block),
             local_size=(block, block))
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'outputs': self.template.outputs,
             'unflagged_bit': self.template.unflagged_bit,
@@ -821,16 +839,16 @@ class PostprocTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    unflagged_bit : int
+    unflagged_bit
         Flag value used to indicate that at least one sample was not flagged
-    excise : bool
+    excise
         Flagged data is being excised (must match the argument to
         :class:`AccumTemplate`).
-    continuum : bool
+    continuum
         Whether to do continuum averaging
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -838,7 +856,8 @@ class PostprocTemplate:
     """
     autotune_version = 4
 
-    def __init__(self, context, unflagged_bit, excise, continuum, tuning=None):
+    def __init__(self, context: AbstractContext, unflagged_bit: int, excise: bool, continuum: bool,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context, excise, continuum)
         self.context = context
@@ -861,7 +880,7 @@ class PostprocTemplate:
 
     @classmethod
     @tune.autotuner(test={'wgsx': 32, 'wgsy': 8})
-    def autotune(cls, context, excise, continuum):
+    def autotune(cls, context: AbstractContext, excise: bool, continuum: bool) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
@@ -893,8 +912,9 @@ class PostprocTemplate:
             wgsx=[8, 16, 32],
             wgsy=[8, 16, 32])
 
-    def instantiate(self, context, channels, baselines, cont_factor):
-        return Postproc(self, context, channels, baselines, cont_factor)
+    def instantiate(self, command_queue: AbstractCommandQueue, channels: int, baselines: int,
+                    cont_factor: int) -> 'Postproc':
+        return Postproc(self, command_queue, channels, baselines, cont_factor)
 
 
 class Postproc(accel.Operation):
@@ -920,15 +940,15 @@ class Postproc(accel.Operation):
 
     Parameters
     ----------
-    template : :class:`PostprocTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels (must be a multiple of `cont_factor`)
-    baselines : int
+    baselines
         Number of baselines
-    cont_factor : int
+    cont_factor
         Number of spectral channels per continuum channel (ignored but should
         be 1 if continuum averaging is not enabled in the template).
 
@@ -937,7 +957,9 @@ class Postproc(accel.Operation):
     ValueError
         If `channels` is not a multiple of `cont_factor`
     """
-    def __init__(self, template, command_queue, channels, baselines, cont_factor):
+    def __init__(self, template: PostprocTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, baselines: int, cont_factor: int) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
@@ -964,7 +986,7 @@ class Postproc(accel.Operation):
             self.slots['cont_weights'] = accel.IOSlot(cont_dims, np.float32)
             self.slots['cont_flags'] = accel.IOSlot(cont_dims, np.uint8)
 
-    def _run(self):
+    def _run(self) -> None:
         args = [self.buffer(x).buffer for x in ['vis', 'weights', 'flags']]
         if self.template.continuum:
             args.extend([self.buffer(x).buffer
@@ -978,7 +1000,7 @@ class Postproc(accel.Operation):
             global_size=(xblocks * self.template.wgsx, yblocks * self.template.wgsy),
             local_size=(self.template.wgsx, self.template.wgsy))
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'unflagged_bit': self.template.unflagged_bit,
             'excise': self.template.excise,
@@ -995,9 +1017,9 @@ class CompressWeightsTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    tuning : mapping, optional
+    tuning
         Kernel tuning parameters; if omitted, will autotune. The possible
         parameters are
 
@@ -1006,7 +1028,8 @@ class CompressWeightsTemplate:
 
     autotune_version = 1
 
-    def __init__(self, context, tuning=None):
+    def __init__(self, context: AbstractContext,
+                 tuning: Optional[Mapping[str, Any]] = None) -> None:
         if tuning is None:
             tuning = self.autotune(context)
         self.wgsx = tuning['wgsx']
@@ -1018,7 +1041,7 @@ class CompressWeightsTemplate:
 
     @classmethod
     @tune.autotuner(test={'wgsx': 16, 'wgsy': 16})
-    def autotune(cls, context):
+    def autotune(cls, context: AbstractContext) -> Mapping[str, Any]:
         queue = context.create_tuning_command_queue()
         baselines = 1024
         channels = 2048
@@ -1027,14 +1050,15 @@ class CompressWeightsTemplate:
         weights_channel = accel.DeviceArray(context, (channels,), np.float32)
         weights_in.set(queue, np.ones(weights_in.shape, np.float32))
 
-        def generate(wgsx, wgsy):
+        def generate(wgsx: int, wgsy: int) -> Callable[[int], float]:
             fn = cls(context, {'wgsx': wgsx, 'wgsy': wgsy}).instantiate(queue, channels, baselines)
             fn.bind(weights_in=weights_in, weights_out=weights_out, weights_channel=weights_channel)
             return tune.make_measure(queue, fn)
         return tune.autotune(generate, wgsx=[8, 16, 32], wgsy=[8, 16, 32])
 
-    def instantiate(self, *args, **kwargs):
-        return CompressWeights(self, *args, **kwargs)
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, baselines: int) -> 'CompressWeights':
+        return CompressWeights(self, command_queue, channels, baselines)
 
 
 class CompressWeights(accel.Operation):
@@ -1051,16 +1075,19 @@ class CompressWeights(accel.Operation):
 
     Parameters
     ----------
-    template : class:`CompressWeightsTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    baselines : int
+    baselines
         Number of baselines
     """
-    def __init__(self, template, command_queue, channels, baselines):
+
+    def __init__(self, template: CompressWeightsTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, baselines: int) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
@@ -1073,7 +1100,7 @@ class CompressWeights(accel.Operation):
             (accel.Dimension(channels, template.wgsy), baselines), np.uint8)
         self.kernel = template.program.get_kernel('compress_weights')
 
-    def _run(self):
+    def _run(self) -> None:
         weights_out = self.buffer('weights_out')
         weights_channel = self.buffer('weights_channel')
         weights_in = self.buffer('weights_in')
@@ -1091,7 +1118,7 @@ class CompressWeights(accel.Operation):
             local_size=(self.template.wgsx, self.template.wgsy)
         )
 
-    def parameters(self):
+    def parameters(self) -> Mapping[str, Any]:
         return {
             'channels': self.channels,
             'baselines': self.baselines
@@ -1104,28 +1131,30 @@ class FinaliseTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    unflagged_bit : int
+    unflagged_bit
         Flag value used to indicate that at least one sample was not flagged
-    excise : bool
+    excise
         Flagged data is being excised (must match the argument to
         :class:`AccumTemplate`).
     """
-    def __init__(self, context, unflagged_bit, excise, continuum):
+    def __init__(self, context: AbstractContext, unflagged_bit: int,
+                 excise: bool, continuum: bool) -> None:
         self.postproc = PostprocTemplate(context, unflagged_bit, excise, continuum)
         self.compress_weights = CompressWeightsTemplate(context)
 
     @property
-    def excise(self):
+    def excise(self) -> bool:
         return self.postproc.excise
 
     @property
-    def continuum(self):
+    def continuum(self) -> bool:
         return self.postproc.continuum
 
-    def instantiate(self, *args, **kwargs):
-        return Finalise(self, *args, **kwargs)
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, baselines: int, cont_factor: int) -> 'Finalise':
+        return Finalise(self, command_queue, channels, baselines, cont_factor)
 
 
 class Finalise(accel.OperationSequence):
@@ -1162,15 +1191,15 @@ class Finalise(accel.OperationSequence):
 
     Parameters
     ----------
-    template : :class:`PostprocTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels (must be a multiple of `cont_factor`)
-    baselines : int
+    baselines
         Number of baselines
-    cont_factor : int
+    cont_factor
         Number of spectral channels per continuum channel (ignored if continuum
         averaging is disabled).
 
@@ -1180,7 +1209,9 @@ class Finalise(accel.OperationSequence):
         If `channels` is not a multiple of `cont_factor` and continuum
         averaging is enabled in the template.
     """
-    def __init__(self, template, command_queue, channels, baselines, cont_factor):
+    def __init__(self, template: FinaliseTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, baselines: int, cont_factor: int) -> None:
         self.postproc = template.postproc.instantiate(
             command_queue, channels, baselines, cont_factor)
         self.compress_weights_spec = template.compress_weights.instantiate(
@@ -1217,22 +1248,23 @@ class IngestTemplate:
 
     Parameters
     ----------
-    context : |Context|
+    context
         Context for which kernels will be compiled
-    flagger : :class:`katsdpsigproc.rfi.device.FlaggerTemplateDevice`
+    flagger
         Template for RFI flagging. It must have transposed flag outputs.
-    percentile_sizes : list of int
+    percentile_sizes
         Set of number of baselines per percentile calculation. These do not need to exactly
         match the actual sizes of the ranges passed to the instance. The smallest template
         that is big enough will be used, so an exact match is best for good performance,
         and there must be at least one that is big enough.
-    excise : bool
+    excise
         Excise flagged data by downweighting it massively.
-    continuum : bool
+    continuum
         Perform continuum averaging of L0 data.
     """
 
-    def __init__(self, context, flagger, percentile_sizes, excise, continuum):
+    def __init__(self, context: AbstractContext, flagger: rfi.device.FlaggerDeviceTemplate,
+                 percentile_sizes: Iterable[int], excise: bool, continuum: bool) -> None:
         self.context = context
         self.prepare = PrepareTemplate(context)
         self.prepare_flags = PrepareFlagsTemplate(context)
@@ -1265,15 +1297,27 @@ class IngestTemplate:
         self.zero_percentiles_flags = fill.FillTemplate(context, np.uint8, 'unsigned char')
 
     @property
-    def excise(self):
+    def excise(self) -> bool:
         return self.finalise.excise
 
     @property
-    def continuum(self):
+    def continuum(self) -> bool:
         return self.finalise.continuum
 
-    def instantiate(self, *args, **kwargs):
-        return IngestOperation(self, *args, **kwargs)
+    def instantiate(self, command_queue: AbstractCommandQueue,
+                    channels: int, channel_range: Range, count_flags_channel_range: Range,
+                    cbf_baselines: int, baselines: int, masks: int,
+                    cont_factor: int, sd_cont_factor: int,
+                    percentile_ranges: Iterable[Tuple[int, int]],
+                    background_args: Mapping[str, Any] = {},
+                    noise_est_args: Mapping[str, Any] = {},
+                    threshold_args: Mapping[str, Any] = {}) -> 'IngestOperation':
+        return IngestOperation(self, command_queue, channels,
+                               channel_range, count_flags_channel_range,
+                               cbf_baselines, baselines, masks,
+                               cont_factor, sd_cont_factor,
+                               percentile_ranges,
+                               background_args, noise_est_args, threshold_args)
 
 
 class IngestOperation(accel.OperationSequence):
@@ -1338,34 +1382,34 @@ class IngestOperation(accel.OperationSequence):
 
     Parameters
     ----------
-    template : :class:`IngestTemplate`
+    template
         Template containing the code
-    command_queue : |CommandQueue|
+    command_queue
         Command queue for the operation
-    channels : int
+    channels
         Number of channels
-    channel_range : :class:`.Range`
+    channel_range
         Range of channels that will be written to **weights**
-    count_flags_channel_range : :class:`.Range`
+    count_flags_channel_range
         Range of channels for which flags are counted
-    cbf_baselines : int
+    cbf_baselines
         Number of baselines received from CBF
-    baselines : int
+    baselines
         Number of baselines, after antenna masking
-    masks : int
+    masks
         Number of baseline-dependent channel masks
-    cont_factor : int
+    cont_factor
         Number of spectral channels per continuum channel
-    sd_cont_factor : int
+    sd_cont_factor
         Number of spectral channels to average together for signal displays
-    percentile_ranges : list of 2-tuples of ints
+    percentile_ranges
         Column range for each set of baselines (post-permutation) for which
         percentiles will be computed.
-    background_args : dict, optional
+    background_args
         Extra keyword arguments to pass to the background instantiation
-    noise_est_args : dict, optional
+    noise_est_args
         Extra keyword arguments to pass to the noise estimation instantiation
-    threshold_args : dict, optional
+    threshold_args
         Extra keyword arguments to pass to the threshold instantiation
 
     Raises
@@ -1374,11 +1418,15 @@ class IngestOperation(accel.OperationSequence):
         if the length of `channel_range` values is not a multiple of
         `cont_factor` and `sd_cont_factor`
     """
-    def __init__(
-            self, template, command_queue, channels, channel_range, count_flags_channel_range,
-            cbf_baselines, baselines, masks,
-            cont_factor, sd_cont_factor, percentile_ranges,
-            background_args={}, noise_est_args={}, threshold_args={}):
+    def __init__(self, template: IngestTemplate,
+                 command_queue: AbstractCommandQueue,
+                 channels: int, channel_range: Range, count_flags_channel_range: Range,
+                 cbf_baselines: int, baselines: int, masks: int,
+                 cont_factor: int, sd_cont_factor: int,
+                 percentile_ranges: Iterable[Tuple[int, int]],
+                 background_args: Mapping[str, Any] = {},
+                 noise_est_args: Mapping[str, Any] = {},
+                 threshold_args: Mapping[str, Any] = {}) -> None:
         if template.continuum and len(channel_range) % cont_factor:
             raise ValueError('channel_range length is not a multiple of cont_factor')
         if len(channel_range) % sd_cont_factor:
@@ -1422,8 +1470,8 @@ class IngestOperation(accel.OperationSequence):
             command_queue, kept_channels, baselines)
         self.compress_weights_sd_cont = template.compress_weights.instantiate(
             command_queue, kept_channels // sd_cont_factor, baselines)
-        self.percentiles = []
-        self.percentiles_flags = []
+        self.percentiles = []         # type: List[accel.Operation]
+        self.percentiles_flags = []   # type: List[accel.Operation]
         for prange in percentile_ranges:
             size = prange[1] - prange[0]
             ptemplate = None
@@ -1442,12 +1490,12 @@ class IngestOperation(accel.OperationSequence):
                     template.percentiles_flags.instantiate(
                         command_queue, (kept_channels, baselines), prange))
             else:
-                self.percentiles.append(
-                    template.nan_percentiles.instantiate(command_queue, (5, kept_channels)))
-                self.percentiles[-1].set_value(np.nan)
-                self.percentiles_flags.append(
-                    template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,)))
-                self.percentiles_flags[-1].set_value(0)
+                p = template.nan_percentiles.instantiate(command_queue, (5, kept_channels))
+                p.set_value(np.nan)
+                self.percentiles.append(p)
+                pf = template.zero_percentiles_flags.instantiate(command_queue, (kept_channels,))
+                pf.set_value(0)
+                self.percentiles_flags.append(pf)
 
         # The order of these does not matter, since the actual sequencing is
         # done by methods in this class.
@@ -1503,13 +1551,13 @@ class IngestOperation(accel.OperationSequence):
             'timeseries':     ['timeseries:dest'],
             'timeseriesabs':  ['timeseriesabs:dest']
         }
-        for i in ['', 'sd_']:
+        for prefix in ['', 'sd_']:
             for j in ['spec', 'cont']:
-                if not template.continuum and (i == '' and j == 'cont'):
+                if not template.continuum and (prefix == '' and j == 'cont'):
                     continue
                 for k in ['vis', 'flags', 'weights_fp32', 'weights', 'weights_channel']:
-                    source = '{i}finalise:{j}_{k}'.format(i=i, j=j, k=k)
-                    sink = '{i}{j}_{k}'.format(i=i, j=j, k=k)
+                    source = '{prefix}finalise:{j}_{k}'.format(prefix=prefix, j=j, k=k)
+                    sink = '{prefix}{j}_{k}'.format(prefix=prefix, j=j, k=k)
                     compounds.setdefault(sink, []).append(source)
         for i in range(len(self.percentiles)):
             name = 'percentile{0}'.format(i)
@@ -1531,15 +1579,15 @@ class IngestOperation(accel.OperationSequence):
         super().__init__(command_queue, operations, compounds, aliases)
 
     @property
-    def n_accs(self):
+    def n_accs(self) -> int:
         return self.prepare.n_accs
 
     @n_accs.setter
-    def n_accs(self, n):
+    def n_accs(self, n: int) -> None:
         self.prepare.n_accs = n
         self.init_weights.set_value(n)
 
-    def _run(self):
+    def _run(self) -> None:
         """Process a single input dump"""
         self.prepare()
         self.init_weights()
@@ -1554,20 +1602,20 @@ class IngestOperation(accel.OperationSequence):
         self.count_flags()
         self.accum()
 
-    def start_sum(self, **kwargs):
+    def start_sum(self, **kwargs) -> None:
         """Reset accumulation buffers for a new output dump"""
         self.bind(**kwargs)
         self.ensure_all_bound()
 
         self.zero_spec()
 
-    def end_sum(self):
+    def end_sum(self) -> None:
         """Perform postprocessing for an output dump. This only does
         on-device processing; it does not transfer the results to the host.
         """
         self.finalise()
 
-    def start_sd_sum(self, **kwargs):
+    def start_sd_sum(self, **kwargs) -> None:
         """Reset accumulation buffers for a new signal display dump"""
         self.bind(**kwargs)
         self.ensure_all_bound()
@@ -1576,7 +1624,7 @@ class IngestOperation(accel.OperationSequence):
         self.buffer('sd_flag_counts').zero(self.command_queue)
         self.buffer('sd_flag_any_counts').zero(self.command_queue)
 
-    def end_sd_sum(self):
+    def end_sd_sum(self) -> None:
         """Perform postprocessing for a signal display dump. This only does
         on-device processing; it does not transfer the results to the host.
         """
@@ -1587,12 +1635,14 @@ class IngestOperation(accel.OperationSequence):
             p()
             f()
 
-    def descriptions(self):
+    def descriptions(self) -> List[Tuple[str, Mapping[str, Any]]]:
         """Generate descriptions of all the components.
 
         Each description is a 2-tuple consisting of a component name and
-        a dictionary of parameters describing the operation."""
-        def generate(operation, name):
+        a dictionary of parameters describing the operation.
+        """
+        def generate(operation: accel.Operation,
+                     name: str) -> Generator[Tuple[str, Mapping[str, Any]], None, None]:
             parameters = dict(operation.parameters())
             parameters['class'] = (operation.__class__.__module__ + '.'
                                    + operation.__class__.__name__)
