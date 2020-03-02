@@ -5,6 +5,7 @@ appdirs                   # via katsdpsigproc
 async-timeout             # via aiokatcp
 certifi                   # via requests
 chardet                   # via requests
+cityhash                  # via katdal
 dask                      # via katdal
 decorator                 # via katsdpsigproc
 defusedxml                # via katdal
