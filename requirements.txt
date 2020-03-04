@@ -8,7 +8,6 @@ chardet                   # via requests
 cityhash                  # via katdal
 dask                      # via katdal
 decorator                 # via katsdpsigproc
-defusedxml                # via katdal
 fakeredis                 # via katsdptelstate
 funcsigs                  # via numba
 future                    # via katdal
