@@ -11,11 +11,9 @@ decorator                 # via katsdpsigproc
 fakeredis                 # via katsdptelstate
 funcsigs                  # via numba
 future                    # via katdal
-futures                   # via katsdpsigproc
 h5py                      # via katdal
 hiredis                   # via katsdptelstate
 idna                      # via requests
-ipaddress                 # via katsdptelstate
 katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
