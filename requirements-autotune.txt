@@ -1,10 +1,7 @@
-backports.ssl-match-hostname    # via docker
 certifi                   # via requests
 chardet                   # via requests
-docker-pycreds==0.4.0     # via docker
-docker==4.0.2
+docker==4.2.0
 idna                      # via requests
-ipaddress                 # via docker
 requests                  # via docker
 six                       # via docker, docker-pycreds
 urllib3                   # via requests

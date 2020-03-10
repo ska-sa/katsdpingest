@@ -8,8 +8,7 @@ chardet                   # via requests
 cityhash                  # via katdal
 dask                      # via katdal
 decorator                 # via katsdpsigproc
-fakeredis                 # via katsdptelstate
-funcsigs                  # via numba
+ephem                     # via pyephem
 future                    # via katdal
 h5py                      # via katdal
 hiredis                   # via katsdptelstate
@@ -23,12 +22,10 @@ netifaces                 # via katsdptelstate
 numba                     # via katsdpsigproc
 numpy
 pandas                    # via katsdpsigproc
-py                        # via pytest
 pycuda
 pyephem                   # via katpoint
 pygelf                    # via katsdpservices
 pyjwt                     # via katdal
-pytest                    # via pycuda
 python-dateutil           # via pandas
 pytools                   # via pycuda
 pytz                      # via pandas
