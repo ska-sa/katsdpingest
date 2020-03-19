@@ -25,7 +25,7 @@ catchError {
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
                 katsdp.unpackKatsdpdockerbase()
-                katsdp.virtualenv('venv3') {
+                katsdp.virtualenv('venv') {
                     dir('git') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
                             sh './jenkins-autotune.sh geforce_gtx_titan_x'
