@@ -1,5 +1,4 @@
 [flake8]
-exclude = katsdpbfingest katsdpcam2telstate
 max-line-length = 100
 ignore =
     # whitespace before ':' - flake8 doesn't handle slices properly
