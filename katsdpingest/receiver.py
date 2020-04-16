@@ -270,11 +270,12 @@ class Receiver:
         heap_data_size = np.dtype(np.complex64).itemsize * heap_channels * baselines
         stream_xengs = stream_channels // heap_channels
         # It's possible for a heap from each X engine and a descriptor heap
-        # per endpoint to all arrive at once. We assume that each xengine will
-        # not overlap packets between heaps, and that there is enough of a gap
-        # between heaps that reordering in the network is a non-issue.
+        # per endpoint to all arrive at once.
         ring_heaps = stream_xengs + len(endpoints)
-        max_heaps = ring_heaps
+        # Additionally, reordering in the network can cause the end of one dump
+        # to overlap with the start of the next, for which we need to allow for
+        # an extra stream_xengs.
+        max_heaps = ring_heaps + stream_xengs
         # We need space in the memory pool for:
         # - live heaps (max_heaps, plus a newly incoming heap)
         # - ringbuffer heaps
