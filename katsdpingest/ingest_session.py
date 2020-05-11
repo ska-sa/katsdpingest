@@ -1485,6 +1485,7 @@ class CBFIngest:
         for tx in self.tx.values():
             await tx.start()
         # Initialise the input stream
+        assert self.capture_block_id is not None
         prefixes = [self.telstate.join(self.capture_block_id, l0_name)
                     for l0_name in self.l0_names]
         telstates = [self.telstate.view(prefix) for prefix in prefixes]
