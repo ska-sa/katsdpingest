@@ -8,6 +8,7 @@ import enum
 import argparse
 import textwrap
 import gc
+import urllib.parse
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
@@ -21,6 +22,10 @@ import spead2.recv.asyncio
 import katsdpsigproc.accel
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
+
+import requests
+import katsdpmodels.fetch
+import katsdpmodels.rfi_mask
 
 import katsdpservices
 
@@ -542,6 +547,7 @@ class CBFIngest:
     capture_block_id : str
         Current capture block ID, or ``None`` if not capturing
     """
+
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
@@ -611,6 +617,21 @@ class CBFIngest:
         self.output_dumps_sensor.set_value(0, timestamp=now)
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
+
+    def _init_models(self) -> None:
+        self._rfi_mask_model = None
+        try:
+            base_url = self.telstate['sdp_model_base_url']
+            rfi_mask_rel_url = self.telstate['rfi_mask_model_fixed']
+        except KeyError:
+            logger.info('Telescope state did not specify an RFI model')
+            return
+        try:
+            rfi_mask_url = urllib.parse.urljoin(base_url, rfi_mask_rel_url)
+            self._rfi_mask_model = katsdpmodels.fetch.fetch_model(rfi_mask_url,
+                                                                  katsdpmodels.rfi_mask.RFIMask)
+        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load RFI mask model: %s', exc, exc_info=True)
 
     def _init_baselines(self, antenna_mask: Iterable[str]) -> None:
         # Configure the masking and reordering of baselines
@@ -915,6 +936,7 @@ class CBFIngest:
         self.src_stream = args.cbf_name
         self.use_data_suspect = args.use_data_suspect
 
+        self._init_models()
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
         self._init_sensors(my_sensors)
@@ -1427,6 +1449,9 @@ class CBFIngest:
             del self.output_resource
             del self.sd_input_resource
             del self.sd_output_resource
+        if self._rfi_mask_model is not None:
+            self._rfi_mask_model.close()
+            self._rfi_mask_model = None
 
     async def _get_data(self) -> None:
         """Receive data. This is called after the metadata has been retrieved."""

@@ -27,7 +27,8 @@ setup(
         'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate',
         'katpoint',
-        'katdal'
+        'katdal',
+        'katsdpmodels'
     ],
     extras_require={
         'test': tests_require
