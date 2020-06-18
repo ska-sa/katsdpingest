@@ -45,7 +45,7 @@ urllib3                   # via requests
 # SpectralWindow class has shipped.
 katdal @ git+https://github.com/ska-sa/katdal
 katpoint @ git+https://github.com/ska-sa/katpoint
-katsdpmodels @ git+https://github.com/ska-sa/katsdpmodels@first-version
+katsdpmodels @ git+https://github.com/ska-sa/katsdpmodels
 katsdpsigproc @ git+https://github.com/ska-sa/katsdpsigproc
 katsdpservices @ git+https://github.com/ska-sa/katsdpservices
 katsdptelstate @ git+https://github.com/ska-sa/katsdptelstate

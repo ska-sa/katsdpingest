@@ -8,6 +8,7 @@ katsdp.setDependencies([
     'ska-sa/katsdpdockerbase/master',
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master',
+    'ska-sa/katsdpmodels/master',
     'ska-sa/katdal'])
 
 catchError {
