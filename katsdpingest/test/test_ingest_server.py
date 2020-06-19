@@ -230,7 +230,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
             ['i0_antenna_channelised_voltage']
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
         self._telstate['sdp_model_base_url'] = 'http://test.invalid/'
-        self._telstate['rfi_mask_model_fixed'] = 'rfi_mask/hash/sha256_deadbeef.hdf5'
+        rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
+        self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
                            self.fake_channel_mask(), ts=0)
         self._telstate.add('m090_data_suspect', False, ts=0)

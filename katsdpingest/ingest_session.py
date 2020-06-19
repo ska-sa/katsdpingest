@@ -624,7 +624,8 @@ class CBFIngest:
         self._rfi_mask_model = None
         try:
             base_url = self.telstate['sdp_model_base_url']
-            rfi_mask_rel_url = self.telstate['rfi_mask_model_fixed']
+            rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
+            rfi_mask_rel_url = self.telstate[rfi_mask_model_key]
         except KeyError:
             logger.info('Telescope state did not specify an RFI model')
             return
