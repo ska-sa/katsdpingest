@@ -32,11 +32,10 @@ pytools                   # via pycuda
 pytz                      # via pandas
 redis                     # via katsdptelstate
 requests                  # via katdal, katsdpmodels
-requests_file==1.5.1      # via katsdpmodels
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
 spead2
-strict_rfc3339==0.7       # via katsdpmodels
+strict-rfc3339            # via katsdpmodels
 terminaltables            # via aiomonitor
 typing_extensions         # via katsdpsigproc, katsdpmodels
 toolz                     # via dask

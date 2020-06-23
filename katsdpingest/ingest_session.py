@@ -25,7 +25,7 @@ import katsdpsigproc.accel
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 
-import katsdpmodels.fetch
+import katsdpmodels.fetch.requests
 import katsdpmodels.rfi_mask
 
 import katsdpservices
@@ -631,8 +631,8 @@ class CBFIngest:
             return
         try:
             rfi_mask_url = urllib.parse.urljoin(base_url, rfi_mask_rel_url)
-            self._rfi_mask_model = katsdpmodels.fetch.fetch_model(rfi_mask_url,
-                                                                  katsdpmodels.rfi_mask.RFIMask)
+            self._rfi_mask_model = katsdpmodels.fetch.requests.fetch_model(
+                rfi_mask_url, katsdpmodels.rfi_mask.RFIMask)
         except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
             logger.warning('Failed to load RFI mask model: %s', exc, exc_info=True)
 

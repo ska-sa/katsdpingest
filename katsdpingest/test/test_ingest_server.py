@@ -275,7 +275,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
-        self._patch('katsdpmodels.fetch.Fetcher.get', return_value=self.fake_rfi_mask_model())
+        self._patch('katsdpmodels.fetch.requests.Fetcher.get',
+                    return_value=self.fake_rfi_mask_model())
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)

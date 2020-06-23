@@ -28,7 +28,7 @@ setup(
         'katsdptelstate',
         'katpoint',
         'katdal',
-        'katsdpmodels'
+        'katsdpmodels[requests]'
     ],
     extras_require={
         'test': tests_require
