@@ -174,7 +174,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
              [1500, np.inf] * u.m],
             names=('min_frequency', 'max_frequency', 'max_baseline')
         )
-        return katsdpmodels.rfi_mask.RFIMaskRanges(ranges)
+        return katsdpmodels.rfi_mask.RFIMaskRanges(ranges, False)
 
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
@@ -353,10 +353,12 @@ class TestIngestDeviceServer(asynctest.TestCase):
                 # input_data_suspect is True
                 flags[:, :, i] |= CAM
             flags[:, :, i] |= channel_mask * np.uint8(STATIC)
-            flags[:, 1024, i] |= np.uint8(STATIC)   # RFI model
-            if a.startswith('m093') == b.startswith('m093'):
-                # Short baseline
-                flags[:, 852:857, i] |= np.uint8(STATIC)
+            if a[:-1] != b[:-1]:
+                # RFI model, which doesn't apply to auto-correlations
+                flags[:, 1024, i] |= np.uint8(STATIC)
+                if a.startswith('m093') == b.startswith('m093'):
+                    # Short baseline
+                    flags[:, 852:857, i] |= np.uint8(STATIC)
         return vis, flags, timestamps
 
     def _channel_average(self, vis, factor):
