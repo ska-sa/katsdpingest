@@ -9,7 +9,9 @@ import argparse
 import textwrap
 import gc
 import urllib.parse
-from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
+from typing import (
+    Mapping, Dict, List, Tuple, Set, Iterable, Optional, Type, TypeVar, Any
+)    # noqa: F401
 
 import numpy as np
 import astropy.units as u
@@ -26,6 +28,7 @@ from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 
 import katsdpmodels.fetch.requests
+import katsdpmodels.band_mask
 import katsdpmodels.rfi_mask
 
 import katsdpservices
@@ -46,6 +49,7 @@ CBF_CRITICAL_ATTRS = frozenset([
     'n_chans', 'n_chans_per_substream', 'n_accs', 'bls_ordering',
     'bandwidth', 'center_freq', 'input_labels',
     'sync_time', 'int_time', 'scale_factor_timestamp', 'ticks_between_spectra'])
+_M = TypeVar('_M', bound='katsdpmodels.models.Model')
 
 
 class Status(enum.Enum):
@@ -183,6 +187,26 @@ def _fix_descriptions(desc: Any) -> Any:
             return str(desc)
     else:
         return desc
+
+
+def _load_model(telstate: katsdptelstate.TelescopeState,
+                base_url: str, key: str,
+                fetcher: katsdpmodels.fetch.requests.Fetcher,
+                model_class: Type[_M]) -> Optional[_M]:
+    # The type: ignore is for pre-commit, which doesn't have access to
+    # katsdpmodels and hence treats Type[_M] as Type[Any].
+    model_type = model_class.model_type        # type: ignore
+    try:
+        rel_url = telstate[key]
+    except KeyError:
+        logger.warning('Telescope state did not specify a %s model', model_type)
+        return None
+    try:
+        url = urllib.parse.urljoin(base_url, rel_url)
+        return fetcher.get(url, model_class)
+    except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+        logger.warning('Failed to load %s model: %s', model_type, exc, exc_info=True)
+        return None
 
 
 class ChannelRanges:
@@ -620,21 +644,21 @@ class CBFIngest:
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
 
-    def _init_models(self) -> None:
-        self._rfi_mask_model = None
+    def _load_models(self, fetcher: katsdpmodels.fetch.requests.Fetcher) -> \
+            Tuple[Optional[katsdpmodels.rfi_mask.RFIMask],
+                  Optional[katsdpmodels.band_mask.BandMask]]:
         try:
             base_url = self.telstate['sdp_model_base_url']
-            rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
-            rfi_mask_rel_url = self.telstate[rfi_mask_model_key]
         except KeyError:
-            logger.warning('Telescope state did not specify an RFI model')
-            return
-        try:
-            rfi_mask_url = urllib.parse.urljoin(base_url, rfi_mask_rel_url)
-            self._rfi_mask_model = katsdpmodels.fetch.requests.fetch_model(
-                rfi_mask_url, katsdpmodels.rfi_mask.RFIMask)
-        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
-            logger.warning('Failed to load RFI mask model: %s', exc, exc_info=True)
+            logger.warning('Telescope state did not specify a base URL for models')
+            return None, None
+        rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
+        rfi_mask_model = _load_model(self.telstate, base_url, rfi_mask_model_key,
+                                     fetcher, katsdpmodels.rfi_mask.RFIMask)
+        band_mask_model_key = self.telstate.join('model', 'band_mask', 'fixed')
+        band_mask_model = _load_model(self.telstate_cbf, base_url, band_mask_model_key,
+                                      fetcher, katsdpmodels.band_mask.BandMask)
+        return rfi_mask_model, band_mask_model
 
     def _init_baselines(self, antenna_mask: Iterable[str]) -> None:
         # Configure the masking and reordering of baselines
@@ -643,35 +667,45 @@ class CBFIngest:
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 self.cbf_attr['bls_ordering'], antenna_mask))
 
-        # Pre-compute channel masks from the RFI model
-        if self._rfi_mask_model is not None:
-            bls = self.bls_ordering.sdp_bls_ordering
-            antenna_names = set(input_name[:-1] for input_name in bls.flat)
-            antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
-                        for name in antenna_names]
-            ref = antennas[0].array_reference_antenna()
-            # Turn each antenna into a location East/North/Up of the reference
-            locations = {antenna.name: np.array(ref.baseline_toward(antenna))
-                         for antenna in antennas}
-            lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
-                                for (a, b) in bls]) << u.m
+        # Pre-compute channel masks from the RFI mask and band mask models
+        with katsdpmodels.fetch.requests.Fetcher() as fetcher:
+            rfi_mask_model, band_mask_model = self._load_models(fetcher)
             cbf_spw = SpectralWindow(
                 self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
                 bandwidth=self.cbf_attr['bandwidth'], sideband=1)
             spw = cbf_spw.subrange(self.channel_ranges.input.start,
                                    self.channel_ranges.input.stop)
             freqs = spw.channel_freqs << u.Hz
-            # Get masks as a baseline x freq array
-            masks = self._rfi_mask_model.is_masked(freqs[np.newaxis, :], lengths[:, np.newaxis])
-            # Typically the model will only have a few threshold lengths, so
-            # most rows will be the same. Reduce it to just unique rows, with
-            # a lookup table.
-            masks, indices = np.unique(masks, axis=0, return_inverse=True)
-            self.bls_channel_mask_idx = indices.astype(np.uint32)
-            self.static_masks = masks * np.uint8(STATIC)
-        else:
-            self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering), np.uint32)
-            self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
+            if rfi_mask_model is not None:
+                bls = self.bls_ordering.sdp_bls_ordering
+                antenna_names = set(input_name[:-1] for input_name in bls.flat)
+                antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
+                            for name in antenna_names]
+                ref = antennas[0].array_reference_antenna()
+                # Turn each antenna into a location East/North/Up of the reference
+                locations = {antenna.name: np.array(ref.baseline_toward(antenna))
+                             for antenna in antennas}
+                lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
+                                    for (a, b) in bls]) << u.m
+                # Get masks as a baseline x freq array
+                masks = rfi_mask_model.is_masked(freqs[np.newaxis, :], lengths[:, np.newaxis])
+                # Typically the model will only have a few threshold lengths, so
+                # most rows will be the same. Reduce it to just unique rows, with
+                # a lookup table.
+                masks, indices = np.unique(masks, axis=0, return_inverse=True)
+                self.bls_channel_mask_idx = indices.astype(np.uint32)
+                self.static_masks = masks * np.uint8(STATIC)
+            else:
+                self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering),
+                                                     np.uint32)
+                self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
+            if band_mask_model is not None:
+                band_spw = katsdpmodels.band_mask.SpectralWindow(
+                    cbf_spw.bandwidth * u.Hz,
+                    cbf_spw.centre_freq * u.Hz
+                )
+                mask = band_mask_model.is_masked(band_spw, freqs)
+                self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
@@ -954,7 +988,6 @@ class CBFIngest:
         self.src_stream = args.cbf_name
         self.use_data_suspect = args.use_data_suspect
 
-        self._init_models()
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
         self._init_sensors(my_sensors)
@@ -1471,9 +1504,6 @@ class CBFIngest:
             del self.output_resource
             del self.sd_input_resource
             del self.sd_output_resource
-        if self._rfi_mask_model is not None:
-            self._rfi_mask_model.close()
-            self._rfi_mask_model = None
 
     async def _get_data(self) -> None:
         """Receive data. This is called after the metadata has been retrieved."""
