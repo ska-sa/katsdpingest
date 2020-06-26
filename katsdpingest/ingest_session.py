@@ -627,7 +627,7 @@ class CBFIngest:
             rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
             rfi_mask_rel_url = self.telstate[rfi_mask_model_key]
         except KeyError:
-            logger.info('Telescope state did not specify an RFI model')
+            logger.warning('Telescope state did not specify an RFI model')
             return
         try:
             rfi_mask_url = urllib.parse.urljoin(base_url, rfi_mask_rel_url)
