@@ -753,7 +753,7 @@ class Accum(accel.Operation):
         Command queue for the operation
     channels
         Number of channels
-    change_range
+    channel_range
         Interval of channels that will appear in the output and in **weights_in**
     baselines
         Number of baselines
