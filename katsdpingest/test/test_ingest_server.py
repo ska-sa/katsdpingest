@@ -21,6 +21,9 @@ import katsdptelstate
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
+import katsdpmodels.rfi_mask
+import astropy.table
+import astropy.units as u
 
 from katsdpingest.utils import Range
 from katsdpingest.ingest_server import IngestDeviceServer
@@ -91,6 +94,7 @@ class MockReceiver:
 
 class DeepCopyMock(mock.MagicMock):
     """Mock that takes deep copies of its arguments when called."""
+
     def __call__(self, *args, **kwargs):
         return super().__call__(*copy.deepcopy(args), **copy.deepcopy(kwargs))
 
@@ -117,6 +121,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
     lost data and so on. It is intended to check that the katcp commands
     function and that the correct channels are sent to the correct places.
     """
+
     def _patch(self, *args, **kwargs):
         patcher = mock.patch(*args, **kwargs)
         mock_obj = patcher.start()
@@ -155,14 +160,21 @@ class TestIngestDeviceServer(asynctest.TestCase):
         return data, timestamps
 
     def fake_channel_mask(self):
-        channel_mask = np.zeros((2, self.cbf_attr['n_chans']), np.bool_)
-        channel_mask[0, 464] = True
-        channel_mask[0, 700:800] = True
-        channel_mask[0, 900] = True
-        channel_mask[1, 500] = True
-        channel_mask[1, 200:330] = True
-        channel_mask[1, 900:905] = True
+        channel_mask = np.zeros((self.cbf_attr['n_chans']), np.bool_)
+        channel_mask[704] = True
+        channel_mask[750:800] = True
+        channel_mask[900] = True
         return channel_mask
+
+    def fake_rfi_mask_model(self):
+        # Channels 852:857 and 1024
+        ranges = astropy.table.QTable(
+            [[1034e6, 1070.0e6] * u.Hz,
+             [1035e6, 1070.0e6] * u.Hz,
+             [1500, np.inf] * u.m],
+            names=('min_frequency', 'max_frequency', 'max_baseline')
+        )
+        return katsdpmodels.rfi_mask.RFIMaskRanges(ranges, False)
 
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
@@ -217,10 +229,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._telstate['i0_baseline_correlation_products_src_streams'] = \
             ['i0_antenna_channelised_voltage']
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
+        self._telstate['sdp_model_base_url'] = 'http://test.invalid/'
+        rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
+        self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
                            self.fake_channel_mask(), ts=0)
-        self._telstate['i0_antenna_channelised_voltage_channel_mask_max_baseline_lengths'] = \
-            [1500.0]
         self._telstate.add('m090_data_suspect', False, ts=0)
         self._telstate.add('m091_data_suspect', True, ts=0)
         input_data_suspect = np.zeros(len(self.cbf_attr['input_labels']), np.bool_)
@@ -262,6 +275,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
+        self._patch('katsdpmodels.fetch.requests.Fetcher.get',
+                    return_value=self.fake_rfi_mask_model())
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
@@ -337,12 +352,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
             if a == 'm090v' or b == 'm090v':
                 # input_data_suspect is True
                 flags[:, :, i] |= CAM
-            if a.startswith('m093') ^ b.startswith('m093'):
-                # Long baseline
-                flags[:, :, i] |= channel_mask[1] * np.uint8(STATIC)
-            else:
-                # Short baseline
-                flags[:, :, i] |= channel_mask[0] * np.uint8(STATIC)
+            flags[:, :, i] |= channel_mask * np.uint8(STATIC)
+            if a[:-1] != b[:-1]:
+                # RFI model, which doesn't apply to auto-correlations
+                flags[:, 1024, i] |= np.uint8(STATIC)
+                if a.startswith('m093') == b.startswith('m093'):
+                    # Short baseline
+                    flags[:, 852:857, i] |= np.uint8(STATIC)
         return vis, flags, timestamps
 
     def _channel_average(self, vis, factor):

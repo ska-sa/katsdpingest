@@ -21,13 +21,14 @@ setup(
     install_requires=[
         'aiokatcp>=0.7.0',   # Need 0.7 for auto_strategy
         'aiomonitor',
-        'numpy',
-        'spead2>=1.8.0',   # Needed for inproc transport for unit tests
+        'numpy>=1.13.0',     # For np.unique with axis (might really need a higher version)
+        'spead2>=1.8.0',     # Needed for inproc transport for unit tests
         'katsdpsigproc',
         'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate',
         'katpoint',
-        'katdal'
+        'katdal',
+        'katsdpmodels[requests]'
     ],
     extras_require={
         'test': tests_require

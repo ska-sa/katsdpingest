@@ -2,6 +2,7 @@ aioconsole                # via aiomonitor
 aiokatcp
 aiomonitor
 appdirs                   # via katsdpsigproc
+astropy                   # via katsdpmodels
 async-timeout             # via aiokatcp
 certifi                   # via requests
 chardet                   # via requests
@@ -10,7 +11,7 @@ dask                      # via katdal
 decorator                 # via katsdpsigproc
 ephem                     # via pyephem
 future                    # via katdal
-h5py                      # via katdal
+h5py                      # via katdal, katsdpmodels
 hiredis                   # via katsdptelstate
 idna                      # via requests
 katversion
@@ -30,18 +31,20 @@ python-dateutil           # via pandas
 pytools                   # via pycuda
 pytz                      # via pandas
 redis                     # via katsdptelstate
-requests                  # via katdal
+requests                  # via katdal, katsdpmodels
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
 spead2
+strict-rfc3339            # via katsdpmodels
 terminaltables            # via aiomonitor
-typing_extensions         # via katsdpsigproc
+typing_extensions         # via katsdpsigproc, katsdpmodels
 toolz                     # via dask
 urllib3                   # via requests
 # TODO: eventually switch to using a release of katdal, once the enhanced
 # SpectralWindow class has shipped.
 katdal @ git+https://github.com/ska-sa/katdal
 katpoint @ git+https://github.com/ska-sa/katpoint
+katsdpmodels @ git+https://github.com/ska-sa/katsdpmodels
 katsdpsigproc @ git+https://github.com/ska-sa/katsdpsigproc
 katsdpservices @ git+https://github.com/ska-sa/katsdpservices
 katsdptelstate @ git+https://github.com/ska-sa/katsdptelstate

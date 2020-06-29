@@ -8,9 +8,12 @@ import enum
 import argparse
 import textwrap
 import gc
+import urllib.parse
 from typing import Mapping, Dict, List, Tuple, Set, Iterable, Optional, Any   # noqa: F401
 
 import numpy as np
+import astropy.units as u
+import requests
 
 import spead2
 import spead2.send
@@ -21,6 +24,9 @@ import spead2.recv.asyncio
 import katsdpsigproc.accel
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
+
+import katsdpmodels.fetch.requests
+import katsdpmodels.rfi_mask
 
 import katsdpservices
 
@@ -533,8 +539,9 @@ class CBFIngest:
     bls_channel_mask_idx : :class:`np.ndarray`, 1D
         Index into list of channel masks for each baseline. The baselines
         correspond to `bls_ordering.sdp_bls_ordering`.
-    n_channel_masks : int
-        Number of channel masks indexed by bls_channel_mask_idx
+    static_masks : :class:`np.ndarray`, 2D
+        Static channel masks. Each row contains one channel mask, and the
+        rows are indexed by the values in bls_channel_mask_idx.
     telstate : :class:`katsdptelstate.TelescopeState`
         Global view of telescope state
     l0_names : list of str
@@ -542,6 +549,7 @@ class CBFIngest:
     capture_block_id : str
         Current capture block ID, or ``None`` if not capturing
     """
+
     # To avoid excessive autotuning, the following parameters are quantised up
     # to the next element of these lists when generating templates. These
     # lists are also used by ingest_autotune.py for pre-tuning standard
@@ -612,6 +620,22 @@ class CBFIngest:
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
 
+    def _init_models(self) -> None:
+        self._rfi_mask_model = None
+        try:
+            base_url = self.telstate['sdp_model_base_url']
+            rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
+            rfi_mask_rel_url = self.telstate[rfi_mask_model_key]
+        except KeyError:
+            logger.warning('Telescope state did not specify an RFI model')
+            return
+        try:
+            rfi_mask_url = urllib.parse.urljoin(base_url, rfi_mask_rel_url)
+            self._rfi_mask_model = katsdpmodels.fetch.requests.fetch_model(
+                rfi_mask_url, katsdpmodels.rfi_mask.RFIMask)
+        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load RFI mask model: %s', exc, exc_info=True)
+
     def _init_baselines(self, antenna_mask: Iterable[str]) -> None:
         # Configure the masking and reordering of baselines
         self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
@@ -619,20 +643,35 @@ class CBFIngest:
             raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
                 self.cbf_attr['bls_ordering'], antenna_mask))
 
-        # Determine which channel mask to use for each baseline
-        thresholds = np.array(self.telstate_cbf.get('channel_mask_max_baseline_lengths', []))
-        bls = self.bls_ordering.sdp_bls_ordering
-        antenna_names = set(input_name[:-1] for input_name in bls.flat)
-        antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
-                    for name in antenna_names]
-        ref = antennas[0].array_reference_antenna()
-        # Turn each antenna into a location East/North/Up of the reference
-        locations = {antenna.name: np.array(ref.baseline_toward(antenna))
-                     for antenna in antennas}
-        lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
-                            for (a, b) in bls])
-        self.bls_channel_mask_idx = np.searchsorted(thresholds, lengths, 'right').astype(np.uint32)
-        self.n_channel_masks = len(thresholds) + 1
+        # Pre-compute channel masks from the RFI model
+        if self._rfi_mask_model is not None:
+            bls = self.bls_ordering.sdp_bls_ordering
+            antenna_names = set(input_name[:-1] for input_name in bls.flat)
+            antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
+                        for name in antenna_names]
+            ref = antennas[0].array_reference_antenna()
+            # Turn each antenna into a location East/North/Up of the reference
+            locations = {antenna.name: np.array(ref.baseline_toward(antenna))
+                         for antenna in antennas}
+            lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
+                                for (a, b) in bls]) << u.m
+            cbf_spw = SpectralWindow(
+                self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+                bandwidth=self.cbf_attr['bandwidth'], sideband=1)
+            spw = cbf_spw.subrange(self.channel_ranges.input.start,
+                                   self.channel_ranges.input.stop)
+            freqs = spw.channel_freqs << u.Hz
+            # Get masks as a baseline x freq array
+            masks = self._rfi_mask_model.is_masked(freqs[np.newaxis, :], lengths[:, np.newaxis])
+            # Typically the model will only have a few threshold lengths, so
+            # most rows will be the same. Reduce it to just unique rows, with
+            # a lookup table.
+            masks, indices = np.unique(masks, axis=0, return_inverse=True)
+            self.bls_channel_mask_idx = indices.astype(np.uint32)
+            self.static_masks = masks * np.uint8(STATIC)
+        else:
+            self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering), np.uint32)
+            self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
@@ -677,7 +716,7 @@ class CBFIngest:
             self.channel_ranges.sd_output.relative_to(self.channel_ranges.input),
             len(self.cbf_attr['bls_ordering']),
             len(self.bls_ordering.sdp_bls_ordering),
-            self.n_channel_masks,
+            self.static_masks.shape[0],
             self.channel_ranges.cont_factor,
             self.channel_ranges.sd_cont_factor,
             self.bls_ordering.percentile_ranges,
@@ -915,6 +954,7 @@ class CBFIngest:
         self.src_stream = args.cbf_name
         self.use_data_suspect = args.use_data_suspect
 
+        self._init_models()
         self._init_baselines(args.antenna_mask)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
         self._init_sensors(my_sensors)
@@ -1254,9 +1294,13 @@ class CBFIngest:
 
         channel_mask_sensor = sensor_value(self.telstate_cbf, 'channel_mask')
         if channel_mask_sensor is not None:
-            channel_mask[:] = channel_mask_sensor[:, channel_slice] * static_flag
+            if channel_mask_sensor.ndim == 2:
+                logger.warning('2D channel_mask is no longer supported - update katsdpcam2telstate')
+                channel_mask_sensor = channel_mask_sensor[0, channel_slice]
+            dynamic_masks = channel_mask_sensor[channel_slice] * static_flag
+            channel_mask[:] = self.static_masks | dynamic_masks
         else:
-            channel_mask.fill(0)
+            channel_mask[:] = self.static_masks
 
         if self.use_data_suspect:
             channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
@@ -1427,6 +1471,9 @@ class CBFIngest:
             del self.output_resource
             del self.sd_input_resource
             del self.sd_output_resource
+        if self._rfi_mask_model is not None:
+            self._rfi_mask_model.close()
+            self._rfi_mask_model = None
 
     async def _get_data(self) -> None:
         """Receive data. This is called after the metadata has been retrieved."""
