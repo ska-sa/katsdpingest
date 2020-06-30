@@ -1296,7 +1296,7 @@ class CBFIngest:
         if channel_mask_sensor is not None:
             if channel_mask_sensor.ndim == 2:
                 logger.warning('2D channel_mask is no longer supported - update katsdpcam2telstate')
-                channel_mask_sensor = channel_mask_sensor[0, channel_slice]
+                channel_mask_sensor = channel_mask_sensor[0]
             dynamic_masks = channel_mask_sensor[channel_slice] * static_flag
             channel_mask[:] = self.static_masks | dynamic_masks
         else:
