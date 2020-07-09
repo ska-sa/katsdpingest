@@ -176,6 +176,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
         )
         return katsdpmodels.rfi_mask.RFIMaskRanges(ranges, False)
 
+    def fake_band_mask_model(self):
+        # Channels 820:840
+        ranges = astropy.table.Table(
+            [[0.2], [0.205]], names=('min_fraction', 'max_fraction')
+        )
+        return katsdpmodels.band_mask.BandMaskRanges(ranges)
+
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
         bad[300] = True
@@ -232,6 +239,9 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._telstate['sdp_model_base_url'] = 'http://test.invalid/'
         rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
         self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
+        band_mask_model_key = self._telstate.join(
+            'i0_antenna_channelised_voltage', 'model', 'band_mask', 'fixed')
+        self._telstate[band_mask_model_key] = 'band_mask/fixed/sha256_cafebeef.hdf5'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
                            self.fake_channel_mask(), ts=0)
         self._telstate.add('m090_data_suspect', False, ts=0)
@@ -276,7 +286,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
         self._patch('katsdpmodels.fetch.requests.Fetcher.get',
-                    return_value=self.fake_rfi_mask_model())
+                    side_effect=[self.fake_rfi_mask_model(), self.fake_band_mask_model()])
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
@@ -343,6 +353,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self.cbf_attr['bls_ordering'][inv_permutation])
         flags = np.empty(vis.shape, np.uint8)
         channel_mask = self.fake_channel_mask()
+        channel_mask[820:840] = True     # Merge in band mask
         channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
         flags[:] = channel_data_suspect * np.uint8(CAM)
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
