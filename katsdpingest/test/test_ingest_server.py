@@ -22,6 +22,7 @@ from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
 import katsdpmodels.rfi_mask
+import katsdpmodels.band_mask
 import astropy.table
 import astropy.units as u
 
