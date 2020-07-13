@@ -10,7 +10,8 @@ from typing import List
 import asynctest
 import async_timeout
 import numpy as np
-from nose.tools import (assert_in, assert_is_not_none, assert_is_instance, assert_true,
+from nose.tools import (assert_in, assert_is, assert_is_not_none, assert_is_instance,
+                        assert_true, assert_false,
                         assert_equal, assert_almost_equal, assert_raises_regex)
 
 import spead2
@@ -184,6 +185,17 @@ class TestIngestDeviceServer(asynctest.TestCase):
         )
         return katsdpmodels.band_mask.BandMaskRanges(ranges)
 
+    def fake_model(self, url, model_class, *, lazy=False):
+        assert_false(lazy)
+        if url == 'http://test.invalid/models/rfi_mask/fixed/sha256_deadbeef.hdf5':
+            assert_is(model_class, katsdpmodels.rfi_mask.RFIMask)
+            return self.fake_rfi_mask_model()
+        elif url == 'http://test.invalid/models/band_mask/fixed/sha256_cafebeef.hdf5':
+            assert_is(model_class, katsdpmodels.band_mask.BandMask)
+            return self.fake_band_mask_model()
+        else:
+            raise RuntimeError(f'Unexpected URL {url!r} in fake_model')
+
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
         bad[300] = True
@@ -237,7 +249,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._telstate['i0_baseline_correlation_products_src_streams'] = \
             ['i0_antenna_channelised_voltage']
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
-        self._telstate['sdp_model_base_url'] = 'http://test.invalid/'
+        self._telstate['sdp_model_base_url'] = 'http://test.invalid/models/'
         rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
         self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
         band_mask_model_key = self._telstate.join(
@@ -286,8 +298,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
-        self._patch('katsdpmodels.fetch.requests.Fetcher.get',
-                    side_effect=[self.fake_rfi_mask_model(), self.fake_band_mask_model()])
+        self._patch('katsdpmodels.fetch.requests.Fetcher.get', side_effect=self.fake_model)
         self._server = IngestDeviceServer(
             user_args, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
