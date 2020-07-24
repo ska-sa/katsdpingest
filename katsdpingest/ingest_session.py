@@ -1,5 +1,6 @@
 """Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
+import contextlib
 import time
 import fractions
 import logging
@@ -704,12 +705,13 @@ class CBFIngest:
         my_sensors['output-n-bls'].value = len(self.bls_ordering.sdp_bls_ordering)
         my_sensors['output-n-chans'].value = len(self.channel_ranges.output)
         my_sensors['output-int-time'].value = self.cbf_attr['int_time'] * self._output_avg.ratio
-        self.output_bytes_sensor = my_sensors['output-bytes-total']  # type: Sensor[int]
-        self.output_heaps_sensor = my_sensors['output-heaps-total']  # type: Sensor[int]
-        self.output_dumps_sensor = my_sensors['output-dumps-total']  # type: Sensor[int]
-        self.output_flagged_sensor = my_sensors['output-flagged-total']  # type: Sensor[int]
-        self.output_vis_sensor = my_sensors['output-vis-total']      # type: Sensor[int]
-        self.status_sensor = my_sensors['status']                    # type: Sensor[Status]
+        self.output_bytes_sensor = my_sensors['output-bytes-total']       # type: Sensor[int]
+        self.output_heaps_sensor = my_sensors['output-heaps-total']       # type: Sensor[int]
+        self.output_dumps_sensor = my_sensors['output-dumps-total']       # type: Sensor[int]
+        self.output_flagged_sensor = my_sensors['output-flagged-total']   # type: Sensor[int]
+        self.output_vis_sensor = my_sensors['output-vis-total']           # type: Sensor[int]
+        self.telstate_time_sensor = my_sensors['telstate-seconds-total']  # type: Sensor[float]
+        self.status_sensor = my_sensors['status']                         # type: Sensor[Status]
         self.status_sensor.value = Status.INIT
         self._zero_counters()
 
@@ -1054,6 +1056,13 @@ class CBFIngest:
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
 
+    @contextlib.contextmanager
+    def time_telstate(self):
+        start = time.monotonic()
+        yield
+        stop = time.monotonic()
+        self.telstate_time_sensor.value += stop - start
+
     def _flush_output(self, output_idx: int):
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
@@ -1125,16 +1134,18 @@ class CBFIngest:
         signal display data to the signal display server"""
         all_channels = len(self.channel_ranges.all_sd_output)
         try:
-            custom_signals_indices = np.array(
-                self.telstate_sdisp['sdisp_custom_signals'],
-                dtype=np.uint32, copy=False)
+            with self.time_telstate():
+                custom_signals_indices = np.array(
+                    self.telstate_sdisp['sdisp_custom_signals'],
+                    dtype=np.uint32, copy=False)
         except KeyError:
             custom_signals_indices = np.array([], dtype=np.uint32)
 
         try:
-            full_mask = np.array(
-                self.telstate_sdisp['sdisp_timeseries_mask'],
-                dtype=np.float32, copy=False)
+            with self.time_telstate():
+                full_mask = np.array(
+                    self.telstate_sdisp['sdisp_timeseries_mask'],
+                    dtype=np.float32, copy=False)
             if full_mask.shape != (all_channels,):
                 raise ValueError
         except (KeyError, ValueError, TypeError):
@@ -1281,7 +1292,8 @@ class CBFIngest:
                 return None
             if name not in cache:
                 try:
-                    values = telstate.get_range(name, et=end_time)
+                    with self.time_telstate():
+                        values = telstate.get_range(name, et=end_time)
                     value = values[-1][0]     # Last entry, value element of pair
                 except (KeyError, IndexError):
                     pass
