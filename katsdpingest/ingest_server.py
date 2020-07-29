@@ -7,6 +7,7 @@ from typing import List, Dict, Mapping, Any, cast   # noqa: F401
 
 import aiokatcp
 from aiokatcp import FailReply, SensorSampler
+import katsdptelstate.aio
 from katsdptelstate.endpoint import endpoint_parser
 
 import katsdpingest
@@ -41,6 +42,8 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
     ----------
     user_args : :class:`argparse.Namespace`
         Command-line arguments
+    telstate : :class:`katsdptelstate.aio.TelescopeState`
+        Asynchronous client for the telescope state
     channel_ranges : :class:`katsdpingest.ingest_session.ChannelRanges`
         Ranges of channels for various parts of the pipeline
     cbf_attr : dict
@@ -58,6 +61,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
     def __init__(
             self,
             user_args: argparse.Namespace,
+            telstate: katsdptelstate.aio.TelescopeState,
             channel_ranges: ChannelRanges,
             cbf_attr: Dict[str, Any],
             context, *args, **kwargs) -> None:
@@ -143,7 +147,7 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         # create the device resources
         self.cbf_ingest = CBFIngest(
             user_args, cbf_attr, channel_ranges, context,
-            cast(Mapping[str, Sensor], self.sensors), user_args.telstate)
+            cast(Mapping[str, Sensor], self.sensors), telstate)
         # add default or user specified endpoints
         for sdisp_endpoint in user_args.sdisp_spead:
             self.cbf_ingest.add_sdisp_ip(sdisp_endpoint)

@@ -1,9 +1,10 @@
 aioconsole                # via aiomonitor
 aiokatcp
 aiomonitor
+aioredis                  # via katsdptelstate[aio]
 appdirs                   # via katsdpsigproc
 astropy                   # via katsdpmodels
-async-timeout             # via aiokatcp
+async-timeout             # via aiokatcp, aioredis
 certifi                   # via requests
 chardet                   # via requests
 cityhash                  # via katdal
@@ -12,7 +13,7 @@ decorator                 # via katsdpsigproc
 ephem                     # via pyephem
 future                    # via katdal
 h5py                      # via katdal, katsdpmodels
-hiredis                   # via katsdptelstate
+hiredis                   # via katsdptelstate, aioredis
 idna                      # via requests
 katversion
 llvmlite                  # via numba

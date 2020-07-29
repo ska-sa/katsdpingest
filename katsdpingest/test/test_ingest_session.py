@@ -4,8 +4,9 @@ import numpy as np
 from unittest import mock
 
 from nose.tools import assert_equal, assert_is
+import asynctest
 from katsdpsigproc.test.test_accel import device_test
-from katsdptelstate import TelescopeState
+import katsdptelstate.aio
 
 from katsdpingest import ingest_session
 from katsdpingest.utils import Range
@@ -60,8 +61,7 @@ class TestGetCbfAttr:
             'i1_baseline_correlation_products_n_accs': 104448,
             'i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')],
         }
-        self.telstate = TelescopeState()
-        self.telstate.clear()
+        self.telstate = katsdptelstate.TelescopeState()
         for key, value in values.items():
             self.telstate[key] = value
         self.expected = {
@@ -83,31 +83,30 @@ class TestGetCbfAttr:
         assert_equal(self.expected, attrs)
 
 
-class TestTimeAverage:
+class TestTimeAverage(asynctest.TestCase):
     def test_constructor(self):
-        avg = ingest_session._TimeAverage(3)
+        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
         assert_equal(3, avg.ratio)
         assert_is(None, avg._start_idx)
 
-    def test_add_index(self):
-        avg = ingest_session._TimeAverage(3)
-        avg.flush = mock.Mock(name='flush', spec_set=avg.flush)
-        avg.add_index(0)
-        avg.add_index(2)
-        avg.add_index(1)  # Test time reordering
+    async def test_add_index(self):
+        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
+        await avg.add_index(0)
+        await avg.add_index(2)
+        await avg.add_index(1)  # Test time reordering
         assert not avg.flush.called
 
-        avg.add_index(3)  # Skip first frame in the group
+        await avg.add_index(3)  # Skip first frame in the group
         avg.flush.assert_called_once_with(0)
         avg.flush.reset_mock()
         assert_equal(3, avg._start_idx)
 
-        avg.add_index(12)  # Skip some whole groups
+        await avg.add_index(12)  # Skip some whole groups
         avg.flush.assert_called_once_with(1)
         avg.flush.reset_mock()
         assert_equal(12, avg._start_idx)
 
-        avg.finish()
+        await avg.finish()
         avg.flush.assert_called_once_with(4)
         assert_is(None, avg._start_idx)
 
@@ -127,12 +126,11 @@ def test_split_array():
     np.testing.assert_equal(actual, expected)
 
 
-class TestTelstateReceiver:
-    def setup(self):
-        self.telstate = TelescopeState()
-        self.telstate.clear()
+class TestTelstateReceiver(asynctest.TestCase):
+    def setUp(self):
+        self.telstate = katsdptelstate.aio.TelescopeState()
 
-    def test_first_timestamp(self):
+    async def test_first_timestamp(self):
         # We don't want to bother setting up a valid Receiver base class, we
         # just want to test the subclass, so we mock in a different base.
         class DummyBase:
@@ -147,14 +145,14 @@ class TestTelstateReceiver:
                                                        telstates=[self.telstate],
                                                        l0_int_time=3.0)
             # Set first value
-            assert_equal(12345, receiver._first_timestamp(12345))
+            assert_equal(12345, await receiver._first_timestamp(12345))
             # Try a different value, first value must stick
-            assert_equal(12345, receiver._first_timestamp(54321))
+            assert_equal(12345, await receiver._first_timestamp(54321))
             # Set same value
-            assert_equal(12345, receiver._first_timestamp(12345))
+            assert_equal(12345, await receiver._first_timestamp(12345))
             # Check the telstate keys
-            assert_equal(12345, self.telstate['first_timestamp_adc'])
-            assert_equal(3087.75, self.telstate['first_timestamp'])
+            assert_equal(12345, await self.telstate['first_timestamp_adc'])
+            assert_equal(3087.75, await self.telstate['first_timestamp'])
 
 
 class TestCBFIngest:

@@ -25,7 +25,7 @@ setup(
         'spead2>=1.8.0',     # Needed for inproc transport for unit tests
         'katsdpsigproc',
         'katsdpservices[argparse,aiomonitor]',
-        'katsdptelstate',
+        'katsdptelstate[aio]',
         'katpoint',
         'katdal',
         'katsdpmodels[requests]'

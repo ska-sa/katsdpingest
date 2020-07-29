@@ -11,7 +11,9 @@ from typing import List, Callable, TypeVar
 
 import katsdpservices
 from katsdpsigproc import accel
+import aioredis
 from katsdptelstate import endpoint
+import katsdptelstate.aio.redis
 
 from katsdpingest.ingest_session import ChannelRanges, get_cbf_attr
 from katsdpingest.utils import Range
@@ -162,7 +164,12 @@ async def on_shutdown(server: IngestDeviceServer) -> None:
     server.halt()
 
 
-def main() -> None:
+async def get_async_telstate(endpoint: katsdptelstate.endpoint.Endpoint):
+    client = await aioredis.create_redis_pool(f'redis://{endpoint.host}:{endpoint.port}')
+    return katsdptelstate.aio.TelescopeState(katsdptelstate.aio.redis.RedisBackend(client))
+
+
+async def main() -> None:
     katsdpservices.setup_logging()
     katsdpservices.setup_restart()
     args = parse_args()
@@ -189,17 +196,22 @@ def main() -> None:
         cbf_channels, continuum_factor, args.sd_continuum_factor,
         len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
     context = accel.create_some_context(interactive=False)
-    server = IngestDeviceServer(args, channel_ranges, cbf_attr, context, args.host, args.port)
+    telstate = await get_async_telstate(args.telstate_endpoint)
+    server = IngestDeviceServer(args, telstate, channel_ranges, cbf_attr, context,
+                                args.host, args.port)
 
     loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(on_shutdown(server)))
     loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
-    loop.run_until_complete(server.start())
+    await server.start()
     logger.info("Started katsdpingest server.")
     with katsdpservices.start_aiomonitor(loop, args, locals()):
-        loop.run_until_complete(server.join())
+        await server.join()
+        telstate.backend.close()
+        await telstate.backend.wait_closed()
     logger.info("Shutdown complete")
-    loop.close()
 
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+    loop.close()

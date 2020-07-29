@@ -5,7 +5,7 @@ import logging
 import asyncio
 import copy
 from unittest import mock
-from typing import List
+from typing import List, Dict, Any
 
 import asynctest
 import async_timeout
@@ -18,7 +18,8 @@ import spead2
 import spead2.recv
 import spead2.send
 import aiokatcp
-import katsdptelstate
+import katsdptelstate.memory
+import katsdptelstate.aio.memory
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
@@ -203,11 +204,15 @@ class TestIngestDeviceServer(asynctest.TestCase):
         return bad
 
     @device_test
-    async def setUp(self, context, command_queue):
-        done_future = asyncio.Future(loop=self.loop)
+    async def setUp(self, context, command_queue) -> None:
+        done_future = asyncio.Future(loop=self.loop)     # type: asyncio.Future[None]
         done_future.set_result(None)
-        self._patchers = []
-        self._telstate = katsdptelstate.TelescopeState()
+        self._patchers = []                              # type: List[Any]
+        telstate_backend = katsdptelstate.memory.MemoryBackend()
+        self._telstate = katsdptelstate.TelescopeState(telstate_backend)
+        self._async_telstate = katsdptelstate.aio.TelescopeState(
+            katsdptelstate.aio.memory.MemoryBackend.from_sync(telstate_backend)
+        )
         n_xengs = 16
         self.user_args = user_args = argparse.Namespace(
             sdisp_spead=[Endpoint('127.0.0.2', 7149)],
@@ -282,7 +287,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._Receiver = self._patch(
             'katsdpingest.ingest_session.TelstateReceiver',
             side_effect=lambda *args, **kwargs:
-                MockReceiver(self._data, self._timestamps, *args, pauses=self._pauses, **kwargs))
+                MockReceiver(self._data, self._timestamps, *args,     # type: ignore
+                             pauses=self._pauses, **kwargs))
         self._tx = {'continuum': mock.MagicMock(), 'spectral': mock.MagicMock()}
         for tx in self._tx.values():
             tx.start.return_value = done_future
@@ -293,14 +299,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._tx['continuum'].sub_channels //= self.channel_ranges.cont_factor
         self._VisSenderSet = self._patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
-        self._sd_tx = {}
+        self._sd_tx: Dict[Endpoint, spead2.send.asyncio.InprocStream] = {}
         self._UdpStream = self._patch('spead2.send.asyncio.UdpStream',
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
         self._patch('katsdpmodels.fetch.requests.Fetcher.get', side_effect=self.fake_model)
         self._server = IngestDeviceServer(
-            user_args, self.channel_ranges, self.cbf_attr, context,
+            user_args, self._async_telstate, self.channel_ranges, self.cbf_attr, context,
             host=user_args.host, port=user_args.port)
         await self._server.start()
         self.addCleanup(self._server.stop)
