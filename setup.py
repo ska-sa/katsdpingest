@@ -28,7 +28,7 @@ setup(
         'katsdptelstate[aio]',
         'katpoint',
         'katdal',
-        'katsdpmodels[requests]'
+        'katsdpmodels[aiohttp]'
     ],
     extras_require={
         'test': tests_require
