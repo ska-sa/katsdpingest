@@ -27,7 +27,7 @@ import katsdpsigproc.accel
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 
-import katsdpmodels.fetch.requests
+import katsdpmodels.fetch.aiohttp
 import katsdpmodels.band_mask
 import katsdpmodels.rfi_mask
 
@@ -352,26 +352,6 @@ class _ResourceSet:
         return ret
 
 
-def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict[str, Any]:
-    """Load the configuration of the CBF stream from a telescope state.
-
-    Parameters
-    ----------
-    telstate : :class:`katsdptelstate.TelescopeState`
-        Telescope state from which the CBF stream metadata is retrieved.
-    cbf_name : str
-        Name of the baseline-correlation-products stream
-    """
-    cbf_attr = {}
-    telstate = utils.cbf_telstate_view(telstate, cbf_name)
-    for attr in CBF_CRITICAL_ATTRS:
-        cbf_attr[attr] = telstate[attr]
-        logger.info('Setting cbf_attr %s to %s',
-                    attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
-    logger.info('All metadata received from telstate')
-    return cbf_attr
-
-
 class BaselineOrdering:
     """Encapsulates lookup tables related to baseline ordering.
 
@@ -455,6 +435,9 @@ class BaselineOrdering:
             antenna_mask_set = None
         # Eliminate baselines not covered by antenna_mask_set
         filtered = [x for x in enumerate(cbf_bls_ordering) if keep(x[1])]
+        if not filtered:
+            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
+                cbf_bls_ordering, antenna_mask_set))
         # Sort what's left
         reordered = sorted(filtered, key=key)
         # reordered contains the mapping from new position to original
@@ -478,6 +461,77 @@ class BaselineOrdering:
                 self.percentile_ranges.append((start, end))
             else:
                 self.percentile_ranges.append((0, 0))
+
+
+class SystemAttrs:
+    """Static system configuration retrieved from telescope state."""
+
+    def __init__(self,
+                 cbf_attr: Mapping[str, Any],
+                 rfi_mask_model: Optional[katsdpmodels.rfi_mask.RFIMask],
+                 band_mask_model: Optional[katsdpmodels.band_mask.BandMask],
+                 antennas: Iterable[katpoint.Antenna]) -> None:
+        self.cbf_attr = dict(cbf_attr)
+        self.rfi_mask_model = rfi_mask_model
+        self.band_mask_model = band_mask_model
+        self.antennas = list(antennas)
+
+    @staticmethod
+    async def _get_rfi_mask_model(fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher) \
+            -> Optional[katsdpmodels.rfi_mask.RFIMask]:
+        rfi_mask_model_key = fetcher.telstate.join('model', 'rfi_mask', 'fixed')
+        try:
+            rfi_mask_model = await fetcher.get(rfi_mask_model_key,
+                                               katsdpmodels.rfi_mask.RFIMask)
+            logger.info('Loaded rfi_mask model')
+            return rfi_mask_model
+        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load rfi_mask model: %s', exc, exc_info=True)
+            return None
+
+    @staticmethod
+    async def _get_band_mask_model(fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher,
+                                   telstate_cbf: katsdptelstate.aio.TelescopeState) \
+            -> Optional[katsdpmodels.band_mask.BandMask]:
+        band_mask_model_key = telstate_cbf.join('model', 'band_mask', 'fixed')
+        try:
+            band_mask_model = await fetcher.get(band_mask_model_key,
+                                                katsdpmodels.band_mask.BandMask,
+                                                telstate=telstate_cbf)
+            logger.info('Loaded band_mask model')
+            return band_mask_model
+        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load band_mask model: %s', exc, exc_info=True)
+            return None
+
+    @staticmethod
+    async def _get_antennas(input_labels: Iterable[str],
+                            antenna_mask: Optional[Iterable[str]],
+                            telstate: katsdptelstate.aio.TelescopeState) -> List[katpoint.Antenna]:
+        antenna_names = set(label[:-1] for label in input_labels)
+        if antenna_mask is not None:
+            antenna_names &= set(antenna_mask)
+        return [katpoint.Antenna(await telstate['{}_observer'.format(name)])
+                for name in antenna_names]
+
+    @classmethod
+    async def create(cls,
+                     fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher,
+                     telstate_cbf: katsdptelstate.aio.TelescopeState,
+                     antenna_mask: Optional[Iterable[str]] = None) -> 'SystemAttrs':
+        telstate = fetcher.telstate
+
+        cbf_attr = {}
+        for attr in CBF_CRITICAL_ATTRS:
+            cbf_attr[attr] = await telstate_cbf[attr]
+            logger.info('Setting cbf_attr %s to %s',
+                        attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
+
+        rfi_mask_model = await cls._get_rfi_mask_model(fetcher)
+        band_mask_model = await cls._get_band_mask_model(fetcher, telstate_cbf)
+        antennas = await cls._get_antennas(cbf_attr['input_labels'], antenna_mask, telstate)
+        logger.info('All metadata received from telstate')
+        return cls(cbf_attr, rfi_mask_model, band_mask_model, antennas)
 
 
 class TelstateReceiver(receiver.Receiver):
@@ -625,68 +679,52 @@ class CBFIngest:
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
 
-    def _init_baselines(self, telstate: katsdptelstate.TelescopeState,
-                        antenna_mask: Iterable[str]) -> None:
-        # Transfer prefixes from async self.telstate_cbf to synchronous telstate.
-        telstate_cbf = katsdptelstate.TelescopeState(
-            telstate.backend, prefixes=self.telstate_cbf.prefixes
-        )
+    def _init_baselines(self, system_attrs: SystemAttrs) -> None:
         # Configure the masking and reordering of baselines
-        self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
-        if not len(self.bls_ordering.sdp_bls_ordering):
-            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
-                self.cbf_attr['bls_ordering'], antenna_mask))
+        self.bls_ordering = BaselineOrdering(
+            self.cbf_attr['bls_ordering'],
+            [antenna.name for antenna in system_attrs.antennas]
+        )
 
         # Pre-compute channel masks from the RFI mask and band mask models
-        with katsdpmodels.fetch.requests.TelescopeStateFetcher(telstate) as fetcher:
-            cbf_spw = SpectralWindow(
-                self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
-                bandwidth=self.cbf_attr['bandwidth'], sideband=1)
-            spw = cbf_spw.subrange(self.channel_ranges.input.start,
-                                   self.channel_ranges.input.stop)
-            freqs = spw.channel_freqs << u.Hz
+        cbf_spw = SpectralWindow(
+            system_attrs.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=system_attrs.cbf_attr['bandwidth'], sideband=1)
+        spw = cbf_spw.subrange(self.channel_ranges.input.start,
+                               self.channel_ranges.input.stop)
+        freqs = spw.channel_freqs << u.Hz
 
-            rfi_mask_model_key = telstate.join('model', 'rfi_mask', 'fixed')
-            try:
-                rfi_mask_model = fetcher.get(rfi_mask_model_key, katsdpmodels.rfi_mask.RFIMask)
-            except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
-                logger.warning('Failed to load rfi_mask model: %s', exc, exc_info=True)
-                self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering),
-                                                     np.uint32)
-                self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
-            else:
-                bls = self.bls_ordering.sdp_bls_ordering
-                antenna_names = set(input_name[:-1] for input_name in bls.flat)
-                antennas = [katpoint.Antenna(telstate['{}_observer'.format(name)])
-                            for name in antenna_names]
-                ref = antennas[0].array_reference_antenna()
-                # Turn each antenna into a location East/North/Up of the reference
-                locations = {antenna.name: np.array(ref.baseline_toward(antenna))
-                             for antenna in antennas}
-                lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
-                                    for (a, b) in bls]) << u.m
-                # Get masks as a baseline x freq array
-                masks = rfi_mask_model.is_masked(freqs[np.newaxis, :], lengths[:, np.newaxis])
-                # Typically the model will only have a few threshold lengths, so
-                # most rows will be the same. Reduce it to just unique rows, with
-                # a lookup table.
-                masks, indices = np.unique(masks, axis=0, return_inverse=True)
-                self.bls_channel_mask_idx = indices.astype(np.uint32)
-                self.static_masks = masks * np.uint8(STATIC)
+        if system_attrs.rfi_mask_model is None:
+            self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering),
+                                                 np.uint32)
+            self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
+        else:
+            bls = self.bls_ordering.sdp_bls_ordering
+            ref = system_attrs.antennas[0].array_reference_antenna()
+            # Turn each antenna into a location East/North/Up of the reference
+            locations = {antenna.name: np.array(ref.baseline_toward(antenna))
+                         for antenna in system_attrs.antennas}
+            lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
+                                for (a, b) in bls]) << u.m
+            # Get masks as a baseline x freq array
+            masks = system_attrs.rfi_mask_model.is_masked(
+                freqs[np.newaxis, :],
+                lengths[:, np.newaxis]
+            )
+            # Typically the model will only have a few threshold lengths, so
+            # most rows will be the same. Reduce it to just unique rows, with
+            # a lookup table.
+            masks, indices = np.unique(masks, axis=0, return_inverse=True)
+            self.bls_channel_mask_idx = indices.astype(np.uint32)
+            self.static_masks = masks * np.uint8(STATIC)
 
-            band_mask_model_key = telstate.join('model', 'band_mask', 'fixed')
-            try:
-                band_mask_model = fetcher.get(band_mask_model_key, katsdpmodels.band_mask.BandMask,
-                                              telstate=telstate_cbf)
-            except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
-                logger.warning('Failed to load band_mask model: %s', exc, exc_info=True)
-            else:
-                band_spw = katsdpmodels.band_mask.SpectralWindow(
-                    cbf_spw.bandwidth * u.Hz,
-                    cbf_spw.centre_freq * u.Hz
-                )
-                mask = band_mask_model.is_masked(band_spw, freqs)
-                self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
+        if system_attrs.band_mask_model is not None:
+            band_spw = katsdpmodels.band_mask.SpectralWindow(
+                cbf_spw.bandwidth * u.Hz,
+                cbf_spw.centre_freq * u.Hz
+            )
+            mask = system_attrs.band_mask_model.is_masked(band_spw, freqs)
+            self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
@@ -816,27 +854,26 @@ class CBFIngest:
         # Put attributes into telstate. This will be done by all the ingest
         # nodes, with the same values.
         prefix: str = getattr(args, 'l0_{}_name'.format(arg_name))
-        view: katsdptelstate.TelescopeState = args.telstate.view(prefix)
         cbf_spw = SpectralWindow(
             self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
             bandwidth=self.cbf_attr['bandwidth'], sideband=1)
         output_spw = cbf_spw.subrange(all_output.start, all_output.stop)
         output_spw = output_spw.rechannelise(len(all_output) // cont_factor)
 
-        utils.set_telstate_entry(view, 'n_chans', output_spw.num_chans)
-        utils.set_telstate_entry(view, 'n_chans_per_substream', tx.sub_channels)
-        utils.set_telstate_entry(view, 'n_bls', baselines)
-        utils.set_telstate_entry(view, 'bls_ordering', self.bls_ordering.sdp_bls_ordering)
-        utils.set_telstate_entry(view, 'sync_time', self.cbf_attr['sync_time'])
-        utils.set_telstate_entry(view, 'bandwidth', output_spw.bandwidth)
-        utils.set_telstate_entry(view, 'center_freq', output_spw.centre_freq)
-        utils.set_telstate_entry(view, 'channel_range', all_output.astuple())
-        utils.set_telstate_entry(view, 'int_time', int_time)
-        utils.set_telstate_entry(view, 'excise', args.excise)
-        utils.set_telstate_entry(view, 'src_streams', [self.src_stream])
-        utils.set_telstate_entry(view, 'stream_type', 'sdp.vis')
-        utils.set_telstate_entry(view, 'calibrations_applied', [])
-        utils.set_telstate_entry(view, 'need_weights_power_scale', True)
+        self._telstate_updates.append((prefix, 'n_chans', output_spw.num_chans))
+        self._telstate_updates.append((prefix, 'n_chans_per_substream', tx.sub_channels))
+        self._telstate_updates.append((prefix, 'n_bls', baselines))
+        self._telstate_updates.append((prefix, 'bls_ordering', self.bls_ordering.sdp_bls_ordering))
+        self._telstate_updates.append((prefix, 'sync_time', self.cbf_attr['sync_time']))
+        self._telstate_updates.append((prefix, 'bandwidth', output_spw.bandwidth))
+        self._telstate_updates.append((prefix, 'center_freq', output_spw.centre_freq))
+        self._telstate_updates.append((prefix, 'channel_range', all_output.astuple()))
+        self._telstate_updates.append((prefix, 'int_time', int_time))
+        self._telstate_updates.append((prefix, 'excise', args.excise))
+        self._telstate_updates.append((prefix, 'src_streams', [self.src_stream]))
+        self._telstate_updates.append((prefix, 'stream_type', 'sdp.vis'))
+        self._telstate_updates.append((prefix, 'calibrations_applied', []))
+        self._telstate_updates.append((prefix, 'need_weights_power_scale', True))
         self.tx[name] = tx
         self.l0_names.append(prefix)
 
@@ -941,11 +978,11 @@ class CBFIngest:
             shape=(), dtype=None, format=inline_format,
             value=self.channel_ranges.sd_output.start - self.channel_ranges.all_sd_output.start)
 
-    def __init__(self, args: argparse.Namespace, cbf_attr: Dict[str, Any],
+    def __init__(self, args: argparse.Namespace, system_attrs: SystemAttrs,
                  channel_ranges: ChannelRanges,
                  context,
                  my_sensors: Mapping[str, Sensor],
-                 telstate: katsdptelstate.aio.TelescopeState) -> None:
+                 telstate_cbf: katsdptelstate.aio.TelescopeState) -> None:
         self._sdisp_ips: Dict[str, spead2.send.asyncio.UdpStream] = {}
         self._run_future: Optional[asyncio.Task] = None
         # Set by stop to abort prior to creating the receiver
@@ -963,23 +1000,18 @@ class CBFIngest:
         )
         self.sd_spead_ifaddr = katsdpservices.get_interface_address(args.sdisp_interface)
         self.channel_ranges = channel_ranges
-        self.telstate = telstate
-        # A bit of hackery to get a view of the async telstate without awaiting
-        # anything: we'll obtain the view from the synchronous telstate, then
-        # transfer the prefixes.
-        self.telstate_cbf = katsdptelstate.aio.TelescopeState(
-            prefixes=utils.cbf_telstate_view(args.telstate, args.cbf_name).prefixes,
-            backend=telstate.backend
-        )
-        self.telstate_sdisp = telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
-        self.cbf_attr = cbf_attr
+        self.telstate = telstate_cbf.root()
+        self.telstate_cbf = telstate_cbf
+        self.telstate_sdisp = self.telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
+        self.cbf_attr = system_attrs.cbf_attr
         self.src_stream: str = args.cbf_name
         self.use_data_suspect: bool = args.use_data_suspect
+        self._telstate_updates: List[Tuple[str, str, Any]] = []   # Values to populate in telstate
 
-        self._init_baselines(args.telstate, args.antenna_mask)
+        self._init_baselines(system_attrs)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
         self._init_sensors(my_sensors)
-        self._init_tx(args)  # Note: must be run after _init_time_averaging, before _init_proc
+        self._init_tx(args)  # NB: must be run after _init_time_averaging, before _init_proc
         self._init_proc(context, args.excise, 'cont' in self.tx)
         self._init_resources()
 
@@ -991,8 +1023,18 @@ class CBFIngest:
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = _fix_descriptions(list(self.proc.descriptions()))
-            process_view = args.telstate.view(args.name.replace('.', '_'))
-            utils.set_telstate_entry(process_view, 'process_log', descriptions)
+            process_prefix = args.name.replace('.', '_')
+            self._telstate_updates.append((process_prefix, 'process_log', descriptions))
+
+    async def populate_telstate(self) -> None:
+        """Update telescope state with information about the outputs."""
+        for prefix, name, value in self._telstate_updates:
+            try:
+                full_name = self.telstate.join(prefix, name)
+                await self.telstate.set(full_name, value)
+            except katsdptelstate.ImmutableKeyError as error:
+                logger.warning('%s', error)
+        self._telstate_updates = []
 
     def enable_debug(self, debug: bool) -> None:
         if debug:

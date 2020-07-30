@@ -3,15 +3,15 @@
 import logging
 from typing import TypeVar, Tuple
 
-import katsdptelstate
+import katsdptelstate.aio
 import aiokatcp
 
 
 _logger = logging.getLogger(__name__)
 
 
-def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
-                      stream_name: str) -> katsdptelstate.TelescopeState:
+async def cbf_telstate_view(telstate: katsdptelstate.aio.TelescopeState,
+                            stream_name: str) -> katsdptelstate.aio.TelescopeState:
     """Create a telstate view that allows querying properties from a stream.
     It supports only baseline-correlation-products and
     tied-array-channelised-voltage streams. Properties that don't exist on the
@@ -20,7 +20,7 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
 
     Returns
     -------
-    view : :class:`katsdptelstate.TelescopeState`
+    view
         Telstate view that allows stream properties to be searched
     """
     prefixes = []
@@ -29,24 +29,15 @@ def cbf_telstate_view(telstate: katsdptelstate.TelescopeState,
     # Generate a list of places to look for attributes:
     # - the stream itself
     # - the upstream antenna-channelised-voltage stream, and its instrument
-    src = telstate.view(stream_name, exclusive=True)['src_streams'][0]
+    src = (await telstate.view(stream_name, exclusive=True)['src_streams'])[0]
     prefixes.append(src)
-    instrument = telstate.view(src, exclusive=True)['instrument_dev_name']
+    instrument = await telstate.view(src, exclusive=True)['instrument_dev_name']
     prefixes.append(instrument)
     prefixes.append('cbf')
     # Create a telstate view that has exactly the given prefixes (and no root prefix).
     for i, prefix in enumerate(reversed(prefixes)):
         telstate = telstate.view(prefix, exclusive=(i == 0))
     return telstate
-
-
-def set_telstate_entry(telstate: katsdptelstate.TelescopeState,
-                       name: str, value, attribute: bool = True) -> None:
-    if telstate is not None:
-        try:
-            telstate.add(name, value, immutable=attribute)
-        except katsdptelstate.ImmutableKeyError as error:
-            _logger.warning('%s', error)
 
 
 class Range:
@@ -209,4 +200,4 @@ class Sensor(aiokatcp.Sensor[_T]):
         self.set_value(self.value + delta, timestamp=timestamp)
 
 
-__all__ = ['cbf_telstate_view', 'set_telstate_entry', 'Range', 'Sensor']
+__all__ = ['cbf_telstate_view', 'Range', 'Sensor']

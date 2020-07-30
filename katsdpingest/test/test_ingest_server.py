@@ -10,9 +10,8 @@ from typing import List, Dict, Any
 import asynctest
 import async_timeout
 import numpy as np
-from nose.tools import (assert_in, assert_is, assert_is_not_none, assert_is_instance,
-                        assert_true, assert_false,
-                        assert_equal, assert_almost_equal, assert_raises_regex)
+from nose.tools import (assert_in, assert_is_not_none, assert_is_instance,
+                        assert_true, assert_equal, assert_almost_equal, assert_raises_regex)
 
 import spead2
 import spead2.recv
@@ -25,12 +24,13 @@ from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
+import katpoint
 import astropy.table
 import astropy.units as u
 
-from katsdpingest.utils import Range
+from katsdpingest.utils import Range, cbf_telstate_view
 from katsdpingest.ingest_server import IngestDeviceServer
-from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering
+from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering, SystemAttrs
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
@@ -162,14 +162,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
 
-    def fake_channel_mask(self):
+    def fake_channel_mask(self) -> np.ndarray:
         channel_mask = np.zeros((self.cbf_attr['n_chans']), np.bool_)
         channel_mask[704] = True
         channel_mask[750:800] = True
         channel_mask[900] = True
         return channel_mask
 
-    def fake_rfi_mask_model(self):
+    def fake_rfi_mask_model(self) -> katsdpmodels.rfi_mask.RFIMask:
         # Channels 852:857 and 1024
         ranges = astropy.table.QTable(
             [[1034e6, 1070.0e6] * u.Hz,
@@ -179,23 +179,12 @@ class TestIngestDeviceServer(asynctest.TestCase):
         )
         return katsdpmodels.rfi_mask.RFIMaskRanges(ranges, False)
 
-    def fake_band_mask_model(self):
+    def fake_band_mask_model(self) -> katsdpmodels.band_mask.BandMask:
         # Channels 820:840
         ranges = astropy.table.Table(
             [[0.2], [0.205]], names=('min_fraction', 'max_fraction')
         )
         return katsdpmodels.band_mask.BandMaskRanges(ranges)
-
-    def fake_model(self, url, model_class, *, lazy=False):
-        assert_false(lazy)
-        if url == 'http://test.invalid/models/rfi_mask/fixed/sha256_deadbeef.hdf5':
-            assert_is(model_class, katsdpmodels.rfi_mask.RFIMask)
-            return self.fake_rfi_mask_model()
-        elif url == 'http://test.invalid/models/band_mask/fixed/sha256_cafebeef.hdf5':
-            assert_is(model_class, katsdpmodels.band_mask.BandMask)
-            return self.fake_band_mask_model()
-        else:
-            raise RuntimeError(f'Unexpected URL {url!r} in fake_model')
 
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
@@ -254,12 +243,6 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._telstate['i0_baseline_correlation_products_src_streams'] = \
             ['i0_antenna_channelised_voltage']
         self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
-        self._telstate['sdp_model_base_url'] = 'http://test.invalid/models/'
-        rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
-        self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
-        band_mask_model_key = self._telstate.join(
-            'i0_antenna_channelised_voltage', 'model', 'band_mask', 'fixed')
-        self._telstate[band_mask_model_key] = 'band_mask/fixed/sha256_cafebeef.hdf5'
         self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
                            self.fake_channel_mask(), ts=0)
         self._telstate.add('m090_data_suspect', False, ts=0)
@@ -272,10 +255,17 @@ class TestIngestDeviceServer(asynctest.TestCase):
                            self.fake_channel_data_suspect(), ts=0)
         # These correspond to three core and one outlying MeerKAT antennas,
         # so that baselines to m093 are long while the others are short.
-        self._telstate['m090_observer'] = 'm090, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -8.258 -207.289 1.2075 5874.184 5875.444, -0:00:39.7 0 -0:04:04.4 -0:04:53.0 0:00:57.8 -0:00:13.9 0:13:45.2 0:00:59.8, 1.14'     # noqa: E501
-        self._telstate['m091_observer'] = 'm091, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14'      # noqa: E501
-        self._telstate['m092_observer'] = 'm002, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -32.1085 -224.2365 1.248 5871.207 5872.205, 0:40:20.2 0 -0:02:41.9 -0:03:46.8 0:00:09.4 -0:00:01.1 0:03:04.7, 1.14'              # noqa: E501
-        self._telstate['m093_observer'] = 'm093, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -1440.6235 -2503.7705 14.288 5932.94 5934.732, -0:15:23.0 0 0:00:04.6 -0:03:30.4 0:01:12.2 0:00:37.5 0:00:15.6 0:01:11.8, 1.14'  # noqa: E501
+        antennas = [
+            katpoint.Antenna('m090, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -8.258 -207.289 1.2075 5874.184 5875.444, -0:00:39.7 0 -0:04:04.4 -0:04:53.0 0:00:57.8 -0:00:13.9 0:13:45.2 0:00:59.8, 1.14'),     # noqa: E501
+            katpoint.Antenna('m091, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14'),      # noqa: E501
+            katpoint.Antenna('m002, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -32.1085 -224.2365 1.248 5871.207 5872.205, 0:40:20.2 0 -0:02:41.9 -0:03:46.8 0:00:09.4 -0:00:01.1 0:03:04.7, 1.14'),              # noqa: E501
+            katpoint.Antenna('m093, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -1440.6235 -2503.7705 14.288 5932.94 5934.732, -0:15:23.0 0 0:00:04.6 -0:03:30.4 0:01:12.2 0:00:37.5 0:00:15.6 0:01:11.8, 1.14')   # noqa: E501
+        ]
+        self._telstate_cbf = await cbf_telstate_view(self._async_telstate,
+                                                     'i0_baseline_correlation_products')
+        self.system_attrs = SystemAttrs(
+            self.cbf_attr, self.fake_rfi_mask_model(), self.fake_band_mask_model(),
+            antennas)
         self.channel_ranges = ChannelRanges(
             user_args.servers, user_args.server_id - 1,
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
@@ -304,9 +294,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
-        self._patch('katsdpmodels.fetch.requests.Fetcher.get', side_effect=self.fake_model)
         self._server = IngestDeviceServer(
-            user_args, self._async_telstate, self.channel_ranges, self.cbf_attr, context,
+            user_args, self._telstate_cbf, self.channel_ranges, self.system_attrs, context,
             host=user_args.host, port=user_args.port)
         await self._server.start()
         self.addCleanup(self._server.stop)

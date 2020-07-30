@@ -3,7 +3,6 @@
 # Capture utility for a relatively generic packetised correlator data output stream.
 
 import logging
-import sys
 import signal
 import asyncio
 import argparse
@@ -14,9 +13,10 @@ from katsdpsigproc import accel
 import aioredis
 from katsdptelstate import endpoint
 import katsdptelstate.aio.redis
+import katsdpmodels.fetch.aiohttp
 
-from katsdpingest.ingest_session import ChannelRanges, get_cbf_attr
-from katsdpingest.utils import Range
+from katsdpingest.ingest_session import ChannelRanges, SystemAttrs
+from katsdpingest.utils import Range, cbf_telstate_view
 from katsdpingest.ingest_server import IngestDeviceServer
 
 
@@ -177,28 +177,26 @@ async def main() -> None:
         logging.root.setLevel(args.log_level.upper())
 
     loop = asyncio.get_event_loop()
-    try:
-        cbf_attr = get_cbf_attr(args.telstate, args.cbf_name)
-    except KeyError as error:
-        logger.error('Terminating due to catastrophic failure: %s', str(error))
-        sys.exit(1)
-    cbf_channels = cbf_attr['n_chans']
-    if args.output_channels is None:
-        args.output_channels = Range(0, cbf_channels)
-    if args.sd_output_channels is None:
-        args.sd_output_channels = Range(0, cbf_channels)
-    # If no continuum product is selected, set continuum factor to 1 since
-    # that effectively disables the alignment checks.
-    continuum_factor = args.continuum_factor if args.l0_continuum_spead else 1
-    # TODO: determine an appropriate value for guard
-    channel_ranges = ChannelRanges(
-        args.servers, args.server_id - 1,
-        cbf_channels, continuum_factor, args.sd_continuum_factor,
-        len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
-    context = accel.create_some_context(interactive=False)
     telstate = await get_async_telstate(args.telstate_endpoint)
-    server = IngestDeviceServer(args, telstate, channel_ranges, cbf_attr, context,
-                                args.host, args.port)
+    telstate_cbf = await cbf_telstate_view(telstate, args.cbf_name)
+    async with katsdpmodels.fetch.aiohttp.TelescopeStateFetcher(telstate) as fetcher:
+        system_attrs = await SystemAttrs.create(fetcher, telstate_cbf, args.antenna_mask)
+        cbf_channels = system_attrs.cbf_attr['n_chans']
+        if args.output_channels is None:
+            args.output_channels = Range(0, cbf_channels)
+        if args.sd_output_channels is None:
+            args.sd_output_channels = Range(0, cbf_channels)
+        # If no continuum product is selected, set continuum factor to 1 since
+        # that effectively disables the alignment checks.
+        continuum_factor = args.continuum_factor if args.l0_continuum_spead else 1
+        # TODO: determine an appropriate value for guard
+        channel_ranges = ChannelRanges(
+            args.servers, args.server_id - 1,
+            cbf_channels, continuum_factor, args.sd_continuum_factor,
+            len(args.cbf_spead), args.guard_channels, args.output_channels, args.sd_output_channels)
+        context = accel.create_some_context(interactive=False)
+        server = IngestDeviceServer(args, telstate_cbf, channel_ranges, system_attrs, context,
+                                    args.host, args.port)
 
     loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(on_shutdown(server)))
     loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(on_shutdown(server)))
