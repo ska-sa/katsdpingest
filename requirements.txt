@@ -1,7 +1,7 @@
 aioconsole                # via aiomonitor
 aiokatcp
 aiomonitor
-aioredis                  # via katsdptelstate[aio]
+aioredis==1.3.1           # via katsdptelstate[aio]
 appdirs                   # via katsdpsigproc
 astropy                   # via katsdpmodels
 async-timeout             # via aiokatcp, aioredis
