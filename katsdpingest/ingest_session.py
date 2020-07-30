@@ -72,8 +72,7 @@ class _TimeAverage:
     cadence.
 
     This object never sees dump contents directly, only dump indices. When an
-    index is added that is not part of the current group, :func:`flush`
-    is called, which must be set to a callback function.
+    index is added that is not part of the current group, `flush` is called.
 
     Parameters
     ----------
@@ -102,8 +101,10 @@ class _TimeAverage:
         self._start_idx = idx // self.ratio * self.ratio
 
     async def add_index(self, idx: int) -> None:
-        """Record that a dump with a given index has arrived and is about to
-        be processed. This may call :func:`flush`."""
+        """Record that a dump with a given index has arrived and is about to be processed.
+
+        This may call the `flush` callback given to the constructor.
+        """
 
         if self._start_idx is None:
             self._warp_start(idx)
