@@ -15,7 +15,7 @@ from typing import (
 
 import numpy as np
 import astropy.units as u
-import requests
+import aiohttp
 
 import spead2
 import spead2.send
@@ -486,7 +486,7 @@ class SystemAttrs:
                                                katsdpmodels.rfi_mask.RFIMask)
             logger.info('Loaded rfi_mask model')
             return rfi_mask_model
-        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+        except (aiohttp.ClientError, katsdpmodels.models.ModelError) as exc:
             logger.warning('Failed to load rfi_mask model: %s', exc, exc_info=True)
             return None
 
@@ -501,7 +501,7 @@ class SystemAttrs:
                                                 telstate=telstate_cbf)
             logger.info('Loaded band_mask model')
             return band_mask_model
-        except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
+        except (aiohttp.ClientError, katsdpmodels.models.ModelError) as exc:
             logger.warning('Failed to load band_mask model: %s', exc, exc_info=True)
             return None
 
