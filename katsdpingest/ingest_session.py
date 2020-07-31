@@ -683,7 +683,7 @@ class CBFIngest:
     def _init_baselines(self, system_attrs: SystemAttrs) -> None:
         # Configure the masking and reordering of baselines
         self.bls_ordering = BaselineOrdering(
-            self.cbf_attr['bls_ordering'],
+            system_attrs.cbf_attr['bls_ordering'],
             [antenna.name for antenna in system_attrs.antennas]
         )
 
