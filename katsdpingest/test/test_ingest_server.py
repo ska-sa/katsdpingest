@@ -17,7 +17,6 @@ import spead2
 import spead2.recv
 import spead2.send
 import aiokatcp
-import katsdptelstate.memory
 import katsdptelstate.aio.memory
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
