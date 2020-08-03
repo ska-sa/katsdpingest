@@ -9,9 +9,11 @@ import enum
 import argparse
 import textwrap
 import functools
+from collections import deque
 import gc
 from typing import (
-    Mapping, Dict, List, Tuple, Set, Iterable, Callable, Awaitable, Optional, TypeVar, Any
+    Mapping, Dict, List, Tuple, Deque, Set, Iterable, Callable, Awaitable,
+    Optional, TypeVar, Any
 )    # noqa: F401
 
 import numpy as np
@@ -567,6 +569,64 @@ class TelstateReceiver(receiver.Receiver):
             # A different ingest process beat us to it. Use its value.
             # That other process will fill in the remaining values
             return await self._telstates[0].get('first_timestamp_adc')
+
+
+class SensorHistory:
+    """Track sensor values until they're needed by the corresponding frame job.
+
+    Samples are associated with a dump index, and there can be at most one
+    sample per dump index (to prevent a high update rate from filling memory).
+    Samples should be added in increasing order of time: samples with a lower
+    dump index than the latest one are ignored and a warning is logged.
+
+    A single querier can request the latest sample that is no later than a
+    given dump index. Such queries must be made with non-decreasing dump
+    indices.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._data: Deque[Tuple[int, Any]] = deque()
+        self._last_get = -1
+
+    def add(self, dump_idx: int, value: Any) -> None:
+        """Add a new sample of the sensor."""
+        if dump_idx <= self._last_get:
+            logger.warning('Sensor update for %s index %d is too late', self.name, dump_idx)
+            return
+        if self._data:
+            if dump_idx < self._data[-1][0]:
+                logger.warning(
+                    'Ignoring sensor update for %s that went backwards in time (%d < %d)',
+                    self.name, dump_idx, self._data[-1][0]
+                )
+                return
+            elif dump_idx == self._data[-1][0]:
+                # May be more than one sensor update during a dump period.
+                # Assume that time ran forwards, so the new value is more
+                # up-to-date. Remove the previous value.
+                self._data.pop()
+        self._data.append((dump_idx, value))
+
+    def get(self, dump_idx: int, default: Any = None) -> Any:
+        """Obtain the last sample value that is no later than `dump_idx`.
+
+        If there is no such sample, returns `default`.
+
+        Raises
+        ------
+        ValueError
+            if `dump_idx` is less than in the previous call.
+        """
+        if dump_idx < self._last_get:
+            raise ValueError('Query dump indices must not go backwards')
+        while len(self._data) > 1 and self._data[1][0] <= dump_idx:
+            self._data.popleft()
+        self._last_get = dump_idx
+        if not self._data or self._data[0][0] > dump_idx:
+            return default
+        else:
+            return self._data[0][1]
 
 
 def task_wrapper(name: str, fail_status: DeviceStatus, restart: bool = False):
