@@ -8,6 +8,7 @@ import asyncio
 import enum
 import argparse
 import textwrap
+import functools
 import gc
 from typing import (
     Mapping, Dict, List, Tuple, Set, Iterable, Callable, Awaitable, Optional, TypeVar, Any
@@ -568,6 +569,36 @@ class TelstateReceiver(receiver.Receiver):
             return await self._telstates[0].get('first_timestamp_adc')
 
 
+def task_wrapper(name: str, fail_status: DeviceStatus, restart: bool = False):
+    """Decorator for tasks that run asynchronously during an ingest session.
+
+    If the task raises an exception, it is logged, and the device status is
+    set to at least `fail_state`.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            while True:
+                try:
+                    return await func(self, *args, **kwargs)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.error('%s threw an uncaught exception%s',
+                                 name, ', restarting' if restart else '',
+                                 exc_info=True)
+                    sensor = self._my_sensors['device-status']
+                    if fail_status.value > sensor.value.value:
+                        sensor.value = fail_status
+                    if restart:
+                        await asyncio.sleep(5)  # To avoid thrashing if it's a repeating failure
+                    else:
+                        break
+
+        return wrapper
+    return decorator
+
+
 class CBFIngest:
     """
     Ingest session.
@@ -985,7 +1016,10 @@ class CBFIngest:
                  my_sensors: Mapping[str, Sensor],
                  telstate_cbf: katsdptelstate.aio.TelescopeState) -> None:
         self._sdisp_ips: Dict[str, spead2.send.asyncio.UdpStream] = {}
-        self._run_future: Optional[asyncio.Task] = None
+        self._run_task: Optional[asyncio.Task] = None
+        self._sidecar_tasks: List[asyncio.Task] = []
+        # Local cache of values from telstate_sdisp
+        self._telstate_sdisp_values: Dict[str, Any] = {}
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
         self.capture_block_id: Optional[str] = None
@@ -1189,18 +1223,12 @@ class CBFIngest:
         signal display data to the signal display server"""
         all_channels = len(self.channel_ranges.all_sd_output)
         try:
-            with self.time_telstate():
-                custom_signals_indices = np.array(
-                    await self.telstate_sdisp['sdisp_custom_signals'],
-                    dtype=np.uint32, copy=False)
+            custom_signals_indices = self._telstate_sdisp_values['sdisp_custom_signals']
         except KeyError:
             custom_signals_indices = np.array([], dtype=np.uint32)
 
         try:
-            with self.time_telstate():
-                full_mask = np.array(
-                    await self.telstate_sdisp['sdisp_timeseries_mask'],
-                    dtype=np.float32, copy=False)
+            full_mask = self._telstate_sdisp_values['sdisp_timeseries_mask']
             if full_mask.shape != (all_channels,):
                 raise ValueError
         except (KeyError, ValueError, TypeError):
@@ -1314,8 +1342,8 @@ class CBFIngest:
                 self.ig_sd['sd_data_index'].value = custom_signals_indices
                 self.ig_sd['sd_flags'].value = spec_flags[spec_channels, custom_signals_indices]
             else:
-                logger.warn('sdisp_custom_signals out of range, not updating (%s)',
-                            custom_signals_indices)
+                logger.warning('sdisp_custom_signals out of range, not updating (%s)',
+                               custom_signals_indices)
             self.ig_sd['sd_blmxdata'].value = _split_array(cont_vis[cont_channels, ...], np.float32)
             self.ig_sd['sd_blmxflags'].value = cont_flags[cont_channels, ...]
             self.ig_sd['sd_timeseries'].value = _split_array(timeseries, np.float32)
@@ -1468,15 +1496,20 @@ class CBFIngest:
 
     @property
     def capturing(self) -> bool:
-        return self._run_future is not None
+        return self._run_task is not None
 
     def start(self, capture_block_id: str):
-        assert self._run_future is None
+        assert self._run_task is None
+        assert not self._sidecar_tasks
         assert self.rx is None
         assert self._stopped
         self._stopped = False
+        self._telstate_sdisp_values = {}
         self.capture_block_id = capture_block_id
-        self._run_future = asyncio.get_event_loop().create_task(self.run())
+        loop = asyncio.get_event_loop()
+        self._run_task = loop.create_task(self.run())
+        self._sidecar_tasks.append(loop.create_task(self._update_timeseries_mask()))
+        self._sidecar_tasks.append(loop.create_task(self._update_custom_signals()))
 
     async def stop(self) -> bool:
         """Shut down the session. It is safe to make reentrant calls: each
@@ -1490,7 +1523,7 @@ class CBFIngest:
             when running, exactly one of them will return true.
         """
         ret = False
-        future = self._run_future
+        future = self._run_task
         if future is not None:
             self._stopped = True
             # Give it a chance to stop on its own (due to stop items)
@@ -1506,12 +1539,16 @@ class CBFIngest:
             # If multiple callers arrive here, we want only the first to
             # return True and clean up. We also need to protect against a prior
             # task having cleaned up and immediately started a new capture
-            # session. In this case _run_future will be non-None (and hence
-            # capturing will be True), but the object identity of _run_future
+            # session. In this case _run_task will be non-None (and hence
+            # capturing will be True), but the object identity of _run_task
             # will no longer match future.
-            if self._run_future is future:
+            if self._run_task is future:
                 ret = True
-                self._run_future = None
+                for task in self._sidecar_tasks:
+                    task.cancel()
+                await asyncio.wait(self._sidecar_tasks)
+                self._sidecar_tasks = []
+                self._run_task = None
                 self.capture_block_id = None
                 self.rx = None
             # spead2 versions up to 1.14.0 were known to produce cyclic
@@ -1519,14 +1556,6 @@ class CBFIngest:
             # collected.
             gc.collect()
         return ret
-
-    async def run(self) -> None:
-        """Thin wrapper than runs the real code and handles exceptions."""
-        try:
-            await self._run()
-        except Exception:
-            logger.error('CBFIngest session threw an uncaught exception', exc_info=True)
-            self._my_sensors['device-status'].value = DeviceStatus.FAIL
 
     def close(self) -> None:
         # PyCUDA has a bug/limitation regarding cleanup
@@ -1590,8 +1619,36 @@ class CBFIngest:
             # thrown as soon as possible.
             self.jobs.clean()
 
-    async def _run(self) -> None:
-        """Real implementation of `run`."""
+    async def _update_sdisp_key(self, key: str, dtype: np.dtype) -> None:
+        ts = None
+
+        def callback(value: Any, new_ts: Optional[float]) -> bool:
+            nonlocal ts
+            if new_ts is None:
+                logger.warning('%s was set to an immutable value, should be mutable', key)
+                return False
+            if ts is None or new_ts > ts:
+                value = np.array(value, dtype=dtype, copy=False)
+                self._telstate_sdisp_values[key] = value
+                ts = new_ts
+                logger.info('%s updated with timestamp %.3f and shape %s', key, ts, value.shape)
+            return False
+
+        # The callback always returns false, so this call to wait_key will
+        # never return. Instead, it will be cancelled when the capture-block
+        # ends.
+        await self.telstate_sdisp.wait_key(key, callback)
+
+    @task_wrapper('_update_timeseries_mask', DeviceStatus.DEGRADED, restart=True)
+    async def _update_timeseries_mask(self) -> None:
+        await self._update_sdisp_key('sdisp_timeseries_mask', np.float32)
+
+    @task_wrapper('_update_custom_signals', DeviceStatus.DEGRADED, restart=True)
+    async def _update_custom_signals(self) -> None:
+        await self._update_sdisp_key('sdisp_custom_signals', np.uint32)
+
+    @task_wrapper('CBFIngest session', DeviceStatus.FAIL)
+    async def run(self) -> None:
         # Ensure we have clean state. Some of this is unnecessary in normal
         # use, but important if the previous session crashed.
         self._zero_counters()
