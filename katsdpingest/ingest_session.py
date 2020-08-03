@@ -1437,7 +1437,8 @@ class CBFIngest:
             proc_a: resource.ResourceAllocation,
             input_a: resource.ResourceAllocation,
             host_input_a: resource.ResourceAllocation,
-            frame: receiver.Frame) -> None:
+            frame: receiver.Frame,
+            timestamp: float) -> None:
         with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
@@ -1461,7 +1462,7 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            await self._set_external_flags(baseline_flags, channel_mask, frame.timestamp)
+            await self._set_external_flags(baseline_flags, channel_mask, timestamp)
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1606,7 +1607,7 @@ class CBFIngest:
             # Limit backlog by waiting for previous job to get as far as
             # start to transfer its data before trying to carry on.
             await host_input_a.wait()
-            self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame))
+            self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame, current_ts))
 
             # Done with reading this frame
             idx += 1
