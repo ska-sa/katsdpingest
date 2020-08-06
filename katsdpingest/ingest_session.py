@@ -2,7 +2,7 @@
 
 import contextlib
 import time
-import fractions
+import math
 import logging
 import asyncio
 import enum
@@ -302,7 +302,7 @@ class ChannelRanges:
         if not self.sd_output.isaligned(sd_cont_factor):
             raise ValueError('sd output range is not aligned to continuum factor')
         # Compute least common multiple
-        alignment = cont_factor * sd_cont_factor // fractions.gcd(cont_factor, sd_cont_factor)
+        alignment = cont_factor * sd_cont_factor // math.gcd(cont_factor, sd_cont_factor)
         self.computed = self.output.union(self.sd_output).alignto(alignment)
         self.input = utils.Range(self.computed.start - guard, self.computed.stop + guard)
         self.input = self.input.intersection(self.cbf)
