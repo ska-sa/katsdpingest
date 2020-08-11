@@ -5,31 +5,31 @@ import logging
 import asyncio
 import copy
 from unittest import mock
-from typing import List
+from typing import List, Dict, Any
 
 import asynctest
 import async_timeout
 import numpy as np
-from nose.tools import (assert_in, assert_is, assert_is_not_none, assert_is_instance,
-                        assert_true, assert_false,
-                        assert_equal, assert_almost_equal, assert_raises_regex)
+from nose.tools import (assert_in, assert_is_not_none, assert_is_instance,
+                        assert_true, assert_equal, assert_almost_equal, assert_raises_regex)
 
 import spead2
 import spead2.recv
 import spead2.send
 import aiokatcp
-import katsdptelstate
+import katsdptelstate.aio.memory
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
+import katpoint
 import astropy.table
 import astropy.units as u
 
-from katsdpingest.utils import Range
+from katsdpingest.utils import Range, cbf_telstate_view
 from katsdpingest.ingest_server import IngestDeviceServer
-from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering
+from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering, SystemAttrs
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
@@ -161,14 +161,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
 
-    def fake_channel_mask(self):
+    def fake_channel_mask(self) -> np.ndarray:
         channel_mask = np.zeros((self.cbf_attr['n_chans']), np.bool_)
         channel_mask[704] = True
         channel_mask[750:800] = True
         channel_mask[900] = True
         return channel_mask
 
-    def fake_rfi_mask_model(self):
+    def fake_rfi_mask_model(self) -> katsdpmodels.rfi_mask.RFIMask:
         # Channels 852:857 and 1024
         ranges = astropy.table.QTable(
             [[1034e6, 1070.0e6] * u.Hz,
@@ -178,23 +178,12 @@ class TestIngestDeviceServer(asynctest.TestCase):
         )
         return katsdpmodels.rfi_mask.RFIMaskRanges(ranges, False)
 
-    def fake_band_mask_model(self):
+    def fake_band_mask_model(self) -> katsdpmodels.band_mask.BandMask:
         # Channels 820:840
         ranges = astropy.table.Table(
             [[0.2], [0.205]], names=('min_fraction', 'max_fraction')
         )
         return katsdpmodels.band_mask.BandMaskRanges(ranges)
-
-    def fake_model(self, url, model_class, *, lazy=False):
-        assert_false(lazy)
-        if url == 'http://test.invalid/models/rfi_mask/fixed/sha256_deadbeef.hdf5':
-            assert_is(model_class, katsdpmodels.rfi_mask.RFIMask)
-            return self.fake_rfi_mask_model()
-        elif url == 'http://test.invalid/models/band_mask/fixed/sha256_cafebeef.hdf5':
-            assert_is(model_class, katsdpmodels.band_mask.BandMask)
-            return self.fake_band_mask_model()
-        else:
-            raise RuntimeError(f'Unexpected URL {url!r} in fake_model')
 
     def fake_channel_data_suspect(self):
         bad = np.zeros(self.cbf_attr['n_chans'], np.bool_)
@@ -203,11 +192,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
         return bad
 
     @device_test
-    async def setUp(self, context, command_queue):
-        done_future = asyncio.Future(loop=self.loop)
+    async def setUp(self, context, command_queue) -> None:
+        done_future = asyncio.Future(loop=self.loop)     # type: asyncio.Future[None]
         done_future.set_result(None)
-        self._patchers = []
-        self._telstate = katsdptelstate.TelescopeState()
+        self._patchers = []                              # type: List[Any]
+        self._telstate = katsdptelstate.aio.TelescopeState()
         n_xengs = 16
         self.user_args = user_args = argparse.Namespace(
             sdisp_spead=[Endpoint('127.0.0.2', 7149)],
@@ -241,36 +230,36 @@ class TestIngestDeviceServer(asynctest.TestCase):
             clock_ratio=1.0,
             host='127.0.0.1',
             port=7147,
-            telstate=self._telstate,
             name='sdp.ingest.1'
         )
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
         # Put them in at the beginning of time, to ensure they apply to every dump
-        self._telstate['i0_baseline_correlation_products_src_streams'] = \
-            ['i0_antenna_channelised_voltage']
-        self._telstate['i0_antenna_channelised_voltage_instrument_dev_name'] = 'i0'
-        self._telstate['sdp_model_base_url'] = 'http://test.invalid/models/'
-        rfi_mask_model_key = self._telstate.join('model', 'rfi_mask', 'fixed')
-        self._telstate[rfi_mask_model_key] = 'rfi_mask/fixed/sha256_deadbeef.hdf5'
-        band_mask_model_key = self._telstate.join(
-            'i0_antenna_channelised_voltage', 'model', 'band_mask', 'fixed')
-        self._telstate[band_mask_model_key] = 'band_mask/fixed/sha256_cafebeef.hdf5'
-        self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
-                           self.fake_channel_mask(), ts=0)
-        self._telstate.add('m090_data_suspect', False, ts=0)
-        self._telstate.add('m091_data_suspect', True, ts=0)
+        await self._telstate.set('i0_baseline_correlation_products_src_streams',
+                                 ['i0_antenna_channelised_voltage'])
+        await self._telstate.set('i0_antenna_channelised_voltage_instrument_dev_name', 'i0')
+        await self._telstate.add('i0_antenna_channelised_voltage_channel_mask',
+                                 self.fake_channel_mask(), ts=0)
+        await self._telstate.add('m090_data_suspect', False, ts=0)
+        await self._telstate.add('m091_data_suspect', True, ts=0)
         input_data_suspect = np.zeros(len(self.cbf_attr['input_labels']), np.bool_)
         input_data_suspect[1] = True     # Corresponds to m090v
-        self._telstate.add('i0_antenna_channelised_voltage_input_data_suspect',
-                           input_data_suspect, ts=0)
-        self._telstate.add('i0_baseline_correlation_products_channel_data_suspect',
-                           self.fake_channel_data_suspect(), ts=0)
+        await self._telstate.add('i0_antenna_channelised_voltage_input_data_suspect',
+                                 input_data_suspect, ts=0)
+        await self._telstate.add('i0_baseline_correlation_products_channel_data_suspect',
+                                 self.fake_channel_data_suspect(), ts=0)
         # These correspond to three core and one outlying MeerKAT antennas,
         # so that baselines to m093 are long while the others are short.
-        self._telstate['m090_observer'] = 'm090, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -8.258 -207.289 1.2075 5874.184 5875.444, -0:00:39.7 0 -0:04:04.4 -0:04:53.0 0:00:57.8 -0:00:13.9 0:13:45.2 0:00:59.8, 1.14'     # noqa: E501
-        self._telstate['m091_observer'] = 'm091, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14'      # noqa: E501
-        self._telstate['m092_observer'] = 'm002, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -32.1085 -224.2365 1.248 5871.207 5872.205, 0:40:20.2 0 -0:02:41.9 -0:03:46.8 0:00:09.4 -0:00:01.1 0:03:04.7, 1.14'              # noqa: E501
-        self._telstate['m093_observer'] = 'm093, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -1440.6235 -2503.7705 14.288 5932.94 5934.732, -0:15:23.0 0 0:00:04.6 -0:03:30.4 0:01:12.2 0:00:37.5 0:00:15.6 0:01:11.8, 1.14'  # noqa: E501
+        antennas = [
+            katpoint.Antenna('m090, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -8.258 -207.289 1.2075 5874.184 5875.444, -0:00:39.7 0 -0:04:04.4 -0:04:53.0 0:00:57.8 -0:00:13.9 0:13:45.2 0:00:59.8, 1.14'),     # noqa: E501
+            katpoint.Antenna('m091, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14'),      # noqa: E501
+            katpoint.Antenna('m002, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -32.1085 -224.2365 1.248 5871.207 5872.205, 0:40:20.2 0 -0:02:41.9 -0:03:46.8 0:00:09.4 -0:00:01.1 0:03:04.7, 1.14'),              # noqa: E501
+            katpoint.Antenna('m093, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, -1440.6235 -2503.7705 14.288 5932.94 5934.732, -0:15:23.0 0 0:00:04.6 -0:03:30.4 0:01:12.2 0:00:37.5 0:00:15.6 0:01:11.8, 1.14')   # noqa: E501
+        ]
+        self._telstate_cbf = await cbf_telstate_view(self._telstate,
+                                                     'i0_baseline_correlation_products')
+        self.system_attrs = SystemAttrs(
+            self.cbf_attr, self.fake_rfi_mask_model(), self.fake_band_mask_model(),
+            antennas)
         self.channel_ranges = ChannelRanges(
             user_args.servers, user_args.server_id - 1,
             self.cbf_attr['n_chans'], user_args.continuum_factor, user_args.sd_continuum_factor,
@@ -282,7 +271,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._Receiver = self._patch(
             'katsdpingest.ingest_session.TelstateReceiver',
             side_effect=lambda *args, **kwargs:
-                MockReceiver(self._data, self._timestamps, *args, pauses=self._pauses, **kwargs))
+                MockReceiver(self._data, self._timestamps, *args,     # type: ignore
+                             pauses=self._pauses, **kwargs))
         self._tx = {'continuum': mock.MagicMock(), 'spectral': mock.MagicMock()}
         for tx in self._tx.values():
             tx.start.return_value = done_future
@@ -293,14 +283,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
         self._tx['continuum'].sub_channels //= self.channel_ranges.cont_factor
         self._VisSenderSet = self._patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
-        self._sd_tx = {}
+        self._sd_tx: Dict[Endpoint, spead2.send.asyncio.InprocStream] = {}
         self._UdpStream = self._patch('spead2.send.asyncio.UdpStream',
                                       side_effect=self._get_sd_tx)
         self._patch('katsdpservices.get_interface_address',
                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
-        self._patch('katsdpmodels.fetch.requests.Fetcher.get', side_effect=self.fake_model)
         self._server = IngestDeviceServer(
-            user_args, self.channel_ranges, self.cbf_attr, context,
+            user_args, self._telstate_cbf, self.channel_ranges, self.system_attrs, context,
             host=user_args.host, port=user_args.port)
         await self._server.start()
         self.addCleanup(self._server.stop)
@@ -334,7 +323,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             with async_timeout.timeout(15):
                 await self._client.request(name, *args)
 
-    def _get_expected(self):
+    async def _get_expected(self):
         """Return expected visibilities, flags and timestamps.
 
         The timestamps are in seconds since the sync time. The full CBF channel
@@ -345,13 +334,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         # Scaling
         vis /= self.cbf_attr['n_accs']
         # Time averaging
-        time_ratio = int(np.round(self._telstate['sdp_l0_int_time'] / self.cbf_attr['int_time']))
+        time_ratio = int(np.round(await self._telstate['sdp_l0_int_time']
+                                  / self.cbf_attr['int_time']))
         batch_edges = np.arange(0, vis.shape[0], time_ratio)
         batch_sizes = np.minimum(batch_edges + time_ratio, vis.shape[0]) - batch_edges
         vis = np.add.reduceat(vis, batch_edges, axis=0)
         vis /= batch_sizes[:, np.newaxis, np.newaxis]
         timestamps = self._timestamps[::time_ratio] / self.cbf_attr['scale_factor_timestamp'] \
-            + 0.5 * self._telstate['sdp_l0_int_time']
+            + 0.5 * (await self._telstate['sdp_l0_int_time'])
         # Baseline permutation
         bls = BaselineOrdering(self.cbf_attr['bls_ordering'], self.user_args.antenna_mask)
         inv_permutation = np.empty(len(bls.sdp_bls_ordering), np.int)
@@ -361,7 +351,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         vis = vis[..., inv_permutation]
         # Sanity check that we've constructed inv_permutation correctly
         np.testing.assert_array_equal(
-            self._telstate['sdp_l0_bls_ordering'],
+            await self._telstate['sdp_l0_bls_ordering'],
             self.cbf_attr['bls_ordering'][inv_permutation])
         flags = np.empty(vis.shape, np.uint8)
         channel_mask = self.fake_channel_mask()
@@ -405,10 +395,10 @@ class TestIngestDeviceServer(asynctest.TestCase):
             assert_equal(i, idx)
             assert_almost_equal(ts, ts_rel)
 
-    def test_init_telstate(self):
+    async def test_init_telstate(self):
         """Test the output metadata in telstate"""
-        def get_ts(key):
-            return self._telstate[prefix + '_' + key]
+        async def get_ts(key):
+            return await self._telstate[prefix + '_' + key]
 
         bls_ordering = []
         for a in self.user_args.antenna_mask:
@@ -420,17 +410,17 @@ class TestIngestDeviceServer(asynctest.TestCase):
         bls_ordering.sort()
         for prefix in ['sdp_l0', 'sdp_l0_continuum']:
             factor = 1 if prefix == 'sdp_l0' else self.user_args.continuum_factor
-            assert_equal(1280 // factor, get_ts('n_chans'))
-            assert_equal(get_ts('n_chans') // 4, get_ts('n_chans_per_substream'))
-            assert_equal(len(bls_ordering), get_ts('n_bls'))
-            assert_equal(bls_ordering, sorted(get_ts('bls_ordering').tolist()))
-            assert_equal(self.cbf_attr['sync_time'], get_ts('sync_time'))
-            assert_equal(267500000.0, get_ts('bandwidth'))
-            assert_equal(8 * self.cbf_attr['int_time'], get_ts('int_time'))
-            assert_equal((464, 1744), get_ts('channel_range'))
-        assert_equal(1086718750.0, self._telstate['sdp_l0_center_freq'])
+            assert_equal(1280 // factor, await get_ts('n_chans'))
+            assert_equal((await get_ts('n_chans')) // 4, await get_ts('n_chans_per_substream'))
+            assert_equal(len(bls_ordering), await get_ts('n_bls'))
+            assert_equal(bls_ordering, sorted((await get_ts('bls_ordering')).tolist()))
+            assert_equal(self.cbf_attr['sync_time'], await get_ts('sync_time'))
+            assert_equal(267500000.0, await get_ts('bandwidth'))
+            assert_equal(8 * self.cbf_attr['int_time'], await get_ts('int_time'))
+            assert_equal((464, 1744), await get_ts('channel_range'))
+        assert_equal(1086718750.0, await self._telstate['sdp_l0_center_freq'])
         # Offset by 7.5 channels to identify the centre of a continuum channel
-        assert_equal(1088286132.8125, self._telstate['sdp_l0_continuum_center_freq'])
+        assert_equal(1088286132.8125, await self._telstate['sdp_l0_continuum_center_freq'])
 
     async def test_capture(self):
         """Test the core data capture process."""
@@ -438,7 +428,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('capture-done')
         l0_flavour = spead2.Flavour(4, 64, 48)
         l0_int_time = 8 * self.cbf_attr['int_time']
-        expected_vis, expected_flags, expected_ts = self._get_expected()
+        expected_vis, expected_flags, expected_ts = await self._get_expected()
         expected_output_vis = expected_vis[:, self.channel_ranges.output.asslice(), :]
         expected_output_flags = expected_flags[:, self.channel_ranges.output.asslice(), :]
 

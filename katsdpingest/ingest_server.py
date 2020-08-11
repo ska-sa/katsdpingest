@@ -7,10 +7,11 @@ from typing import List, Dict, Mapping, Any, cast   # noqa: F401
 
 import aiokatcp
 from aiokatcp import FailReply, SensorSampler
+import katsdptelstate.aio
 from katsdptelstate.endpoint import endpoint_parser
 
 import katsdpingest
-from .ingest_session import CBFIngest, Status, DeviceStatus, ChannelRanges
+from .ingest_session import CBFIngest, Status, DeviceStatus, ChannelRanges, SystemAttrs
 from . import receiver
 from .utils import Sensor
 
@@ -41,11 +42,14 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
     ----------
     user_args : :class:`argparse.Namespace`
         Command-line arguments
+    telstate_cbf : :class:`katsdptelstate.aio.TelescopeState`
+        Asynchronous client for the telescope state, as returned by
+        :func:`katsdpingest.utils.cbf_telstate_view`.
     channel_ranges : :class:`katsdpingest.ingest_session.ChannelRanges`
         Ranges of channels for various parts of the pipeline
-    cbf_attr : dict
-        CBF stream configuration, as returned by
-        :func:`katsdpingest.ingest_session.get_cbf_attr`.
+    system_attrs : :class:`katsdpingest.ingest_session.SystemAttrs`
+        System configuration, as returned by
+        :meth:`katsdpingest.ingest_session.SystemAttrs.create`.
     context : :class:`katsdpsigproc.cuda.Context` or :class:`katsdpsigproc.opencl.Context`
         Context in which to compile device code and allocate resources
     args, kwargs
@@ -58,8 +62,9 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
     def __init__(
             self,
             user_args: argparse.Namespace,
+            telstate_cbf: katsdptelstate.aio.TelescopeState,
             channel_ranges: ChannelRanges,
-            cbf_attr: Dict[str, Any],
+            system_attrs: SystemAttrs,
             context, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._stopping = False
@@ -142,11 +147,15 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
 
         # create the device resources
         self.cbf_ingest = CBFIngest(
-            user_args, cbf_attr, channel_ranges, context,
-            cast(Mapping[str, Sensor], self.sensors), user_args.telstate)
+            user_args, system_attrs, channel_ranges, context,
+            cast(Mapping[str, Sensor], self.sensors), telstate_cbf)
         # add default or user specified endpoints
         for sdisp_endpoint in user_args.sdisp_spead:
             self.cbf_ingest.add_sdisp_ip(sdisp_endpoint)
+
+    async def start(self) -> None:
+        await self.cbf_ingest.populate_telstate()
+        await super().start()
 
     async def request_enable_debug(self, ctx) -> str:
         """Enable debugging of the ingest process."""

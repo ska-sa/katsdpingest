@@ -10,12 +10,12 @@ import argparse
 import textwrap
 import gc
 from typing import (
-    Mapping, Dict, List, Tuple, Set, Iterable, Optional, TypeVar, Any
+    Mapping, Dict, List, Tuple, Set, Iterable, Callable, Awaitable, Optional, TypeVar, Any
 )    # noqa: F401
 
 import numpy as np
 import astropy.units as u
-import requests
+import aiohttp
 
 import spead2
 import spead2.send
@@ -27,7 +27,7 @@ import katsdpsigproc.accel
 from katsdpsigproc import resource
 import katsdpsigproc.rfi.device as rfi
 
-import katsdpmodels.fetch.requests
+import katsdpmodels.fetch.aiohttp
 import katsdpmodels.band_mask
 import katsdpmodels.rfi_mask
 
@@ -36,8 +36,8 @@ import katsdpservices
 from katdal import SpectralWindow
 from katdal.flags import CAM, DATA_LOST, INGEST_RFI, STATIC
 import katpoint
-import katsdptelstate
-from katsdptelstate.endpoint import endpoints_to_str
+import katsdptelstate.aio
+from katsdptelstate.endpoint import endpoints_to_str, Endpoint
 
 from . import utils, receiver, sender, sigproc
 from .utils import Sensor
@@ -72,13 +72,15 @@ class _TimeAverage:
     cadence.
 
     This object never sees dump contents directly, only dump indices. When an
-    index is added that is not part of the current group, :func:`flush`
-    is called, which must be overloaded or set to a callback function.
+    index is added that is not part of the current group, `flush` is called.
 
     Parameters
     ----------
     ratio : int
         Number of input dumps per output dump
+    flush
+        Asynchronous callback which is called once a set of dumps is ready to
+        be averaged. It is passed the output dump index.
 
     Attributes
     ----------
@@ -89,31 +91,31 @@ class _TimeAverage:
         There is at least one dump in the current group if and only if this is
         not ``None``.
     """
-    def __init__(self, ratio: int) -> None:
+    def __init__(self, ratio: int, flush: Callable[[int], Awaitable[None]]) -> None:
         self.ratio = ratio
-        self._start_idx = None    # type: Optional[int]
+        self.flush = flush
+        self._start_idx: Optional[int] = None
 
     def _warp_start(self, idx: int) -> None:
         """Set :attr:`start_idx` to the smallest multiple of ratio that is <= idx."""
         self._start_idx = idx // self.ratio * self.ratio
 
-    def add_index(self, idx: int) -> None:
-        """Record that a dump with a given index has arrived and is about to
-        be processed. This may call :func:`flush`."""
+    async def add_index(self, idx: int) -> None:
+        """Record that a dump with a given index has arrived and is about to be processed.
+
+        This may call the `flush` callback given to the constructor.
+        """
 
         if self._start_idx is None:
             self._warp_start(idx)
         elif idx >= self._start_idx + self.ratio:
-            self.flush(self._start_idx // self.ratio)
+            await self.flush(self._start_idx // self.ratio)
             self._warp_start(idx)
 
-    def flush(self, out_idx: int) -> None:
-        raise NotImplementedError
-
-    def finish(self, flush: bool = True) -> None:
+    async def finish(self, flush: bool = True) -> None:
         """Flush if not empty and `flush` is true, and reset to initial state"""
         if self._start_idx is not None and flush:
-            self.flush(self._start_idx // self.ratio)
+            await self.flush(self._start_idx // self.ratio)
         self._start_idx = None
 
 
@@ -336,7 +338,7 @@ class _ResourceSet:
             raise ValueError('_ResourceSet needs at least one buffer')
         buffers = {name: proc.buffer(name) for name in names}
         self._device = resource.Resource(buffers)
-        self._host = []    # type: List[resource.Resource]
+        self._host: List[resource.Resource] = []
         for i in range(N):
             host = {name: buffer.empty_like() for name, buffer in buffers.items()}
             self._host.append(resource.Resource(host))
@@ -349,26 +351,6 @@ class _ResourceSet:
         if self._next == len(self._host):
             self._next = 0
         return ret
-
-
-def get_cbf_attr(telstate: katsdptelstate.TelescopeState, cbf_name: str) -> Dict[str, Any]:
-    """Load the configuration of the CBF stream from a telescope state.
-
-    Parameters
-    ----------
-    telstate : :class:`katsdptelstate.TelescopeState`
-        Telescope state from which the CBF stream metadata is retrieved.
-    cbf_name : str
-        Name of the baseline-correlation-products stream
-    """
-    cbf_attr = {}
-    telstate = utils.cbf_telstate_view(telstate, cbf_name)
-    for attr in CBF_CRITICAL_ATTRS:
-        cbf_attr[attr] = telstate[attr]
-        logger.info('Setting cbf_attr %s to %s',
-                    attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
-    logger.info('All metadata received from telstate')
-    return cbf_attr
 
 
 class BaselineOrdering:
@@ -449,11 +431,14 @@ class BaselineOrdering:
             return [auto, autohh, autovv, autohv, cross, crosshh, crossvv, crosshv]
 
         if antenna_mask is not None:
-            antenna_mask_set = set(antenna_mask)   # type: Optional[Set[str]]
+            antenna_mask_set: Optional[Set[str]] = set(antenna_mask)
         else:
             antenna_mask_set = None
         # Eliminate baselines not covered by antenna_mask_set
         filtered = [x for x in enumerate(cbf_bls_ordering) if keep(x[1])]
+        if not filtered:
+            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
+                cbf_bls_ordering, antenna_mask_set))
         # Sort what's left
         reordered = sorted(filtered, key=key)
         # reordered contains the mapping from new position to original
@@ -467,7 +452,7 @@ class BaselineOrdering:
 
         # Collect percentile ranges
         collection_products = get_collection_products(self.sdp_bls_ordering)
-        self.percentile_ranges = []   # type: List[Tuple[int, int]]
+        self.percentile_ranges: List[Tuple[int, int]] = []
         for p in collection_products:
             if p:
                 start = p[0]
@@ -479,6 +464,77 @@ class BaselineOrdering:
                 self.percentile_ranges.append((0, 0))
 
 
+class SystemAttrs:
+    """Static system configuration retrieved from telescope state."""
+
+    def __init__(self,
+                 cbf_attr: Mapping[str, Any],
+                 rfi_mask_model: Optional[katsdpmodels.rfi_mask.RFIMask],
+                 band_mask_model: Optional[katsdpmodels.band_mask.BandMask],
+                 antennas: Iterable[katpoint.Antenna]) -> None:
+        self.cbf_attr = dict(cbf_attr)
+        self.rfi_mask_model = rfi_mask_model
+        self.band_mask_model = band_mask_model
+        self.antennas = list(antennas)
+
+    @staticmethod
+    async def _get_rfi_mask_model(fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher) \
+            -> Optional[katsdpmodels.rfi_mask.RFIMask]:
+        rfi_mask_model_key = fetcher.telstate.join('model', 'rfi_mask', 'fixed')
+        try:
+            rfi_mask_model = await fetcher.get(rfi_mask_model_key,
+                                               katsdpmodels.rfi_mask.RFIMask)
+            logger.info('Loaded rfi_mask model')
+            return rfi_mask_model
+        except (aiohttp.ClientError, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load rfi_mask model: %s', exc, exc_info=True)
+            return None
+
+    @staticmethod
+    async def _get_band_mask_model(fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher,
+                                   telstate_cbf: katsdptelstate.aio.TelescopeState) \
+            -> Optional[katsdpmodels.band_mask.BandMask]:
+        band_mask_model_key = telstate_cbf.join('model', 'band_mask', 'fixed')
+        try:
+            band_mask_model = await fetcher.get(band_mask_model_key,
+                                                katsdpmodels.band_mask.BandMask,
+                                                telstate=telstate_cbf)
+            logger.info('Loaded band_mask model')
+            return band_mask_model
+        except (aiohttp.ClientError, katsdpmodels.models.ModelError) as exc:
+            logger.warning('Failed to load band_mask model: %s', exc, exc_info=True)
+            return None
+
+    @staticmethod
+    async def _get_antennas(input_labels: Iterable[str],
+                            antenna_mask: Optional[Iterable[str]],
+                            telstate: katsdptelstate.aio.TelescopeState) -> List[katpoint.Antenna]:
+        antenna_names = set(label[:-1] for label in input_labels)
+        if antenna_mask is not None:
+            antenna_names &= set(antenna_mask)
+        return [katpoint.Antenna(await telstate['{}_observer'.format(name)])
+                for name in antenna_names]
+
+    @classmethod
+    async def create(cls,
+                     fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher,
+                     telstate_cbf: katsdptelstate.aio.TelescopeState,
+                     antenna_mask: Optional[Iterable[str]] = None) -> 'SystemAttrs':
+        telstate = fetcher.telstate
+
+        cbf_attr = {}
+        for attr in CBF_CRITICAL_ATTRS:
+            cbf_attr[attr] = await telstate_cbf[attr]
+            logger.info('Setting cbf_attr %s to %s',
+                        attr, textwrap.shorten(repr(cbf_attr[attr]), 50))
+
+        rfi_mask_model = await cls._get_rfi_mask_model(fetcher)
+        band_mask_model = await cls._get_band_mask_model(fetcher, telstate_cbf)
+        antennas = await cls._get_antennas(cbf_attr['input_labels'], antenna_mask, telstate)
+        logger.info('All metadata received from telstate')
+        return cls(cbf_attr, rfi_mask_model, band_mask_model, antennas)
+
+
 class TelstateReceiver(receiver.Receiver):
     """Receiver that uses telescope state to coordinate a shared first dump timestamp.
 
@@ -488,28 +544,28 @@ class TelstateReceiver(receiver.Receiver):
 
     Parameters
     ----------
-    telstates : list of :class:`katsdptelstate.TelescopeState`
+    telstates : list of :class:`katsdptelstate.aio.TelescopeState`
         Telescope state views with scopes unique to the capture session (but shared
         across cooperating ingest servers).
     l0_int_time : float
         Output integration time
     """
     def __init__(self, *args, **kwargs) -> None:
-        self._telstates = kwargs.pop('telstates')
-        self._l0_int_time = kwargs.pop('l0_int_time')
+        self._telstates: List[katsdptelstate.aio.TelescopeState] = kwargs.pop('telstates')
+        self._l0_int_time: float = kwargs.pop('l0_int_time')
         super().__init__(*args, **kwargs)
 
-    def _first_timestamp(self, candidate: int) -> int:
+    async def _first_timestamp(self, candidate: int) -> int:
         scaled = candidate / self.cbf_attr['scale_factor_timestamp'] + 0.5 * self._l0_int_time
         try:
             for telstate in self._telstates:
-                telstate['first_timestamp_adc'] = candidate
-                telstate['first_timestamp'] = scaled
+                await telstate.set('first_timestamp_adc', candidate)
+                await telstate.set('first_timestamp', scaled)
             return candidate
         except katsdptelstate.ImmutableKeyError:
             # A different ingest process beat us to it. Use its value.
             # That other process will fill in the remaining values
-            return self._telstates[0].get('first_timestamp_adc')
+            return await self._telstates[0].get('first_timestamp_adc')
 
 
 class CBFIngest:
@@ -546,7 +602,7 @@ class CBFIngest:
     static_masks : :class:`np.ndarray`, 2D
         Static channel masks. Each row contains one channel mask, and the
         rows are indexed by the values in bls_channel_mask_idx.
-    telstate : :class:`katsdptelstate.TelescopeState`
+    telstate : :class:`katsdptelstate.aio.TelescopeState`
         Global view of telescope state
     l0_names : list of str
         Stream names of the L0 stream, for those streams being transmitted
@@ -624,73 +680,60 @@ class CBFIngest:
         self.output_flagged_sensor.set_value(0, timestamp=now)
         self.output_vis_sensor.set_value(0, timestamp=now)
 
-    def _init_baselines(self, antenna_mask: Iterable[str]) -> None:
+    def _init_baselines(self, system_attrs: SystemAttrs) -> None:
         # Configure the masking and reordering of baselines
-        self.bls_ordering = BaselineOrdering(self.cbf_attr['bls_ordering'], antenna_mask)
-        if not len(self.bls_ordering.sdp_bls_ordering):
-            raise ValueError('No baselines (bls_ordering = {}, antenna_mask = {})'.format(
-                self.cbf_attr['bls_ordering'], antenna_mask))
+        self.bls_ordering = BaselineOrdering(
+            system_attrs.cbf_attr['bls_ordering'],
+            [antenna.name for antenna in system_attrs.antennas]
+        )
 
         # Pre-compute channel masks from the RFI mask and band mask models
-        with katsdpmodels.fetch.requests.TelescopeStateFetcher(self.telstate) as fetcher:
-            cbf_spw = SpectralWindow(
-                self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
-                bandwidth=self.cbf_attr['bandwidth'], sideband=1)
-            spw = cbf_spw.subrange(self.channel_ranges.input.start,
-                                   self.channel_ranges.input.stop)
-            freqs = spw.channel_freqs << u.Hz
+        cbf_spw = SpectralWindow(
+            system_attrs.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
+            bandwidth=system_attrs.cbf_attr['bandwidth'], sideband=1)
+        spw = cbf_spw.subrange(self.channel_ranges.input.start,
+                               self.channel_ranges.input.stop)
+        freqs = spw.channel_freqs << u.Hz
 
-            rfi_mask_model_key = self.telstate.join('model', 'rfi_mask', 'fixed')
-            try:
-                rfi_mask_model = fetcher.get(rfi_mask_model_key, katsdpmodels.rfi_mask.RFIMask)
-            except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
-                logger.warning('Failed to load rfi_mask model: %s', exc, exc_info=True)
-                self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering),
-                                                     np.uint32)
-                self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
-            else:
-                bls = self.bls_ordering.sdp_bls_ordering
-                antenna_names = set(input_name[:-1] for input_name in bls.flat)
-                antennas = [katpoint.Antenna(self.telstate['{}_observer'.format(name)])
-                            for name in antenna_names]
-                ref = antennas[0].array_reference_antenna()
-                # Turn each antenna into a location East/North/Up of the reference
-                locations = {antenna.name: np.array(ref.baseline_toward(antenna))
-                             for antenna in antennas}
-                lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
-                                    for (a, b) in bls]) << u.m
-                # Get masks as a baseline x freq array
-                masks = rfi_mask_model.is_masked(freqs[np.newaxis, :], lengths[:, np.newaxis])
-                # Typically the model will only have a few threshold lengths, so
-                # most rows will be the same. Reduce it to just unique rows, with
-                # a lookup table.
-                masks, indices = np.unique(masks, axis=0, return_inverse=True)
-                self.bls_channel_mask_idx = indices.astype(np.uint32)
-                self.static_masks = masks * np.uint8(STATIC)
+        if system_attrs.rfi_mask_model is None:
+            self.bls_channel_mask_idx = np.zeros(len(self.bls_ordering.sdp_bls_ordering),
+                                                 np.uint32)
+            self.static_masks = np.zeros((1, len(self.channel_ranges.input)), np.uint8)
+        else:
+            bls = self.bls_ordering.sdp_bls_ordering
+            ref = system_attrs.antennas[0].array_reference_antenna()
+            # Turn each antenna into a location East/North/Up of the reference
+            locations = {antenna.name: np.array(ref.baseline_toward(antenna))
+                         for antenna in system_attrs.antennas}
+            lengths = np.array([np.linalg.norm(locations[a[:-1]] - locations[b[:-1]])
+                                for (a, b) in bls]) << u.m
+            # Get masks as a baseline x freq array
+            masks = system_attrs.rfi_mask_model.is_masked(
+                freqs[np.newaxis, :],
+                lengths[:, np.newaxis]
+            )
+            # Typically the model will only have a few threshold lengths, so
+            # most rows will be the same. Reduce it to just unique rows, with
+            # a lookup table.
+            masks, indices = np.unique(masks, axis=0, return_inverse=True)
+            self.bls_channel_mask_idx = indices.astype(np.uint32)
+            self.static_masks = masks * np.uint8(STATIC)
 
-            band_mask_model_key = self.telstate.join('model', 'band_mask', 'fixed')
-            try:
-                band_mask_model = fetcher.get(band_mask_model_key, katsdpmodels.band_mask.BandMask,
-                                              telstate=self.telstate_cbf)
-            except (requests.exceptions.RequestException, katsdpmodels.models.ModelError) as exc:
-                logger.warning('Failed to load band_mask model: %s', exc, exc_info=True)
-            else:
-                band_spw = katsdpmodels.band_mask.SpectralWindow(
-                    cbf_spw.bandwidth * u.Hz,
-                    cbf_spw.centre_freq * u.Hz
-                )
-                mask = band_mask_model.is_masked(band_spw, freqs)
-                self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
+        if system_attrs.band_mask_model is not None:
+            band_spw = katsdpmodels.band_mask.SpectralWindow(
+                cbf_spw.bandwidth * u.Hz,
+                cbf_spw.centre_freq * u.Hz
+            )
+            mask = system_attrs.band_mask_model.is_masked(band_spw, freqs)
+            self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:
         output_ratio = max(1, int(round(output_int_time / self.cbf_attr['int_time'])))
-        self._output_avg = _TimeAverage(output_ratio)
-        self._output_avg.flush = self._flush_output   # type: ignore
+        self._output_avg = _TimeAverage(output_ratio, self._flush_output)
         logger.info("Averaging {0} input dumps per output dump".format(self._output_avg.ratio))
 
         sd_ratio = max(1, int(round(sd_int_time / self.cbf_attr['int_time'])))
-        self._sd_avg = _TimeAverage(sd_ratio)
-        self._sd_avg.flush = self._flush_sd           # type: ignore
+        self._sd_avg = _TimeAverage(sd_ratio, self._flush_sd)
         logger.info("Averaging {0} input dumps per signal display dump".format(
                     self._sd_avg.ratio))
 
@@ -779,7 +822,7 @@ class CBFIngest:
         cont_factor : int
             Continuum factor (1 for spectral product)
         """
-        endpoints = getattr(args, 'l0_{}_spead'.format(arg_name))
+        endpoints: List[Endpoint] = getattr(args, 'l0_{}_spead'.format(arg_name))
         if not endpoints:
             return
 
@@ -793,8 +836,8 @@ class CBFIngest:
         if len(endpoints) % args.servers:
             raise ValueError('Number of endpoints ({}) not divisible by number of servers ({})'
                              .format(len(endpoints), args.servers))
-        endpoint_lo = (args.server_id - 1) * len(endpoints) // args.servers
-        endpoint_hi = args.server_id * len(endpoints) // args.servers
+        endpoint_lo: int = (args.server_id - 1) * len(endpoints) // args.servers
+        endpoint_hi: int = args.server_id * len(endpoints) // args.servers
         endpoints = endpoints[endpoint_lo:endpoint_hi]
         logger.info('Sending %s output to %s', arg_name, endpoints_to_str(endpoints))
         int_time = self.cbf_attr['int_time'] * self._output_avg.ratio
@@ -811,34 +854,33 @@ class CBFIngest:
 
         # Put attributes into telstate. This will be done by all the ingest
         # nodes, with the same values.
-        prefix = getattr(args, 'l0_{}_name'.format(arg_name))
-        view = self.telstate.view(prefix)
+        prefix: str = getattr(args, 'l0_{}_name'.format(arg_name))
         cbf_spw = SpectralWindow(
             self.cbf_attr['center_freq'], None, len(self.channel_ranges.cbf),
             bandwidth=self.cbf_attr['bandwidth'], sideband=1)
         output_spw = cbf_spw.subrange(all_output.start, all_output.stop)
         output_spw = output_spw.rechannelise(len(all_output) // cont_factor)
 
-        utils.set_telstate_entry(view, 'n_chans', output_spw.num_chans)
-        utils.set_telstate_entry(view, 'n_chans_per_substream', tx.sub_channels)
-        utils.set_telstate_entry(view, 'n_bls', baselines)
-        utils.set_telstate_entry(view, 'bls_ordering', self.bls_ordering.sdp_bls_ordering)
-        utils.set_telstate_entry(view, 'sync_time', self.cbf_attr['sync_time'])
-        utils.set_telstate_entry(view, 'bandwidth', output_spw.bandwidth, prefix)
-        utils.set_telstate_entry(view, 'center_freq', output_spw.centre_freq, prefix)
-        utils.set_telstate_entry(view, 'channel_range', all_output.astuple(), prefix)
-        utils.set_telstate_entry(view, 'int_time', int_time, prefix)
-        utils.set_telstate_entry(view, 'excise', args.excise, prefix)
-        utils.set_telstate_entry(view, 'src_streams', [self.src_stream], prefix)
-        utils.set_telstate_entry(view, 'stream_type', 'sdp.vis')
-        utils.set_telstate_entry(view, 'calibrations_applied', [])
-        utils.set_telstate_entry(view, 'need_weights_power_scale', True)
+        self._telstate_updates.append((prefix, 'n_chans', output_spw.num_chans))
+        self._telstate_updates.append((prefix, 'n_chans_per_substream', tx.sub_channels))
+        self._telstate_updates.append((prefix, 'n_bls', baselines))
+        self._telstate_updates.append((prefix, 'bls_ordering', self.bls_ordering.sdp_bls_ordering))
+        self._telstate_updates.append((prefix, 'sync_time', self.cbf_attr['sync_time']))
+        self._telstate_updates.append((prefix, 'bandwidth', output_spw.bandwidth))
+        self._telstate_updates.append((prefix, 'center_freq', output_spw.centre_freq))
+        self._telstate_updates.append((prefix, 'channel_range', all_output.astuple()))
+        self._telstate_updates.append((prefix, 'int_time', int_time))
+        self._telstate_updates.append((prefix, 'excise', args.excise))
+        self._telstate_updates.append((prefix, 'src_streams', [self.src_stream]))
+        self._telstate_updates.append((prefix, 'stream_type', 'sdp.vis'))
+        self._telstate_updates.append((prefix, 'calibrations_applied', []))
+        self._telstate_updates.append((prefix, 'need_weights_power_scale', True))
         self.tx[name] = tx
         self.l0_names.append(prefix)
 
     def _init_tx(self, args: argparse.Namespace) -> None:
-        self.tx = {}          # type: Dict[str, sender.VisSenderSet]
-        self.l0_names = []    # type: List[str]
+        self.tx: Dict[str, sender.VisSenderSet] = {}
+        self.l0_names: List[str] = []
         self._init_tx_one(args, 'spectral', 'spec', 1)
         self._init_tx_one(args, 'continuum', 'cont', self.channel_ranges.cont_factor)
 
@@ -937,50 +979,63 @@ class CBFIngest:
             shape=(), dtype=None, format=inline_format,
             value=self.channel_ranges.sd_output.start - self.channel_ranges.all_sd_output.start)
 
-    def __init__(self, args: argparse.Namespace, cbf_attr: Dict[str, Any],
+    def __init__(self, args: argparse.Namespace, system_attrs: SystemAttrs,
                  channel_ranges: ChannelRanges,
                  context,
                  my_sensors: Mapping[str, Sensor],
-                 telstate: katsdptelstate.TelescopeState) -> None:
-        self._sdisp_ips = {}       # type: Dict[str, spead2.send.asyncio.UdpStream]
-        self._run_future = None    # type: Optional[asyncio.Task]
+                 telstate_cbf: katsdptelstate.aio.TelescopeState) -> None:
+        self._sdisp_ips: Dict[str, spead2.send.asyncio.UdpStream] = {}
+        self._run_future: Optional[asyncio.Task] = None
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
-        self.capture_block_id = None    # type: Optional[str]
+        self.capture_block_id: Optional[str] = None
 
-        self.rx_spead_endpoints = args.cbf_spead
+        self.rx_spead_endpoints: List[Endpoint] = args.cbf_spead
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
-        self.rx_spead_ibv = args.cbf_ibv
-        self.rx_spead_max_streams = args.input_streams
-        self.rx_spead_max_packet_size = args.input_max_packet_size
-        self.rx_spead_buffer_size = args.input_buffer
-        self.sd_spead_rate = args.sd_spead_rate / args.clock_ratio if args.clock_ratio else 0.0
+        self.rx_spead_ibv: bool = args.cbf_ibv
+        self.rx_spead_max_streams: int = args.input_streams
+        self.rx_spead_max_packet_size: int = args.input_max_packet_size
+        self.rx_spead_buffer_size: int = args.input_buffer
+        self.sd_spead_rate: float = (
+            args.sd_spead_rate / args.clock_ratio if args.clock_ratio else 0.0
+        )
         self.sd_spead_ifaddr = katsdpservices.get_interface_address(args.sdisp_interface)
         self.channel_ranges = channel_ranges
-        self.telstate = telstate
-        self.telstate_cbf = utils.cbf_telstate_view(telstate, args.cbf_name)
-        self.telstate_sdisp = telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
-        self.cbf_attr = cbf_attr
-        self.src_stream = args.cbf_name
-        self.use_data_suspect = args.use_data_suspect
+        self.telstate = telstate_cbf.root()
+        self.telstate_cbf = telstate_cbf
+        self.telstate_sdisp = self.telstate.view('sdp', exclusive=True).view(args.l0_spectral_name)
+        self.cbf_attr = system_attrs.cbf_attr
+        self.src_stream: str = args.cbf_name
+        self.use_data_suspect: bool = args.use_data_suspect
+        self._telstate_updates: List[Tuple[str, str, Any]] = []   # Values to populate in telstate
 
-        self._init_baselines(args.antenna_mask)
+        self._init_baselines(system_attrs)
         self._init_time_averaging(args.output_int_time, args.sd_int_time)
         self._init_sensors(my_sensors)
-        self._init_tx(args)  # Note: must be run after _init_time_averaging, before _init_proc
+        self._init_tx(args)  # NB: must be run after _init_time_averaging, before _init_proc
         self._init_proc(context, args.excise, 'cont' in self.tx)
         self._init_resources()
 
         # Instantiation of input streams is delayed until the asynchronous task
         # is running, to avoid receiving data we're not yet ready for.
-        self.rx = None       # type: Optional[receiver.Receiver]
+        self.rx: Optional[receiver.Receiver] = None
         self._init_ig_sd()
 
         # Record information about the processing in telstate
         if args.name is not None:
             descriptions = _fix_descriptions(list(self.proc.descriptions()))
-            process_view = self.telstate.view(args.name.replace('.', '_'))
-            utils.set_telstate_entry(process_view, 'process_log', descriptions)
+            process_prefix = args.name.replace('.', '_')
+            self._telstate_updates.append((process_prefix, 'process_log', descriptions))
+
+    async def populate_telstate(self) -> None:
+        """Update telescope state with information about the outputs."""
+        for prefix, name, value in self._telstate_updates:
+            try:
+                full_name = self.telstate.join(prefix, name)
+                await self.telstate.set(full_name, value)
+            except katsdptelstate.ImmutableKeyError as error:
+                logger.warning('%s', error)
+        self._telstate_updates = []
 
     def enable_debug(self, debug: bool) -> None:
         if debug:
@@ -1026,7 +1081,7 @@ class CBFIngest:
         if self.capturing:
             await self._stop_stream(stream, self.ig_sd)
 
-    def add_sdisp_ip(self, endpoint: katsdptelstate.endpoint.Endpoint) -> None:
+    def add_sdisp_ip(self, endpoint: Endpoint) -> None:
         """Add a new server to the signal display list.
 
         Parameters
@@ -1044,7 +1099,7 @@ class CBFIngest:
         config = spead2.send.StreamConfig(max_packet_size=8872, rate=self.sd_spead_rate / 8)
         logger.info("Adding %s to signal display list. Starting stream...", endpoint)
         if self.sd_spead_ifaddr is None:
-            extra_args = {}     # type: Dict[str, Any]
+            extra_args: Dict[str, Any] = {}
         else:
             extra_args = dict(ttl=1, interface_address=self.sd_spead_ifaddr)
         stream = spead2.send.asyncio.UdpStream(
@@ -1063,7 +1118,7 @@ class CBFIngest:
         stop = time.monotonic()
         self.telstate_time_sensor.value += stop - start
 
-    def _flush_output(self, output_idx: int):
+    async def _flush_output(self, output_idx: int) -> None:
         """Finalise averaging of a group of input dumps and emit an output dump"""
         proc_a = self.proc_resource.acquire()
         output_a, host_output_a = self.output_resource.acquire()
@@ -1090,9 +1145,9 @@ class CBFIngest:
             self.command_queue.enqueue_wait_for_events(events)
 
             # Transfer
-            data = {}   # type: Dict[str, sender.Data]
+            data: Dict[str, sender.Data] = {}
             for prefix in self.tx:
-                kwargs = {}   # type: Dict[str, np.ndarray]
+                kwargs: Dict[str, np.ndarray] = {}
                 for field in ['vis', 'flags', 'weights', 'weights_channel']:
                     name = prefix + '_' + field
                     kwargs[field] = host_output[name]
@@ -1129,14 +1184,14 @@ class CBFIngest:
             host_output_a.ready()
             logger.debug("Finished dump group with index %d", output_idx)
 
-    def _flush_sd(self, output_idx: int) -> None:
+    async def _flush_sd(self, output_idx: int) -> None:
         """Finalise averaging of a group of dumps for signal display, and send
         signal display data to the signal display server"""
         all_channels = len(self.channel_ranges.all_sd_output)
         try:
             with self.time_telstate():
                 custom_signals_indices = np.array(
-                    self.telstate_sdisp['sdisp_custom_signals'],
+                    await self.telstate_sdisp['sdisp_custom_signals'],
                     dtype=np.uint32, copy=False)
         except KeyError:
             custom_signals_indices = np.array([], dtype=np.uint32)
@@ -1144,7 +1199,7 @@ class CBFIngest:
         try:
             with self.time_telstate():
                 full_mask = np.array(
-                    self.telstate_sdisp['sdisp_timeseries_mask'],
+                    await self.telstate_sdisp['sdisp_timeseries_mask'],
                     dtype=np.float32, copy=False)
             if full_mask.shape != (all_channels,):
                 raise ValueError
@@ -1280,20 +1335,20 @@ class CBFIngest:
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
-                            timestamp: float) -> None:
+    async def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
+                                  timestamp: float) -> None:
         """Query telstate for per-baseline flags and per-channel flags to set.
 
         The last value set prior to the end of the dump is used.
         """
-        def sensor_value(telstate, name):
+        async def sensor_value(telstate: katsdptelstate.aio.TelescopeState, name: str) -> Any:
             value = None
             if telstate is None:
                 return None
             if name not in cache:
                 try:
                     with self.time_telstate():
-                        values = telstate.get_range(name, et=end_time)
+                        values = await telstate.get_range(name, et=end_time)
                     value = values[-1][0]     # Last entry, value element of pair
                 except (KeyError, IndexError):
                     pass
@@ -1305,13 +1360,13 @@ class CBFIngest:
             else:
                 return cache[name]
 
-        cache = {}   # type: Dict[str, Any]
+        cache: Dict[str, Any] = {}
         static_flag = np.uint8(STATIC)
         cam_flag = np.uint8(CAM)
         end_time = timestamp + self.cbf_attr['int_time']
         channel_slice = self.channel_ranges.input.asslice()
 
-        channel_mask_sensor = sensor_value(self.telstate_cbf, 'channel_mask')
+        channel_mask_sensor = await sensor_value(self.telstate_cbf, 'channel_mask')
         if channel_mask_sensor is not None:
             if channel_mask_sensor.ndim == 2:
                 logger.warning('2D channel_mask is no longer supported - update katsdpcam2telstate')
@@ -1322,15 +1377,15 @@ class CBFIngest:
             channel_mask[:] = self.static_masks
 
         if self.use_data_suspect:
-            channel_data_suspect = sensor_value(self.telstate_cbf, 'channel_data_suspect')
+            channel_data_suspect = await sensor_value(self.telstate_cbf, 'channel_data_suspect')
             if channel_data_suspect is not None:
                 channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
         baselines = self.bls_ordering.sdp_bls_ordering
         input_labels = self.cbf_attr['input_labels']
-        input_suspect = {}    # type: Dict[str, bool]
+        input_suspect: Dict[str, bool] = {}
         if self.use_data_suspect:
-            input_suspect_sensor = sensor_value(
+            input_suspect_sensor = await sensor_value(
                 self.telstate_cbf, 'input_data_suspect')
             if input_suspect_sensor is not None:
                 input_suspect = {label: input_suspect_sensor[i]
@@ -1342,7 +1397,7 @@ class CBFIngest:
             b = baseline[1][:-1]
             flagged = False
             for antenna in (a, b):
-                if sensor_value(self.telstate, '{}_data_suspect'.format(antenna)):
+                if await sensor_value(self.telstate, '{}_data_suspect'.format(antenna)):
                     flagged = True
             for input_ in baseline:
                 if input_suspect.get(input_):
@@ -1378,7 +1433,7 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            self._set_external_flags(baseline_flags, channel_mask, frame.timestamp)
+            await self._set_external_flags(baseline_flags, channel_mask, frame.timestamp)
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1514,8 +1569,8 @@ class CBFIngest:
             current_ts = self.cbf_attr['sync_time'] + current_ts_rel
             self._my_sensors["last-dump-timestamp"].value = current_ts
 
-            self._output_avg.add_index(frame.idx)
-            self._sd_avg.add_index(frame.idx)
+            await self._output_avg.add_index(frame.idx)
+            await self._sd_avg.add_index(frame.idx)
 
             proc_a = self.proc_resource.acquire()
             input_a, host_input_a = self.input_resource.acquire()
@@ -1540,8 +1595,8 @@ class CBFIngest:
         # Ensure we have clean state. Some of this is unnecessary in normal
         # use, but important if the previous session crashed.
         self._zero_counters()
-        self._output_avg.finish(flush=False)
-        self._sd_avg.finish(flush=False)
+        await self._output_avg.finish(flush=False)
+        await self._sd_avg.finish(flush=False)
         self._init_ig_sd()
         # Send start-of-stream packets.
         await self._send_sd_data(self.ig_sd.get_start())
@@ -1572,8 +1627,8 @@ class CBFIngest:
         await self._get_data()
 
         logger.info('Joined with receiver. Flushing final groups...')
-        self._output_avg.finish()
-        self._sd_avg.finish()
+        await self._output_avg.finish()
+        await self._sd_avg.finish()
         logger.info('Waiting for jobs to complete...')
         await self.jobs.finish()
         logger.info('Jobs complete')

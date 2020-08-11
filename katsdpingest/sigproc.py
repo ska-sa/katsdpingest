@@ -4,7 +4,8 @@ from typing import List, Tuple, Iterable, Mapping, Callable, Optional, Generator
 
 import pkg_resources
 import numpy as np
-from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce, rfi
+from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
+import katsdpsigproc.rfi.device
 from katsdpsigproc.abc import AbstractContext, AbstractCommandQueue
 from katdal.flags import CAL_RFI, CAM
 
@@ -1263,7 +1264,8 @@ class IngestTemplate:
         Perform continuum averaging of L0 data.
     """
 
-    def __init__(self, context: AbstractContext, flagger: rfi.device.FlaggerDeviceTemplate,
+    def __init__(self, context: AbstractContext,
+                 flagger: katsdpsigproc.rfi.device.FlaggerDeviceTemplate,
                  percentile_sizes: Iterable[int], excise: bool, continuum: bool) -> None:
         self.context = context
         self.prepare = PrepareTemplate(context)

@@ -299,7 +299,7 @@ class Receiver:
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
-    def _first_timestamp(self, candidate: int) -> int:
+    async def _first_timestamp(self, candidate: int) -> int:
         """Get raw ADC timestamp of the first frame across all ingests.
 
         This is called when the first valid dump is received for this
@@ -421,7 +421,7 @@ class Receiver:
                               data_ts, stream_idx, channel0)
                 prev_ts = data_ts
                 if not self._frames:
-                    self.timestamp_base = self._first_timestamp(data_ts)
+                    self.timestamp_base = await self._first_timestamp(data_ts)
                     for i in range(self.active_frames):
                         self._frames.append(
                             Frame(i, self.timestamp_base + self.interval * i, xengs))

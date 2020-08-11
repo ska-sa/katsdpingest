@@ -1,24 +1,29 @@
 aioconsole                # via aiomonitor
+aiohttp                   # via katsdpmodels
 aiokatcp
 aiomonitor
+aioredis==1.3.1           # via katsdptelstate[aio]
 appdirs                   # via katsdpsigproc
 astropy                   # via katsdpmodels
-async-timeout             # via aiokatcp
+async-timeout             # via aiokatcp, aioredis, aiohttp
+attrs                     # via aiohttp
 certifi                   # via requests
-chardet                   # via requests
+chardet                   # via requests, aiohttp
 cityhash                  # via katdal
 dask                      # via katdal
 decorator                 # via katsdpsigproc
 ephem                     # via pyephem
 future                    # via katdal
 h5py                      # via katdal, katsdpmodels
-hiredis                   # via katsdptelstate
+hiredis                   # via katsdptelstate, aioredis
 idna                      # via requests
+idna-ssl                  # via aiohttp
 katversion
 llvmlite                  # via numba
 Mako                      # via katsdpsigproc
 MarkupSafe                # via mako
 msgpack                   # via katsdptelstate
+multidict                 # via aiohttp
 netifaces                 # via katsdptelstate
 numba                     # via katsdpsigproc
 numpy
@@ -31,15 +36,17 @@ python-dateutil           # via pandas
 pytools                   # via pycuda
 pytz                      # via pandas
 redis                     # via katsdptelstate
-requests                  # via katdal, katsdpmodels
+requests                  # via katdal
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
 spead2
 strict-rfc3339            # via katsdpmodels
 terminaltables            # via aiomonitor
-typing_extensions         # via katsdpsigproc, katsdpmodels
+typing_extensions         # via katsdpsigproc, katsdpmodels, aiohttp
 toolz                     # via dask
 urllib3                   # via requests
+yarl                      # via aiohttp
+
 # TODO: eventually switch to using a release of katdal, once the enhanced
 # SpectralWindow class has shipped.
 katdal @ git+https://github.com/ska-sa/katdal

@@ -1,14 +1,23 @@
 """Tests for the ingest_session module"""
 
-import numpy as np
+import logging
+import re
 from unittest import mock
 
-from nose.tools import assert_equal, assert_is
+import numpy as np
+from nose.tools import (
+    assert_equal, assert_is, assert_regex, assert_is_none, assert_is_not_none, assert_logs
+)
+import asynctest
 from katsdpsigproc.test.test_accel import device_test
-from katsdptelstate import TelescopeState
+import katsdptelstate.aio
+import katsdpmodels.fetch.aiohttp
+import katsdpmodels.rfi_mask
+import katsdpmodels.band_mask
+import katpoint
 
 from katsdpingest import ingest_session
-from katsdpingest.utils import Range
+from katsdpingest.utils import Range, cbf_telstate_view
 
 
 def fake_cbf_attr(n_antennas, n_xengs=4):
@@ -41,9 +50,9 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
     return cbf_attr
 
 
-class TestGetCbfAttr:
-    def setup(self):
-        values = {
+class TestSystemAttrs(asynctest.TestCase):
+    async def setUp(self):
+        self.values = {
             'i0_bandwidth': 856000000.0,
             'i0_sync_time': 1234567890.0,
             'i0_scale_factor_timestamp': 1712000000.0,
@@ -59,12 +68,15 @@ class TestGetCbfAttr:
             'i1_baseline_correlation_products_n_chans_per_substream': 256,
             'i1_baseline_correlation_products_n_accs': 104448,
             'i1_baseline_correlation_products_bls_ordering': [('m001h', 'm001h')],
+            'm001_observer': 'm001, -30:42:39.8, 21:26:38.0, 1035.0, 13.5, 1.126 -171.761 1.0605 5868.979 5869.998, -0:42:08.0 0 0:01:44.0 0:01:11.9 -0:00:14.0 -0:00:21.0 -0:36:13.1 0:01:36.2, 1.14',  # noqa: E501
+            'sdp_model_base_url': 'https://test.invalid/models/',
+            'model_rfi_mask_fixed': 'rfi_mask/fixed/dummy.h5',
+            'i0_antenna_channelised_voltage_model_band_mask_fixed': 'band_mask/fixed/dummy.h5'
         }
-        self.telstate = TelescopeState()
-        self.telstate.clear()
-        for key, value in values.items():
-            self.telstate[key] = value
-        self.expected = {
+        self.telstate = katsdptelstate.aio.TelescopeState()
+        for key, value in self.values.items():
+            await self.telstate.set(key, value)
+        self.expected_cbf_attr = {
             'n_chans': 4096,
             'n_chans_per_substream': 256,
             'n_accs': 104448,
@@ -78,36 +90,69 @@ class TestGetCbfAttr:
             'ticks_between_spectra': 8192
         }
 
-    def test(self):
-        attrs = ingest_session.get_cbf_attr(self.telstate, 'i1_baseline_correlation_products')
-        assert_equal(self.expected, attrs)
+    async def test(self):
+        telstate_cbf = await cbf_telstate_view(self.telstate,
+                                               'i1_baseline_correlation_products')
+        with asynctest.patch('katsdpmodels.fetch.aiohttp.Fetcher.get', autospec=True) as fetch:
+            async with katsdpmodels.fetch.aiohttp.TelescopeStateFetcher(self.telstate) as fetcher:
+                attrs = await ingest_session.SystemAttrs.create(
+                    fetcher,
+                    telstate_cbf,
+                    ['m000', 'm001']
+                )
+                assert_equal(self.expected_cbf_attr, attrs.cbf_attr)
+                assert_equal([katpoint.Antenna(self.values['m001_observer'])],
+                             attrs.antennas)
+                assert_is_not_none(attrs.rfi_mask_model)
+                assert_is_not_none(attrs.band_mask_model)
+                assert_equal(fetch.mock_calls, [
+                    mock.call(mock.ANY, 'https://test.invalid/models/rfi_mask/fixed/dummy.h5',
+                              katsdpmodels.rfi_mask.RFIMask),
+                    mock.call(mock.ANY, 'https://test.invalid/models/band_mask/fixed/dummy.h5',
+                              katsdpmodels.band_mask.BandMask)
+                ])
+
+    async def test_no_models(self):
+        await self.telstate.delete('sdp_model_base_url')
+        telstate_cbf = await cbf_telstate_view(self.telstate,
+                                               'i1_baseline_correlation_products')
+        async with katsdpmodels.fetch.aiohttp.TelescopeStateFetcher(self.telstate) as fetcher:
+            with assert_logs(level=logging.WARNING) as cm:
+                attrs = await ingest_session.SystemAttrs.create(
+                    fetcher,
+                    telstate_cbf,
+                    ['m000', 'm001']
+                )
+        assert_regex(cm.output[0], re.compile('.*Failed to load rfi_mask model.*', re.M))
+        assert_regex(cm.output[1], re.compile('.*Failed to load band_mask model.*', re.M))
+        assert_is_none(attrs.rfi_mask_model)
+        assert_is_none(attrs.band_mask_model)
 
 
-class TestTimeAverage:
+class TestTimeAverage(asynctest.TestCase):
     def test_constructor(self):
-        avg = ingest_session._TimeAverage(3)
+        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
         assert_equal(3, avg.ratio)
         assert_is(None, avg._start_idx)
 
-    def test_add_index(self):
-        avg = ingest_session._TimeAverage(3)
-        avg.flush = mock.Mock(name='flush', spec_set=avg.flush)
-        avg.add_index(0)
-        avg.add_index(2)
-        avg.add_index(1)  # Test time reordering
+    async def test_add_index(self):
+        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
+        await avg.add_index(0)
+        await avg.add_index(2)
+        await avg.add_index(1)  # Test time reordering
         assert not avg.flush.called
 
-        avg.add_index(3)  # Skip first frame in the group
+        await avg.add_index(3)  # Skip first frame in the group
         avg.flush.assert_called_once_with(0)
         avg.flush.reset_mock()
         assert_equal(3, avg._start_idx)
 
-        avg.add_index(12)  # Skip some whole groups
+        await avg.add_index(12)  # Skip some whole groups
         avg.flush.assert_called_once_with(1)
         avg.flush.reset_mock()
         assert_equal(12, avg._start_idx)
 
-        avg.finish()
+        await avg.finish()
         avg.flush.assert_called_once_with(4)
         assert_is(None, avg._start_idx)
 
@@ -127,12 +172,11 @@ def test_split_array():
     np.testing.assert_equal(actual, expected)
 
 
-class TestTelstateReceiver:
-    def setup(self):
-        self.telstate = TelescopeState()
-        self.telstate.clear()
+class TestTelstateReceiver(asynctest.TestCase):
+    def setUp(self):
+        self.telstate = katsdptelstate.aio.TelescopeState()
 
-    def test_first_timestamp(self):
+    async def test_first_timestamp(self):
         # We don't want to bother setting up a valid Receiver base class, we
         # just want to test the subclass, so we mock in a different base.
         class DummyBase:
@@ -147,14 +191,14 @@ class TestTelstateReceiver:
                                                        telstates=[self.telstate],
                                                        l0_int_time=3.0)
             # Set first value
-            assert_equal(12345, receiver._first_timestamp(12345))
+            assert_equal(12345, await receiver._first_timestamp(12345))
             # Try a different value, first value must stick
-            assert_equal(12345, receiver._first_timestamp(54321))
+            assert_equal(12345, await receiver._first_timestamp(54321))
             # Set same value
-            assert_equal(12345, receiver._first_timestamp(12345))
+            assert_equal(12345, await receiver._first_timestamp(12345))
             # Check the telstate keys
-            assert_equal(12345, self.telstate['first_timestamp_adc'])
-            assert_equal(3087.75, self.telstate['first_timestamp'])
+            assert_equal(12345, await self.telstate['first_timestamp_adc'])
+            assert_equal(3087.75, await self.telstate['first_timestamp'])
 
 
 class TestCBFIngest:
