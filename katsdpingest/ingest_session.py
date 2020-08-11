@@ -2,6 +2,7 @@
 
 import contextlib
 import time
+import math
 import fractions
 import logging
 import asyncio
@@ -619,7 +620,8 @@ class SensorHistory:
             if `dump_idx` is less than in the previous call.
         """
         if dump_idx < self._last_get:
-            raise ValueError('Query dump indices must not go backwards')
+            raise ValueError('Query dump indices must not go backwards (%d < %d)',
+                             dump_idx, self._last_get)
         while len(self._data) > 1 and self._data[1][0] <= dump_idx:
             self._data.popleft()
         self._last_get = dump_idx
@@ -681,6 +683,8 @@ class CBFIngest:
     proc_resource : :class:`katsdpsigproc.resource.Resource`
         The proc object, and the contents of all its buffers except for those
         covered by other resources above.
+    sensor_resource : :class:`katsdpsigproc.resource.Resource`
+        Ensures in-order access to the :class:`SensorHistory` objects.
     rx : :class:`katsdpingest.receiver.Receiver`
         Receiver that combines data from the SPEAD streams into frames
     cbf_attr : dict
@@ -879,6 +883,7 @@ class CBFIngest:
     def _init_resources(self) -> None:
         self.jobs = resource.JobQueue()
         self.proc_resource = resource.Resource(self.proc)
+        self.sensor_resource = resource.Resource(self._telstate_values)
         self.input_resource = _ResourceSet(
             self.proc, ['vis_in', 'channel_mask', 'baseline_flags'], 2)
         self.output_resource = _ResourceSet(
@@ -1080,6 +1085,8 @@ class CBFIngest:
         self._sidecar_tasks: List[asyncio.Task] = []
         # Local cache of values from telstate_sdisp
         self._telstate_sdisp_values: Dict[str, Any] = {}
+        # Local cache of values from various telstates
+        self._telstate_values: Dict[str, SensorHistory] = {}
         # Set by stop to abort prior to creating the receiver
         self._stopped = True
         self.capture_block_id: Optional[str] = None
@@ -1423,38 +1430,21 @@ class CBFIngest:
             host_sd_output_a.ready()
             logger.debug("Finished SD group with index %d", output_idx)
 
-    async def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
-                                  timestamp: float) -> None:
+    def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
+                            dump_idx: int) -> None:
         """Query telstate for per-baseline flags and per-channel flags to set.
 
         The last value set prior to the end of the dump is used.
-        """
-        async def sensor_value(telstate: katsdptelstate.aio.TelescopeState, name: str) -> Any:
-            value = None
-            if telstate is None:
-                return None
-            if name not in cache:
-                try:
-                    with self.time_telstate():
-                        values = await telstate.get_range(name, et=end_time)
-                    value = values[-1][0]     # Last entry, value element of pair
-                except (KeyError, IndexError):
-                    pass
-                except (ValueError, TypeError):
-                    logger.warning('Error loading %s from telstate, using a default',
-                                   name, exc_info=True)
-                cache[name] = value
-                return value
-            else:
-                return cache[name]
 
-        cache: Dict[str, Any] = {}
+        This method must be called with the :attr:`sensor_resource` held, to
+        ensure that :meth:`SensorHistory.get` is called with increasing dump
+        indices.
+        """
         static_flag = np.uint8(STATIC)
         cam_flag = np.uint8(CAM)
-        end_time = timestamp + self.cbf_attr['int_time']
         channel_slice = self.channel_ranges.input.asslice()
 
-        channel_mask_sensor = await sensor_value(self.telstate_cbf, 'channel_mask')
+        channel_mask_sensor = self._telstate_values['channel_mask'].get(dump_idx)
         if channel_mask_sensor is not None:
             if channel_mask_sensor.ndim == 2:
                 logger.warning('2D channel_mask is no longer supported - update katsdpcam2telstate')
@@ -1465,7 +1455,7 @@ class CBFIngest:
             channel_mask[:] = self.static_masks
 
         if self.use_data_suspect:
-            channel_data_suspect = await sensor_value(self.telstate_cbf, 'channel_data_suspect')
+            channel_data_suspect = self._telstate_values['channel_data_suspect'].get(dump_idx)
             if channel_data_suspect is not None:
                 channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
@@ -1473,8 +1463,7 @@ class CBFIngest:
         input_labels = self.cbf_attr['input_labels']
         input_suspect: Dict[str, bool] = {}
         if self.use_data_suspect:
-            input_suspect_sensor = await sensor_value(
-                self.telstate_cbf, 'input_data_suspect')
+            input_suspect_sensor = self._telstate_values['input_data_suspect'].get(dump_idx)
             if input_suspect_sensor is not None:
                 input_suspect = {label: input_suspect_sensor[i]
                                  for i, label in enumerate(input_labels)}
@@ -1485,7 +1474,7 @@ class CBFIngest:
             b = baseline[1][:-1]
             flagged = False
             for antenna in (a, b):
-                if await sensor_value(self.telstate, '{}_data_suspect'.format(antenna)):
+                if self._telstate_values['{}_data_suspect'.format(antenna)].get(dump_idx):
                     flagged = True
             for input_ in baseline:
                 if input_suspect.get(input_):
@@ -1495,11 +1484,12 @@ class CBFIngest:
     async def _frame_job(
             self,
             proc_a: resource.ResourceAllocation,
+            sensor_a: resource.ResourceAllocation,
             input_a: resource.ResourceAllocation,
             host_input_a: resource.ResourceAllocation,
             frame: receiver.Frame,
             timestamp: float) -> None:
-        with proc_a as proc, input_a as input_buffers, host_input_a as host_input:
+        with proc_a as proc, sensor_a, input_a as input_buffers, host_input_a as host_input:
             vis_in_buffer = input_buffers['vis_in']
             vis_in = host_input['vis_in']
             baseline_flags = host_input['baseline_flags']
@@ -1522,7 +1512,11 @@ class CBFIngest:
                 # higher than PCIe transfer bandwidth that it doesn't really
                 # cost much more to zero-fill the entire buffer.
                 vis_in_buffer.zero(self.command_queue)
-            await self._set_external_flags(baseline_flags, channel_mask, timestamp)
+
+            await sensor_a.wait()
+            self._set_external_flags(baseline_flags, channel_mask, frame.idx)
+            sensor_a.ready()
+
             for item in frame.items:
                 item_range = utils.Range(item_channel, item_channel + channels_per_item)
                 item_channel = item_range.stop
@@ -1566,11 +1560,10 @@ class CBFIngest:
         assert self._stopped
         self._stopped = False
         self._telstate_sdisp_values = {}
+        self._telstate_values = {}
         self.capture_block_id = capture_block_id
         loop = asyncio.get_event_loop()
         self._run_task = loop.create_task(self.run())
-        self._sidecar_tasks.append(loop.create_task(self._update_timeseries_mask()))
-        self._sidecar_tasks.append(loop.create_task(self._update_custom_signals()))
 
     async def stop(self) -> bool:
         """Shut down the session. It is safe to make reentrant calls: each
@@ -1636,6 +1629,64 @@ class CBFIngest:
             del self.sd_input_resource
             del self.sd_output_resource
 
+    async def _watch_sensor(self, telstate: katsdptelstate.aio.TelescopeState, key: str,
+                            notify: Callable[[Any, float], None]) -> None:
+        """Subscribe to updates for a sensor.
+
+        Each time the sensor is updated with a newer timestamp, the `notify`
+        callback is called. If an update is received for an earlier point in
+        time it is ignored. If there is already data in the sensor when called,
+        the last value is immediately notified.
+        """
+        ts = None
+
+        def callback(value: Any, new_ts: Optional[float]) -> bool:
+            nonlocal ts
+            if new_ts is None:
+                logger.warning('%s was set to an immutable value, should be mutable', key)
+                return False
+            if ts is None or new_ts > ts:
+                ts = new_ts
+                notify(value, ts)
+            else:
+                logger.warning('%s timestamp went backwards (%.3f < %.3f)', new_ts, ts)
+            return False
+
+        # The callback always returns false, so this call to wait_key will
+        # never return. Instead, it will be cancelled when the generator is
+        # shut down.
+        await telstate.wait_key(key, callback)
+
+    async def _update_sdisp_sensor(self, key: str, dtype: np.dtype) -> None:
+        def notify(value: Any, ts: float) -> None:
+            value = np.array(value, dtype=dtype, copy=False)
+            self._telstate_sdisp_values[key] = value
+            logger.info('%s updated with timestamp %.3f and shape %s', key, ts, value.shape)
+
+        await self._watch_sensor(self.telstate_sdisp, key, notify)
+
+    async def _update_sensor(self, telstate: katsdptelstate.aio.TelescopeState, key: str) -> None:
+        logger.debug('Starting _update_sensor for %s', key)
+        assert self.rx is not None
+        sh = self._telstate_values[key] = SensorHistory(key)
+        time_base = self.cbf_attr['sync_time']
+        time_base += self.rx.timestamp_base / self.cbf_attr['scale_factor_timestamp']
+
+        def notify(value: Any, ts: float) -> None:
+            # Compute dump index containing this timestamp
+            dump_idx = max(0, math.ceil((ts - time_base) / self.cbf_attr['int_time']))
+            sh.add(dump_idx, value)
+            logger.info('%s updated with timestamp %.3f / index %d', key, ts, dump_idx)
+
+        await self._watch_sensor(telstate, key, notify)
+
+    def _add_sidecar_task(self, name: str, func: Callable[..., Awaitable[None]],
+                          *args, **kwargs) -> None:
+        decorator = task_wrapper(name, DeviceStatus.DEGRADED, restart=True)
+        decorated = decorator(func)
+        loop = asyncio.get_event_loop()
+        self._sidecar_tasks.append(loop.create_task(decorated(*args, **kwargs)))
+
     async def _get_data(self) -> None:
         """Receive data. This is called after the metadata has been retrieved."""
         idx = 0
@@ -1663,11 +1714,13 @@ class CBFIngest:
             await self._sd_avg.add_index(frame.idx)
 
             proc_a = self.proc_resource.acquire()
+            sensor_a = self.sensor_resource.acquire()
             input_a, host_input_a = self.input_resource.acquire()
             # Limit backlog by waiting for previous job to get as far as
             # start to transfer its data before trying to carry on.
             await host_input_a.wait()
-            self.jobs.add(self._frame_job(proc_a, input_a, host_input_a, frame, current_ts))
+            self.jobs.add(
+                self._frame_job(proc_a, sensor_a, input_a, host_input_a, frame, current_ts))
 
             # Done with reading this frame
             idx += 1
@@ -1679,34 +1732,6 @@ class CBFIngest:
             # Clear completed processing, so that any related exceptions are
             # thrown as soon as possible.
             self.jobs.clean()
-
-    async def _update_sdisp_key(self, key: str, dtype: np.dtype) -> None:
-        ts = None
-
-        def callback(value: Any, new_ts: Optional[float]) -> bool:
-            nonlocal ts
-            if new_ts is None:
-                logger.warning('%s was set to an immutable value, should be mutable', key)
-                return False
-            if ts is None or new_ts > ts:
-                value = np.array(value, dtype=dtype, copy=False)
-                self._telstate_sdisp_values[key] = value
-                ts = new_ts
-                logger.info('%s updated with timestamp %.3f and shape %s', key, ts, value.shape)
-            return False
-
-        # The callback always returns false, so this call to wait_key will
-        # never return. Instead, it will be cancelled when the capture-block
-        # ends.
-        await self.telstate_sdisp.wait_key(key, callback)
-
-    @task_wrapper('_update_timeseries_mask', DeviceStatus.DEGRADED, restart=True)
-    async def _update_timeseries_mask(self) -> None:
-        await self._update_sdisp_key('sdisp_timeseries_mask', np.float32)
-
-    @task_wrapper('_update_custom_signals', DeviceStatus.DEGRADED, restart=True)
-    async def _update_custom_signals(self) -> None:
-        await self._update_sdisp_key('sdisp_custom_signals', np.uint32)
 
     @task_wrapper('CBFIngest session', DeviceStatus.FAIL)
     async def run(self) -> None:
@@ -1740,6 +1765,20 @@ class CBFIngest:
         # to call self.rx.stop(), but it will have set _stopped.
         if self._stopped:
             self.rx.stop()
+
+        for name, dtype in [('sdisp_timeseries_mask', np.float32),
+                            ('sdisp_custom_signals', np.int32)]:
+            self._add_sidecar_task(f'{name} updater', self._update_sdisp_sensor, name, dtype)
+        for name in ['channel_mask', 'channel_data_suspect', 'input_data_suspect']:
+            self._add_sidecar_task(f'{name} updater', self._update_sensor, self.telstate_cbf, name)
+
+        antennas = set()
+        for a, b in self.bls_ordering.sdp_bls_ordering:
+            antennas.add(a[:-1])
+            antennas.add(b[:-1])
+        for antenna in antennas:
+            name = f'{antenna}_data_suspect'
+            self._add_sidecar_task(f'{name} updater', self._update_sensor, self.telstate, name)
 
         # The main loop
         await self._get_data()
