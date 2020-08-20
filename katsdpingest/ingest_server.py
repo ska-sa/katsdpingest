@@ -129,9 +129,6 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
                     "Number of spectral visibilities computed for signal displays in this session"),
             counter("output-flagged-total",
                     "Number of flagged visibilities (out of output-vis-total)"),
-            Sensor(float, "telstate-seconds-total",
-                   "Time spent waiting for telescope state queries (prometheus: counter)", "s",
-                   initial_status=Sensor.Status.NOMINAL),
             Sensor(bool, "descriptors-received",
                    "Whether the SPEAD descriptors have been received "
                    " (prometheus: gauge)",

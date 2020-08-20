@@ -1,6 +1,5 @@
 """Class for ingesting data, processing it, and sending L0 visibilities onwards."""
 
-import contextlib
 import time
 import math
 import logging
@@ -847,7 +846,6 @@ class CBFIngest:
         self.output_dumps_sensor = my_sensors['output-dumps-total']       # type: Sensor[int]
         self.output_flagged_sensor = my_sensors['output-flagged-total']   # type: Sensor[int]
         self.output_vis_sensor = my_sensors['output-vis-total']           # type: Sensor[int]
-        self.telstate_time_sensor = my_sensors['telstate-seconds-total']  # type: Sensor[float]
         self.status_sensor = my_sensors['status']                         # type: Sensor[Status]
         self.status_sensor.value = Status.INIT
         self._zero_counters()
@@ -1210,13 +1208,6 @@ class CBFIngest:
         stream.set_cnt_sequence(self.channel_ranges.sd_output.start,
                                 len(self.channel_ranges.cbf))
         self._sdisp_ips[endpoint.host] = stream
-
-    @contextlib.contextmanager
-    def time_telstate(self):
-        start = time.monotonic()
-        yield
-        stop = time.monotonic()
-        self.telstate_time_sensor.value += stop - start
 
     async def _flush_output(self, output_idx: int) -> None:
         """Finalise averaging of a group of input dumps and emit an output dump"""
