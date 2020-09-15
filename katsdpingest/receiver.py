@@ -90,7 +90,7 @@ class Receiver:
         Value of `active_frames` passed to constructor
     interval : int
         Timestamp change between successive frames.
-    timestamp_base : int
+    timestamp_base : Optional[int]
         Timestamp associated with the frame with index 0. It is initially
         ``None``, and is set when the first dump is received. The raw
         timestamp of any other frame can be computed as
@@ -149,7 +149,7 @@ class Receiver:
         self._futures = []      # type: List[Optional[asyncio.Future]]
         self._stopping = False
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
-        self.timestamp_base = 0
+        self.timestamp_base = None
         self._loop = loop
         self._ig_cbf = spead2.ItemGroup()
 

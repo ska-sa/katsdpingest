@@ -207,44 +207,43 @@ class TestSensorHistory:
         self.sh = ingest_session.SensorHistory('test')
 
     def test_simple(self) -> None:
-        self.sh.add(4, 'hello')
-        self.sh.add(6, 'world')
-        assert_equal(self.sh.get(4), 'hello')
-        assert_equal(self.sh.get(5), 'hello')
-        assert_equal(self.sh.get(6), 'world')
-        assert_equal(self.sh.get(7), 'world')
+        self.sh.add(4.0, 'hello')
+        self.sh.add(6.0, 'world')
+        assert_equal(self.sh.get(4.0), 'hello')
+        assert_equal(self.sh.get(5.0), 'hello')
+        assert_equal(self.sh.get(6.0), 'world')
+        assert_equal(self.sh.get(7.0), 'world')
         assert_equal(len(self.sh._data), 1, 'old data was not pruned')
 
     def test_query_empty(self) -> None:
-        assert_is_none(self.sh.get(4))
-        assert_equal(self.sh.get(5, 'default'), 'default')
+        assert_is_none(self.sh.get(4.0))
+        assert_equal(self.sh.get(5.0, 'default'), 'default')
 
     def test_query_before_first(self) -> None:
-        self.sh.add(5, 'hello')
-        assert_is_none(self.sh.get(4))
+        self.sh.add(5.0, 'hello')
+        assert_is_none(self.sh.get(4.0))
 
     def test_add_before_query(self) -> None:
-        self.sh.get(5)
+        self.sh.get(5.0)
         with assert_logs(ingest_session.logger, logging.WARNING):
-            self.sh.add(5, 'oops')
-        assert_is_none(self.sh.get(5))
+            self.sh.add(4.0, 'oops')
+        assert_equal(self.sh.get(5.0), 'oops')
 
     def test_add_out_of_order(self) -> None:
-        self.sh.add(5, 'first')
+        self.sh.add(5.0, 'first')
         with assert_logs(ingest_session.logger, logging.WARNING):
-            self.sh.add(4, 'second')
+            self.sh.add(4.0, 'second')
         assert_is_none(self.sh.get(4))
 
     def test_replace_latest(self) -> None:
-        self.sh.add(5, 'first')
-        self.sh.add(5, 'second')
-        assert_equal(len(self.sh._data), 1)
-        assert_equal(self.sh.get(5), 'second')
+        self.sh.add(5.0, 'first')
+        self.sh.add(5.0, 'second')
+        assert_equal(self.sh.get(5.0), 'second')
 
     def test_query_out_of_order(self) -> None:
-        self.sh.get(5)
+        self.sh.get(5.0)
         with assert_raises(ValueError):
-            self.sh.get(4)
+            self.sh.get(4.0)
 
 
 class TestCBFIngest:
