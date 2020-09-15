@@ -573,57 +573,49 @@ class TelstateReceiver(receiver.Receiver):
 class SensorHistory:
     """Track sensor values until they're needed by the corresponding frame job.
 
-    Samples are associated with a dump index, and there can be at most one
-    sample per dump index (to prevent a high update rate from filling memory).
-    Samples should be added in increasing order of time: samples with a lower
-    dump index than the latest one are ignored and a warning is logged.
+    Samples are associated with a timestamp. Samples should be added in
+    increasing order of time: samples with an earlier timestamp than the latest
+    one are ignored and a warning is logged.
 
     A single querier can request the latest sample that is no later than a
-    given dump index. Such queries must be made with non-decreasing dump
-    indices.
+    given time. Such queries must be made with non-decreasing times.
     """
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self._data: Deque[Tuple[int, Any]] = deque()
-        self._last_get = -1
+        self._data: Deque[Tuple[float, Any]] = deque()
+        self._last_get = -1.0
 
-    def add(self, dump_idx: int, value: Any) -> None:
+    def add(self, timestamp: float, value: Any) -> None:
         """Add a new sample of the sensor."""
-        if dump_idx <= self._last_get:
-            logger.warning('Sensor update for %s index %d is too late', self.name, dump_idx)
+        if timestamp <= self._last_get:
+            logger.warning('Sensor update for %s arrived late (%.3f < %.3f)',
+                           self.name, timestamp, self._last_get)
+        if self._data and timestamp < self._data[-1][0]:
+            logger.warning(
+                'Ignoring sensor update for %s that went backwards in time (%.3f < %.3f)',
+                self.name, timestamp, self._data[-1][0]
+            )
             return
-        if self._data:
-            if dump_idx < self._data[-1][0]:
-                logger.warning(
-                    'Ignoring sensor update for %s that went backwards in time (%d < %d)',
-                    self.name, dump_idx, self._data[-1][0]
-                )
-                return
-            elif dump_idx == self._data[-1][0]:
-                # May be more than one sensor update during a dump period.
-                # Assume that time ran forwards, so the new value is more
-                # up-to-date. Remove the previous value.
-                self._data.pop()
-        self._data.append((dump_idx, value))
+        self._data.append((timestamp, value))
 
-    def get(self, dump_idx: int, default: Any = None) -> Any:
-        """Obtain the last sample value that is no later than `dump_idx`.
+    def get(self, timestamp: float, default: Any = None) -> Any:
+        """Obtain the last sample value that is no later than `timestamp`.
 
         If there is no such sample, returns `default`.
 
         Raises
         ------
         ValueError
-            if `dump_idx` is less than in the previous call.
+            if `timestamp` is less than in the previous call.
         """
-        if dump_idx < self._last_get:
-            raise ValueError('Query dump indices must not go backwards (%d < %d)',
-                             dump_idx, self._last_get)
-        while len(self._data) > 1 and self._data[1][0] <= dump_idx:
+        if timestamp < self._last_get:
+            raise ValueError('Query timestamps must not go backwards (%.3f < %.3f)',
+                             timestamp, self._last_get)
+        while len(self._data) > 1 and self._data[1][0] <= timestamp:
             self._data.popleft()
-        self._last_get = dump_idx
-        if not self._data or self._data[0][0] > dump_idx:
+        self._last_get = timestamp
+        if not self._data or self._data[0][0] > timestamp:
             return default
         else:
             return self._data[0][1]
@@ -1421,7 +1413,7 @@ class CBFIngest:
             logger.debug("Finished SD group with index %d", output_idx)
 
     def _set_external_flags(self, baseline_flags: np.ndarray, channel_mask: np.ndarray,
-                            dump_idx: int) -> None:
+                            timestamp: float) -> None:
         """Query telstate for per-baseline flags and per-channel flags to set.
 
         The last value set prior to the end of the dump is used.
@@ -1433,8 +1425,10 @@ class CBFIngest:
         static_flag = np.uint8(STATIC)
         cam_flag = np.uint8(CAM)
         channel_slice = self.channel_ranges.input.asslice()
+        # input timestamp is the centre of the dump, but we want the end
+        timestamp += 0.5 * self.cbf_attr['int_time']
 
-        channel_mask_sensor = self._telstate_values['channel_mask'].get(dump_idx)
+        channel_mask_sensor = self._telstate_values['channel_mask'].get(timestamp)
         if channel_mask_sensor is not None:
             if channel_mask_sensor.ndim == 2:
                 logger.warning('2D channel_mask is no longer supported - update katsdpcam2telstate')
@@ -1445,7 +1439,7 @@ class CBFIngest:
             channel_mask[:] = self.static_masks
 
         if self.use_data_suspect:
-            channel_data_suspect = self._telstate_values['channel_data_suspect'].get(dump_idx)
+            channel_data_suspect = self._telstate_values['channel_data_suspect'].get(timestamp)
             if channel_data_suspect is not None:
                 channel_mask[:] |= channel_data_suspect[np.newaxis, channel_slice] * cam_flag
 
@@ -1453,7 +1447,7 @@ class CBFIngest:
         input_labels = self.cbf_attr['input_labels']
         input_suspect: Dict[str, bool] = {}
         if self.use_data_suspect:
-            input_suspect_sensor = self._telstate_values['input_data_suspect'].get(dump_idx)
+            input_suspect_sensor = self._telstate_values['input_data_suspect'].get(timestamp)
             if input_suspect_sensor is not None:
                 input_suspect = {label: input_suspect_sensor[i]
                                  for i, label in enumerate(input_labels)}
@@ -1464,7 +1458,7 @@ class CBFIngest:
             b = baseline[1][:-1]
             flagged = False
             for antenna in (a, b):
-                if self._telstate_values['{}_data_suspect'.format(antenna)].get(dump_idx):
+                if self._telstate_values['{}_data_suspect'.format(antenna)].get(timestamp):
                     flagged = True
             for input_ in baseline:
                 if input_suspect.get(input_):
@@ -1504,7 +1498,7 @@ class CBFIngest:
                 vis_in_buffer.zero(self.command_queue)
 
             await sensor_a.wait()
-            self._set_external_flags(baseline_flags, channel_mask, frame.idx)
+            self._set_external_flags(baseline_flags, channel_mask, timestamp)
             sensor_a.ready()
 
             for item in frame.items:
@@ -1659,14 +1653,15 @@ class CBFIngest:
         logger.debug('Starting _update_sensor for %s', key)
         assert self.rx is not None
         sh = self._telstate_values[key] = SensorHistory(key)
-        time_base = self.cbf_attr['sync_time']
-        time_base += self.rx.timestamp_base / self.cbf_attr['scale_factor_timestamp']
 
         def notify(value: Any, ts: float) -> None:
-            # Compute dump index containing this timestamp
-            dump_idx = max(0, math.ceil((ts - time_base) / self.cbf_attr['int_time']))
-            sh.add(dump_idx, value)
-            logger.info('%s updated with timestamp %.3f / index %d', key, ts, dump_idx)
+            sh.add(ts, value)
+            # Avoid logging array values, but show values of simple scalars
+            # (note that bool is a subclass of int).
+            if isinstance(value, (int, float)):
+                logger.info('%s updated with timestamp %.3f / value %s', key, ts, value)
+            else:
+                logger.info('%s updated with timestamp %.3f', key, ts)
 
         await self._watch_sensor(telstate, key, notify)
 
