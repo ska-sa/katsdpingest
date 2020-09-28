@@ -1633,7 +1633,7 @@ class CBFIngest:
                 ts = new_ts
                 notify(value, ts)
             else:
-                logger.warning('%s timestamp went backwards (%.3f < %.3f)', new_ts, ts)
+                logger.warning('%s timestamp went backwards (%.3f < %.3f)', key, new_ts, ts)
             return False
 
         # The callback always returns false, so this call to wait_key will
