@@ -1632,8 +1632,10 @@ class CBFIngest:
             if ts is None or new_ts > ts:
                 ts = new_ts
                 notify(value, ts)
+            elif new_ts == ts:
+                logger.warning('%s update has duplicate timestamp (%.3f) - ignoring', key, new_ts)
             else:
-                logger.warning('%s timestamp went backwards (%.3f < %.3f)', new_ts, ts)
+                logger.warning('%s timestamp went backwards (%.3f < %.3f)', key, new_ts, ts)
             return False
 
         # The callback always returns false, so this call to wait_key will
