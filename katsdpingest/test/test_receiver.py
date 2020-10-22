@@ -42,13 +42,13 @@ class TestReceiver(asynctest.TestCase):
         self.n_chans = self.cbf_attr['n_chans']
         self.n_bls = len(self.cbf_attr['bls_ordering'])
         tx_thread_pool = spead2.ThreadPool()
-        self.tx = [spead2.send.InprocStream(tx_thread_pool, spead2.InprocQueue())
+        self.tx = [spead2.send.InprocStream(tx_thread_pool, [spead2.InprocQueue()])
                    for endpoint in endpoints]
         self._streams = dict(zip(endpoints, self.tx))
         for tx in self.tx:
             # asyncio.iscoroutinefunction doesn't like pybind11 functions, so
             # we have to hide it inside a lambda.
-            self.addCleanup(lambda: tx.queue.stop())
+            self.addCleanup(lambda: tx.queues[0].stop())
         self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3, loop=self.loop)

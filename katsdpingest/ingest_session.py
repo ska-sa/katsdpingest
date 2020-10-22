@@ -1193,7 +1193,7 @@ class CBFIngest:
         else:
             extra_args = dict(ttl=1, interface_address=self.sd_spead_ifaddr)
         stream = spead2.send.asyncio.UdpStream(
-            spead2.ThreadPool(), endpoint.host, endpoint.port, config, **extra_args)
+            spead2.ThreadPool(), [(endpoint.host, endpoint.port)], config, **extra_args)
         # Ensure that signal display streams that form the full band between
         # them always have unique heap cnts. The first output channel is used
         # as a unique key.

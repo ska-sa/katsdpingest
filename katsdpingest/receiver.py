@@ -79,8 +79,6 @@ class Receiver:
         Dictionary mapping CBF attribute names to value
     active_frames : int, optional
         Maximum number of incomplete frames to keep at one time
-    loop : :class:`asyncio.AbstractEventLoop`, optional
-        I/O loop used for asynchronous operations
 
     Attributes
     ----------
@@ -120,8 +118,7 @@ class Receiver:
             channel_range: Range, cbf_channels: int,
             sensors: Mapping[str, Sensor],
             cbf_attr: Mapping[str, Any],
-            active_frames: int = 1,
-            loop: asyncio.AbstractEventLoop = None) -> None:
+            active_frames: int = 1) -> None:
         # Determine the endpoints to actually use
         if cbf_channels % len(endpoints):
             raise ValueError('cbf_channels not divisible by the number of endpoints')
@@ -134,8 +131,6 @@ class Receiver:
         use_endpoints = endpoints[channel_range.start // self._endpoint_channels :
                                   channel_range.stop // self._endpoint_channels]
 
-        if loop is None:
-            loop = asyncio.get_event_loop()
         self.cbf_attr = cbf_attr
         self.active_frames = active_frames
         self.channel_range = channel_range
@@ -144,13 +139,11 @@ class Receiver:
         self._ibv = ibv
         self._streams = []      # type: List[spead2.recv.asyncio.Stream]
         self._frames = deque()  # type: typing.Deque[Frame]
-        self._frames_complete = \
-            asyncio.Queue(maxsize=1, loop=loop)  # type: asyncio.Queue[Union[Frame, int]]
+        self._frames_complete = asyncio.Queue(maxsize=1)  # type: asyncio.Queue[Union[Frame, int]]
         self._futures = []      # type: List[Optional[asyncio.Future]]
         self._stopping = False
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.timestamp_base = None
-        self._loop = loop
         self._ig_cbf = spead2.ItemGroup()
 
         self._input_bytes = sensors['input-bytes-total']
@@ -176,7 +169,7 @@ class Receiver:
             last = len(use_endpoints) * (i + 1) // n_streams
             self._streams.append(self._make_stream(use_endpoints[first:last],
                                                    max_packet_size, stream_buffer_size))
-            self._futures.append(loop.create_task(
+            self._futures.append(asyncio.get_event_loop().create_task(
                 self._read_stream(self._streams[-1], i, last - first)))
         self._running = n_streams
 
@@ -244,8 +237,14 @@ class Receiver:
             if ifaddr is None:
                 raise ValueError('Cannot use ibverbs without an interface address')
             endpoint_tuples = [(endpoint.host, endpoint.port) for endpoint in endpoints]
-            stream.add_udp_ibv_reader(endpoint_tuples, ifaddr,
-                                      max_size=max_packet_size, buffer_size=buffer_size)
+            stream.add_udp_ibv_reader(
+                spead2.recv.UdpIbvConfig(
+                    endpoints=endpoint_tuples,
+                    interface_address=ifaddr,
+                    max_size=max_packet_size,
+                    buffer_size=buffer_size
+                )
+            )
         else:
             for endpoint in endpoints:
                 if ifaddr is None:
@@ -286,16 +285,21 @@ class Receiver:
         #   - frame being processed by ingest_session (which could be several, depending on
         #     latency of the pipeline, but assume 4 to be on the safe side)
         memory_pool_heaps = ring_heaps + max_heaps + stream_xengs * (self.active_frames + 6)
-        stream = spead2.recv.asyncio.Stream(
-            spead2.ThreadPool(),
-            max_heaps=max_heaps,
-            ring_heaps=ring_heaps, loop=self._loop,
-            contiguous_only=False)
         memory_pool = spead2.MemoryPool(16384, heap_data_size + 512,
                                         memory_pool_heaps, memory_pool_heaps)
-        stream.set_memory_allocator(memory_pool)
-        stream.set_memcpy(spead2.MEMCPY_NONTEMPORAL)
-        stream.stop_on_stop_item = False
+        stream = spead2.recv.asyncio.Stream(
+            spead2.ThreadPool(),
+            spead2.recv.StreamConfig(
+                max_heaps=max_heaps,
+                memory_allocator=memory_pool,
+                memcpy=spead2.MEMCPY_NONTEMPORAL,
+                stop_on_stop_item=False
+            ),
+            spead2.recv.RingStreamConfig(
+                heaps=ring_heaps,
+                contiguous_only=False
+            )
+        )
         self._add_readers(stream, endpoints, max_packet_size, buffer_size)
         return stream
 
