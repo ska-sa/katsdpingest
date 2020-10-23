@@ -22,7 +22,7 @@ setup(
         'aiokatcp>=0.7.0',   # Need 0.7 for auto_strategy
         'aiomonitor',
         'numpy>=1.13.0',     # For np.unique with axis (might really need a higher version)
-        'spead2',
+        'spead2>=3.0.1',
         'katsdpsigproc',
         'katsdpservices[argparse,aiomonitor]',
         'katsdptelstate[aio]',
