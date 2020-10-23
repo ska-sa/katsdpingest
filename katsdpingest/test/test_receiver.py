@@ -51,7 +51,7 @@ class TestReceiver(asynctest.TestCase):
             self.addCleanup(lambda: tx.queues[0].stop())
         self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
-                           sensors, self.cbf_attr, active_frames=3, loop=self.loop)
+                           sensors, self.cbf_attr, active_frames=3)
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
         for i, ig in enumerate(self.tx_ig):
             ig.add_item(0x1600, 'timestamp',
@@ -87,7 +87,7 @@ class TestReceiver(asynctest.TestCase):
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
         with assert_raises(spead2.Stopped):
-            with async_timeout.timeout(30, loop=self.loop):
+            with async_timeout.timeout(30):
                 await data_future
 
     def _make_data(self, n_frames):
@@ -125,7 +125,7 @@ class TestReceiver(asynctest.TestCase):
                 self.tx_ig[stream_idx]['frequency'].value = i * self.n_chans // self.n_xengs
                 self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
                 self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
-            await asyncio.sleep(0.02, loop=self.loop)
+            await asyncio.sleep(0.02)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
@@ -133,17 +133,16 @@ class TestReceiver(asynctest.TestCase):
         """Test normal case with data arriving in the expected order"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
-        send_future = asyncio.ensure_future(self._send_in_order(xeng_raw, timestamps),
-                                            loop=self.loop)
+        send_future = asyncio.ensure_future(self._send_in_order(xeng_raw, timestamps))
         for t in range(n_frames):
-            frame = await asyncio.wait_for(self.rx.get(), 3, loop=self.loop)
+            frame = await asyncio.wait_for(self.rx.get(), 3)
             assert_equal(indices[t], frame.idx)
             assert_equal(timestamps[t], frame.timestamp)
             assert_equal(self.n_xengs, len(frame.items))
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
-            with async_timeout.timeout(3, loop=self.loop):
+            with async_timeout.timeout(3):
                 await self.rx.get()
         await send_future
 
@@ -175,7 +174,7 @@ class TestReceiver(asynctest.TestCase):
             self.tx_ig[stream_idx]['xeng_raw'].value = xeng_raw[t, i]
             self.tx[stream_idx].send_heap(self.tx_ig[stream_idx].get_heap())
             # Longish sleep to ensure the ordering is respected
-            await asyncio.sleep(0.02, loop=self.loop)
+            await asyncio.sleep(0.02)
         for i in range(self.n_streams):
             self.tx[i].send_heap(self.tx_ig[i].get_end())
 
@@ -187,7 +186,7 @@ class TestReceiver(asynctest.TestCase):
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []),
                                (7, [1, 2, 3]), (8, []), (9, [1])]:
-                with async_timeout.timeout(3, loop=self.loop):
+                with async_timeout.timeout(3):
                     frame = await self.rx.get()
                 assert_equal(indices[t], frame.idx)
                 assert_equal(timestamps[t], frame.timestamp)
@@ -198,7 +197,7 @@ class TestReceiver(asynctest.TestCase):
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
-                with async_timeout.timeout(3, loop=self.loop):
+                with async_timeout.timeout(3):
                     await self.rx.get()
         finally:
             await send_future
