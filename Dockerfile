@@ -1,6 +1,6 @@
 ARG KATSDPDOCKERBASE_REGISTRY=sdp-docker-registry.kat.ac.za:5000
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build as build
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build:new-rdma-core as build
 
 # Enable Python 3 venv
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
@@ -16,7 +16,7 @@ RUN cd /tmp/install/katsdpingest && \
 
 #######################################################################
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime:new-rdma-core
 LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3

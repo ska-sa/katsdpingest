@@ -40,7 +40,7 @@ redis                     # via katsdptelstate
 requests                  # via katdal
 scipy                     # via katsdpsigproc
 six                       # via spead2 (and probably others)
-spead2==3.0.0
+spead2
 strict-rfc3339            # via katsdpmodels
 terminaltables            # via aiomonitor
 typing_extensions         # via katsdpsigproc, katsdpmodels, aiohttp
