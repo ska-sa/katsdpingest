@@ -53,7 +53,7 @@ class MockReceiver:
                  endpoints, interface_address, ibv,
                  max_streams, max_packet_size, buffer_size,
                  channel_range, cbf_channels, sensors,
-                 cbf_attr, active_frames=2, loop=None, telstates=None,
+                 cbf_attr, active_frames=2, telstates=None,
                  l0_int_time=None, pauses=None):
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
@@ -63,7 +63,6 @@ class MockReceiver:
         self._channel_range = channel_range
         self._substreams = len(channel_range) // cbf_attr['n_chans_per_substream']
         self._pauses = {} if pauses is None else pauses
-        self._loop = loop
         # Set values to match Receiver
         self.cbf_attr = cbf_attr
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
@@ -80,7 +79,7 @@ class MockReceiver:
     def get(self):
         event = self._pauses.get(self._next_frame)
         if event is None:
-            event = asyncio.sleep(0, loop=self._loop)
+            event = asyncio.sleep(0)
         yield from(event)
         if self._next_frame >= len(self._data):
             raise spead2.Stopped('end of frame list')
@@ -109,10 +108,12 @@ def decode_heap_ig(heap):
 
 
 def get_heaps(tx):
-    rx = spead2.recv.Stream(spead2.ThreadPool())
-    rx.stop_on_stop_item = False
-    tx.queue.stop()
-    rx.add_inproc_reader(tx.queue)
+    rx = spead2.recv.Stream(
+        spead2.ThreadPool(),
+        spead2.recv.StreamConfig(stop_on_stop_item=False)
+    )
+    tx.queues[0].stop()
+    rx.add_inproc_reader(tx.queues[0])
     return list(rx)
 
 
@@ -139,9 +140,10 @@ class TestIngestDeviceServer(asynctest.TestCase):
         else:
             raise KeyError('VisSenderSet created with unrecognised endpoints')
 
-    def _get_sd_tx(self, thread_pool, host, port, config):
-        tx = spead2.send.asyncio.InprocStream(thread_pool, spead2.InprocQueue())
-        self._sd_tx[Endpoint(host, port)] = tx
+    def _get_sd_tx(self, thread_pool, endpoints, config):
+        assert_equal(len(endpoints), 1)
+        tx = spead2.send.asyncio.InprocStream(thread_pool, [spead2.InprocQueue()])
+        self._sd_tx[Endpoint(*endpoints[0])] = tx
         return tx
 
     def _create_data(self):
@@ -193,7 +195,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
 
     @device_test
     async def setUp(self, context, command_queue) -> None:
-        done_future = asyncio.Future(loop=self.loop)     # type: asyncio.Future[None]
+        done_future = asyncio.Future()     # type: asyncio.Future[None]
         done_future.set_result(None)
         self._patchers = []                              # type: List[Any]
         self._telstate = katsdptelstate.aio.TelescopeState()
@@ -293,7 +295,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             host=user_args.host, port=user_args.port)
         await self._server.start()
         self.addCleanup(self._server.stop)
-        self._client = await aiokatcp.Client.connect(user_args.host, user_args.port, loop=self.loop)
+        self._client = await aiokatcp.Client.connect(user_args.host, user_args.port)
         self.addCleanup(self._client.wait_closed)
         self.addCleanup(self._client.close)
 
@@ -528,9 +530,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
         sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
         # Ensure the pause point gets reached, and wait for
         # the signal display data to be sent.
-        sd_rx = spead2.recv.asyncio.Stream(spead2.ThreadPool())
-        sd_rx.stop_on_stop_item = False
-        sd_rx.add_inproc_reader(sd_tx.queue)
+        sd_rx = spead2.recv.asyncio.Stream(
+            spead2.ThreadPool(),
+            spead2.recv.StreamConfig(stop_on_stop_item=False)
+        )
+        sd_rx.add_inproc_reader(sd_tx.queues[0])
         heaps = []
         with async_timeout.timeout(10):
             for i in range(2):
@@ -538,7 +542,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('drop-sdisp-ip', '127.0.0.2')
         self._pauses[10].set_result(None)
         await self.make_request('capture-done')
-        sd_tx.queue.stop()
+        sd_tx.queues[0].stop()
         while True:
             try:
                 heaps.append(await sd_rx.get())
