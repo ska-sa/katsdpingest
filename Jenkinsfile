@@ -5,7 +5,7 @@ katsdp.killOldJobs()
 
 katsdp.setDependencies([
     'ska-sa/katsdpsigproc/master',
-    'ska-sa/katsdpdockerbase/new-rdma-core',
+    'ska-sa/katsdpdockerbase/master',
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master',
     'ska-sa/katsdpmodels/master',
@@ -13,8 +13,7 @@ katsdp.setDependencies([
 
 catchError {
     katsdp.stagePrepare(python2: false, python3: true,
-                        timeout: [time: 60, unit: 'MINUTES'],
-                        katsdpdockerbase_ref: 'new-rdma-core')
+                        timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
     katsdp.stageFlake8()
     katsdp.stageMypy()
