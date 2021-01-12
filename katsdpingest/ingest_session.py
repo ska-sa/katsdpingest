@@ -795,7 +795,8 @@ class CBFIngest:
             # Get masks as a baseline x freq array
             masks = system_attrs.rfi_mask_model.is_masked(
                 freqs[np.newaxis, :],
-                lengths[:, np.newaxis]
+                lengths[:, np.newaxis],
+                spw.channel_width * u.Hz
             )
             # Typically the model will only have a few threshold lengths, so
             # most rows will be the same. Reduce it to just unique rows, with
@@ -809,7 +810,8 @@ class CBFIngest:
                 cbf_spw.bandwidth * u.Hz,
                 cbf_spw.centre_freq * u.Hz
             )
-            mask = system_attrs.band_mask_model.is_masked(band_spw, freqs)
+            mask = system_attrs.band_mask_model.is_masked(
+                band_spw, freqs, cbf_spw.channel_width * u.Hz)
             self.static_masks |= mask[np.newaxis, :] * np.uint8(STATIC)
 
     def _init_time_averaging(self, output_int_time: float, sd_int_time: float) -> None:

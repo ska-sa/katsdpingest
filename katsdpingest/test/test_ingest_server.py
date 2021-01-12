@@ -174,7 +174,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         # Channels 852:857 and 1024
         ranges = astropy.table.QTable(
             [[1034e6, 1070.0e6] * u.Hz,
-             [1035e6, 1070.0e6] * u.Hz,
+             [1034.95e6, 1070.0e6] * u.Hz,
              [1500, np.inf] * u.m],
             names=('min_frequency', 'max_frequency', 'max_baseline')
         )
@@ -183,7 +183,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
     def fake_band_mask_model(self) -> katsdpmodels.band_mask.BandMask:
         # Channels 820:840
         ranges = astropy.table.Table(
-            [[0.2], [0.205]], names=('min_fraction', 'max_fraction')
+            [[0.2001], [0.2049]], names=('min_fraction', 'max_fraction')
         )
         return katsdpmodels.band_mask.BandMaskRanges(ranges)
 
