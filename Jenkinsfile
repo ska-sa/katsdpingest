@@ -9,7 +9,8 @@ katsdp.setDependencies([
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master',
     'ska-sa/katsdpmodels/master',
-    'ska-sa/katdal'])
+    'ska-sa/katdal/master',
+    'ska-sa/katpoint/master'])
 
 catchError {
     katsdp.stagePrepare(python2: false, python3: true,
