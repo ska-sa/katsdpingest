@@ -1,58 +1,17 @@
-aioconsole                # via aiomonitor
-aiohttp                   # via katsdpmodels
-aiohttp-retry             # via katsdpmodels
+-c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-build/base-requirements.txt
+-c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-gpu-build/requirements.txt
+
 aiokatcp
-aiomonitor
-aioredis                  # via katsdptelstate[aio]
-appdirs                   # via katsdpsigproc
-astropy                   # via katsdpmodels
-async-timeout             # via aiokatcp, aioredis, aiohttp
-attrs                     # via aiohttp
-certifi                   # via requests
-chardet                   # via requests, aiohttp
-cityhash                  # via katdal
-dask                      # via katdal
-decorator                 # via katsdpsigproc
-ephem                     # via pyephem
-future                    # via katdal
-h5py                      # via katdal, katsdpmodels
-hiredis                   # via katsdptelstate, aioredis
-idna                      # via requests
-idna-ssl                  # via aiohttp
-katversion
-llvmlite                  # via numba
-Mako                      # via katsdpsigproc
-MarkupSafe                # via mako
-msgpack                   # via katsdptelstate
-multidict                 # via aiohttp
-netifaces                 # via katsdptelstate
-numba                     # via katsdpsigproc
+hiredis                 # Speeds up katsdptelstate
 numpy
-pandas                    # via katsdpsigproc
 pycuda
-pyephem                   # via katpoint
-pygelf                    # via katsdpservices
-pyjwt                     # via katdal
-python-dateutil           # via pandas
-pytools                   # via pycuda
-pytz                      # via pandas
-redis                     # via katsdptelstate
-requests                  # via katdal
-scipy                     # via katsdpsigproc
-six                       # via spead2 (and probably others)
 spead2
-strict-rfc3339            # via katsdpmodels
-terminaltables            # via aiomonitor
-typing_extensions         # via katsdpsigproc, katsdpmodels, aiohttp
-toolz                     # via dask
-urllib3                   # via requests
-yarl                      # via aiohttp
 
 # TODO: eventually switch to using a release of katdal, once the enhanced
 # SpectralWindow class has shipped.
 katdal @ git+https://github.com/ska-sa/katdal
 katpoint @ git+https://github.com/ska-sa/katpoint
-katsdpmodels @ git+https://github.com/ska-sa/katsdpmodels
+katsdpmodels[aiohttp] @ git+https://github.com/ska-sa/katsdpmodels
 katsdpsigproc @ git+https://github.com/ska-sa/katsdpsigproc
-katsdpservices @ git+https://github.com/ska-sa/katsdpservices
-katsdptelstate @ git+https://github.com/ska-sa/katsdptelstate
+katsdpservices[argparse,aiomonitor] @ git+https://github.com/ska-sa/katsdpservices
+katsdptelstate[aio] @ git+https://github.com/ska-sa/katsdptelstate
