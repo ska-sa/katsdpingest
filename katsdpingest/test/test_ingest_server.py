@@ -4,6 +4,7 @@ import argparse
 import logging
 import asyncio
 import copy
+import concurrent.futures
 from unittest import mock
 from typing import List, Dict, Any
 
@@ -234,6 +235,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             port=7147,
             name='sdp.ingest.1'
         )
+        self.loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=8))
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
         # Put them in at the beginning of time, to ensure they apply to every dump
         await self._telstate.set('i0_baseline_correlation_products_src_streams',
