@@ -13,8 +13,7 @@ katsdp.setDependencies([
     'ska-sa/katpoint/master'])
 
 catchError {
-    katsdp.stagePrepare(python2: false, python3: true,
-                        timeout: [time: 60, unit: 'MINUTES'])
+    katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
     katsdp.stageNosetestsGpu(cuda: true, opencl: true)
     katsdp.stageFlake8()
     katsdp.stageMypy()

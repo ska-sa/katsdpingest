@@ -1,8 +1,4 @@
-certifi                   # via requests
-chardet                   # via requests
+-c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-build/base-requirements.txt
+
 docker==4.2.0
-idna                      # via requests
-requests                  # via docker
-six                       # via docker, docker-pycreds
-urllib3                   # via requests
 websocket-client==0.56.0  # via docker
