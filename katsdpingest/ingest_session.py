@@ -16,6 +16,7 @@ from typing import (
 )    # noqa: F401
 
 import numpy as np
+import numpy.lib.stride_tricks as _stride_tricks  # noqa: F401  # Keeps mypy happy
 import astropy.units as u
 import aiohttp
 
