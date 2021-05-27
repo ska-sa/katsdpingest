@@ -1361,9 +1361,10 @@ class IngestOperation(accel.OperationSequence):
         Per-channel scale factor for **cont_weights**
     **cont_flags** : kept-channels/`cont_factor` × baselines, uint8
         Continuum flags
-    **sd_spec_vis**, **sd_spec_weights**, **sd_spec_flags**, \
-    **sd_cont_vis**, **sd_cont_weights**, **sd_cont_flags**
-        Signal display versions of the above
+    **sd_spec_vis**, **sd_spec_weights_fp32**, **sd_spec_flags**, \
+    **sd_cont_vis**, **sd_cont_weights_fp32**, **sd_cont_flags**
+        Signal display versions of the above, but with a single floating-point
+        weight per visibility instead of a uint8 and a scale factor.
     **timeseries** : kept-channels, complex64
         Weights sum over channels of **sd_spec_vis**
     **timeseriesabs** : kept-channels, float32
