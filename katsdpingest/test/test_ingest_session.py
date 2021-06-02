@@ -7,7 +7,7 @@ from unittest import mock
 import numpy as np
 from nose.tools import (
     assert_equal, assert_is, assert_regex, assert_is_none, assert_is_not_none,
-    assert_logs, assert_raises
+    assert_logs, assert_raises, assert_true
 )
 import asynctest
 from katsdpsigproc.test.test_accel import device_test
@@ -171,6 +171,25 @@ def test_split_array():
             expected[i, j, 0] = src[i, j].real
             expected[i, j, 1] = src[i, j].imag
     np.testing.assert_equal(actual, expected)
+
+
+def test_fast_unique():
+    """Test _fast_unique."""
+    a = np.array([
+        [0, 1, 0, 0, 1, 0, 0, 1],
+        [0, 1, 0, 0, 1, 0, 1, 1],
+        [0, 1, 0, 0, 1, 0, 0, 1],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 1, 0, 0, 1],
+        [0, 1, 0, 0, 1, 0, 1, 1]
+    ], dtype=bool)
+    comp, indices = ingest_session._fast_unique(a)
+    assert_equal(comp.shape, (3, 8))
+    assert_equal(indices.shape, (7,))
+    assert_true(np.all(0 <= indices))
+    assert_true(np.all(indices < len(comp)))
+    np.testing.assert_equal(comp[indices], a)
 
 
 class TestTelstateReceiver(asynctest.TestCase):
