@@ -1027,7 +1027,7 @@ class CompressWeightsTemplate:
         - wgsx, wgsy: workgroup size in each dimension
     """
 
-    autotune_version = 1
+    autotune_version = 2
 
     def __init__(self, context: AbstractContext,
                  tuning: Optional[Mapping[str, Any]] = None) -> None:
@@ -1114,8 +1114,7 @@ class CompressWeights(accel.Operation):
                 np.int32(weights_in.padded_shape[1]),
                 np.int32(self.baselines)
             ],
-            global_size=(accel.roundup(self.baselines, self.template.wgsx),
-                         accel.roundup(self.channels, self.template.wgsy)),
+            global_size=(self.template.wgsx, accel.roundup(self.channels, self.template.wgsy)),
             local_size=(self.template.wgsx, self.template.wgsy)
         )
 
