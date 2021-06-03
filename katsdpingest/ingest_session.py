@@ -170,13 +170,16 @@ def _fast_unique(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
     It is equivalent to ``np.unique(x, axis=0, return_inverse=True)``, where
     ``x`` must be a 2D array.
+
+    It treats each row as raw binary data, so the semantics may change if there
+    are different encodings of the same value (such as -0.0 and +0.0).
     """
     # Implementation is based on
     # https://github.com/numpy/numpy/issues/11136#issue-325345618. In short, each
-    # row is viewed as a byte string, which for some reason makes it hundreds of
+    # row is viewed as a binray blob, which for some reason makes it hundreds of
     # times faster.
     x = np.ascontiguousarray(x)
-    new_dtype = np.dtype(f'S{x.dtype.itemsize * x.shape[1]}')
+    new_dtype = np.dtype((np.void, x.dtype.itemsize * x.shape[1]))
     view = x.view(new_dtype)
     _, index, inverse = np.unique(view, return_index=True, return_inverse=True)
     return x[index], inverse
