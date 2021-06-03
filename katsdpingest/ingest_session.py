@@ -176,7 +176,7 @@ def _fast_unique(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
     # Implementation is based on
     # https://github.com/numpy/numpy/issues/11136#issue-325345618. In short, each
-    # row is viewed as a binray blob, which for some reason makes it hundreds of
+    # row is viewed as a binary blob, which for some reason makes it hundreds of
     # times faster.
     x = np.ascontiguousarray(x)
     new_dtype = np.dtype((np.void, x.dtype.itemsize * x.shape[1]))
