@@ -165,6 +165,26 @@ def _split_array(x: np.ndarray, dtype) -> np.ndarray:
     return np.asarray(np.lib.stride_tricks.DummyArray(interface, base=x))
 
 
+def _fast_unique(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Faster version of :func:`np.unique` for specific case.
+
+    It is equivalent to ``np.unique(x, axis=0, return_inverse=True)``, where
+    ``x`` must be a 2D array.
+
+    It treats each row as raw binary data, so the semantics may change if there
+    are different encodings of the same value (such as -0.0 and +0.0).
+    """
+    # Implementation is based on
+    # https://github.com/numpy/numpy/issues/11136#issue-325345618. In short, each
+    # row is viewed as a binary blob, which for some reason makes it hundreds of
+    # times faster.
+    x = np.ascontiguousarray(x)
+    new_dtype = np.dtype((np.void, x.dtype.itemsize * x.shape[1]))
+    view = x.view(new_dtype)
+    _, index, inverse = np.unique(view, return_index=True, return_inverse=True)
+    return x[index], inverse
+
+
 def _fix_descriptions(desc: Any) -> Any:
     """Massage operation descriptions to be suitable for telstate storage.
 
@@ -802,7 +822,7 @@ class CBFIngest:
             # Typically the model will only have a few threshold lengths, so
             # most rows will be the same. Reduce it to just unique rows, with
             # a lookup table.
-            masks, indices = np.unique(masks, axis=0, return_inverse=True)
+            masks, indices = _fast_unique(masks)
             self.bls_channel_mask_idx = indices.astype(np.uint32)
             self.static_masks = masks * np.uint8(STATIC)
 
