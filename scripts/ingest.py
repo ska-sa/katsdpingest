@@ -10,7 +10,6 @@ from typing import List, Callable, TypeVar
 
 import katsdpservices
 from katsdpsigproc import accel
-import aioredis
 from katsdptelstate import endpoint
 import katsdptelstate.aio.redis
 import katsdpmodels.fetch.aiohttp
@@ -165,8 +164,10 @@ async def on_shutdown(server: IngestDeviceServer) -> None:
 
 
 async def get_async_telstate(endpoint: katsdptelstate.endpoint.Endpoint):
-    client = await aioredis.create_redis_pool(f'redis://{endpoint.host}:{endpoint.port}')
-    return katsdptelstate.aio.TelescopeState(katsdptelstate.aio.redis.RedisBackend(client))
+    backend = await katsdptelstate.aio.redis.RedisBackend.from_url(
+        f'redis://{endpoint.host}:{endpoint.port}'
+    )
+    return katsdptelstate.aio.TelescopeState(backend)
 
 
 async def main() -> None:
