@@ -22,5 +22,10 @@ LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
+# Allow raw packets (for ibverbs raw QPs)
+USER root
+RUN setcap cap_net_raw+p /usr/local/bin/capambel
+USER kat
+
 EXPOSE 2040
 EXPOSE 7148/udp
