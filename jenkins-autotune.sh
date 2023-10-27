@@ -15,5 +15,5 @@ COPY_FROM="$DOCKER_REGISTRY/katsdpingest_$GPU:latest"
 install_pinned.py -r requirements-autotune.txt
 docker pull "$BASE_IMAGE"
 docker pull "$COPY_FROM"
-scripts/autotune_mkimage.py -H $DOCKER_HOST --tls --copy --copy-from "$COPY_FROM" "$IMAGE" "$BASE_IMAGE"
+scripts/autotune_mkimage.py -H $DOCKER_HOST --copy --copy-from "$COPY_FROM" "$IMAGE" "$BASE_IMAGE"
 docker push "$IMAGE"
