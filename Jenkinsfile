@@ -26,6 +26,12 @@ catchError {
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
                 katsdp.unpackKatsdpdockerbase()
+                withCredentials([usernamePassword(
+                    credentialsId: 'harbor-dpp',
+                    usernameVariable: 'HARBOR_USER',
+                    passwordVariable: 'HARBOR_PASS')]) {
+                    sh 'docker login -u "$HARBOR_USER" -p "$HARBOR_PASS" "harbor.sdp.kat.ac.za"'
+                }
                 katsdp.virtualenv('venv') {
                     dir('git') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
