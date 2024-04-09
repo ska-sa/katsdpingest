@@ -105,9 +105,6 @@ def parse_args() -> argparse.Namespace:
         '--input-streams', default=1, type=int,
         help='maximum separate streams for receive. [default=%(default)s]')
     parser.add_argument(
-        '--input-max-packet-size', default=4608, type=int,
-        help='maximum packet size to receive. [default=[%(default)s]')
-    parser.add_argument(
         '--input-buffer', default=64 * 1024**2, type=int,
         help='network buffer size ofr input. [default=%(default)s]')
     parser.add_argument(

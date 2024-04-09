@@ -52,7 +52,7 @@ class MockReceiver:
     """
     def __init__(self, data, timestamps,
                  endpoints, interface_address, ibv,
-                 max_streams, max_packet_size, buffer_size,
+                 max_streams, buffer_size,
                  channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, telstates=None,
                  l0_int_time=None, pauses=None):
@@ -223,7 +223,6 @@ class TestIngestDeviceServer(asynctest.TestCase):
             sd_continuum_factor=128,
             guard_channels=64,
             input_streams=2,
-            input_max_packet_size=9200,
             input_buffer=32*1024**2,
             sd_spead_rate=1000000000.0,
             excise=False,
