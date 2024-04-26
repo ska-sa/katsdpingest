@@ -1107,7 +1107,6 @@ class CBFIngest:
         self.rx_spead_ifaddr = katsdpservices.get_interface_address(args.cbf_interface)
         self.rx_spead_ibv: bool = args.cbf_ibv
         self.rx_spead_max_streams: int = args.input_streams
-        self.rx_spead_max_packet_size: int = args.input_max_packet_size
         self.rx_spead_buffer_size: int = args.input_buffer
         self.sd_spead_rate: float = (
             args.sd_spead_rate / args.clock_ratio if args.clock_ratio else 0.0
@@ -1763,7 +1762,6 @@ class CBFIngest:
         self.rx = TelstateReceiver(
             self.rx_spead_endpoints, self.rx_spead_ifaddr, self.rx_spead_ibv,
             self.rx_spead_max_streams,
-            max_packet_size=self.rx_spead_max_packet_size,
             buffer_size=self.rx_spead_buffer_size,
             channel_range=self.channel_ranges.subscribed,
             cbf_channels=len(self.channel_ranges.cbf),

@@ -65,8 +65,6 @@ class Receiver:
     max_streams : int
         Maximum number of separate streams to use. The endpoints are spread
         across the streams, with a thread per stream.
-    max_packet_size : int
-        Maximum packet size in bytes.
     buffer_size : int
         Buffer size. It is split across the streams.
     channel_range : :class:`katsdpingest.utils.Range`
@@ -114,7 +112,7 @@ class Receiver:
             self,
             endpoints: List[Endpoint],
             interface_address: str, ibv: bool,
-            max_streams: int, max_packet_size: int, buffer_size: int,
+            max_streams: int, buffer_size: int,
             channel_range: Range, cbf_channels: int,
             sensors: Mapping[str, Sensor],
             cbf_attr: Mapping[str, Any],
@@ -168,7 +166,7 @@ class Receiver:
             first = len(use_endpoints) * i // n_streams
             last = len(use_endpoints) * (i + 1) // n_streams
             self._streams.append(self._make_stream(use_endpoints[first:last],
-                                                   max_packet_size, stream_buffer_size))
+                                                   stream_buffer_size))
             self._futures.append(asyncio.get_event_loop().create_task(
                 self._read_stream(self._streams[-1], i, last - first)))
         self._running = n_streams
@@ -230,7 +228,7 @@ class Receiver:
 
     def _add_readers(self, stream: spead2.recv.asyncio.Stream,
                      endpoints: Sequence[Endpoint],
-                     max_packet_size: int, buffer_size: int) -> None:
+                     buffer_size: int) -> None:
         """Subscribe a stream to a list of endpoints."""
         ifaddr = self._interface_address
         if self._ibv:
@@ -241,7 +239,6 @@ class Receiver:
                 spead2.recv.UdpIbvConfig(
                     endpoints=endpoint_tuples,
                     interface_address=ifaddr,
-                    max_size=max_packet_size,
                     buffer_size=buffer_size
                 )
             )
@@ -259,7 +256,7 @@ class Receiver:
             ' with ibv' if self._ibv else '')
 
     def _make_stream(self, endpoints: Sequence[Endpoint],
-                     max_packet_size: int, buffer_size: int) -> spead2.recv.asyncio.Stream:
+                     buffer_size: int) -> spead2.recv.asyncio.Stream:
         """Prepare a stream, which may combine multiple endpoints."""
         # Figure out how many heaps will have the same timestamp, and set
         # up the stream.
@@ -300,7 +297,7 @@ class Receiver:
                 contiguous_only=False
             )
         )
-        self._add_readers(stream, endpoints, max_packet_size, buffer_size)
+        self._add_readers(stream, endpoints, buffer_size)
         return stream
 
     async def _first_timestamp(self, candidate: int) -> int:

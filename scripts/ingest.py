@@ -105,11 +105,8 @@ def parse_args() -> argparse.Namespace:
         '--input-streams', default=1, type=int,
         help='maximum separate streams for receive. [default=%(default)s]')
     parser.add_argument(
-        '--input-max-packet-size', default=4608, type=int,
-        help='maximum packet size to receive. [default=[%(default)s]')
-    parser.add_argument(
         '--input-buffer', default=64 * 1024**2, type=int,
-        help='network buffer size ofr input. [default=%(default)s]')
+        help='network buffer size for input. [default=%(default)s]')
     parser.add_argument(
         '--sd-spead-rate', type=float, default=1000000000,
         help='rate (bits per second) to transmit signal display output. [default=%(default)s]')

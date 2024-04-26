@@ -49,7 +49,7 @@ class TestReceiver(asynctest.TestCase):
             # asyncio.iscoroutinefunction doesn't like pybind11 functions, so
             # we have to hide it inside a lambda.
             self.addCleanup(lambda: tx.queues[0].stop())
-        self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 9200, 32 * 1024**2,
+        self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3)
         self.tx_ig = [spead2.send.ItemGroup() for tx in self.tx]
