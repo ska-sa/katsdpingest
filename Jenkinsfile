@@ -21,7 +21,7 @@ catchError {
 
     stage('katsdpingest/autotuning') {
         if (katsdp.notYetFailed()) {
-            katsdp.simpleNode(label: 'cuda-GeForce_GTX_TITAN_X') {
+            katsdp.simpleNode(label: 'cuda-A30', timeout: [time: 60, unit: 'MINUTES']) {
                 deleteDir()
                 katsdp.unpackGit()
                 katsdp.unpackVenv()
@@ -35,7 +35,7 @@ catchError {
                 katsdp.virtualenv('venv') {
                     dir('git') {
                         lock("katsdpingest-autotune-${env.BRANCH_NAME}") {
-                            sh './jenkins-autotune.sh geforce_gtx_titan_x'
+                            sh './jenkins-autotune.sh a30'
                         }
                     }
                 }
