@@ -91,7 +91,7 @@ class VisSender:
         kwargs = {}      # type: Dict[str, Any]
         if interface_address is not None:
             kwargs['interface_address'] = interface_address
-            kwargs['ttl'] = 1
+            kwargs['ttl'] = 4
         self._stream = spead2.send.asyncio.UdpStream(
             thread_pool, [(endpoint.host, endpoint.port)],
             spead2.send.StreamConfig(max_packet_size=8872, rate=rate), **kwargs)

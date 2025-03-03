@@ -1213,7 +1213,7 @@ class CBFIngest:
         if self.sd_spead_ifaddr is None:
             extra_args: Dict[str, Any] = {}
         else:
-            extra_args = dict(ttl=1, interface_address=self.sd_spead_ifaddr)
+            extra_args = dict(ttl=4, interface_address=self.sd_spead_ifaddr)
         stream = spead2.send.asyncio.UdpStream(
             spead2.ThreadPool(), [(endpoint.host, endpoint.port)], config, **extra_args)
         # Ensure that signal display streams that form the full band between
