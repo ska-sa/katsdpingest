@@ -1,7 +1,7 @@
-#ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
+ARG KATSDPDOCKERBASE_REGISTRY=127.0.0.1:5000
 
-#FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build as build
-FROM docker-base-gpu-build as build
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build as build
+
 
 # Enable Python 3 venv
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
