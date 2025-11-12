@@ -1,7 +1,7 @@
-ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
+#ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
 
 #FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build as build
-FROM bgb as build
+FROM docker-base-gpu-build as build
 
 # Enable Python 3 venv
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
@@ -20,7 +20,7 @@ RUN cd /tmp/install/katsdpingest && \
 #######################################################################
 
 #FROM $KATSDPDOCKEiRBASE_REGISTRY/docker-base-gpu-runtime
-FROM bgr:focal_uv
+FROM docker-base-gpu-runtime:latest
 LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
