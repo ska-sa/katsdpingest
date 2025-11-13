@@ -19,8 +19,7 @@ RUN cd /tmp/install/katsdpingest && \
 
 #######################################################################
 
-#FROM $KATSDPDOCKEiRBASE_REGISTRY/docker-base-gpu-runtime
-FROM docker-base-gpu-runtime:latest
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime
 LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
