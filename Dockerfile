@@ -1,6 +1,6 @@
 ARG KATSDPDOCKERBASE_REGISTRY=127.0.0.1:5000
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build as build
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build AS build
 
 
 # Enable Python 3 venv
