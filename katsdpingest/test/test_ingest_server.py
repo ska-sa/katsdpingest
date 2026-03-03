@@ -18,7 +18,7 @@ import spead2
 import spead2.recv
 import spead2.send
 import aiokatcp
-import katsdptelstate.aio.memory
+import katsdptelstate.aio
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC
@@ -55,7 +55,7 @@ class MockReceiver:
                  max_streams, buffer_size,
                  channel_range, cbf_channels, sensors,
                  cbf_attr, active_frames=2, telstates=None,
-                 l0_int_time=None, pauses=None):
+                 l0_int_time=None, pauses=None) -> None:
         assert data.shape[0] == len(timestamps)
         self._next_frame = 0
         self._data = data
@@ -69,19 +69,17 @@ class MockReceiver:
         self.interval = cbf_attr['ticks_between_spectra'] * cbf_attr['n_accs']
         self.timestamp_base = timestamps[0]
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
-    @asyncio.coroutine
-    def join(self):
-        yield from(self._stop_event.wait())
+    async def join(self) -> None:
+        await self._stop_event.wait()
 
-    @asyncio.coroutine
-    def get(self):
+    async def get(self) -> Frame:
         event = self._pauses.get(self._next_frame)
         if event is None:
             event = asyncio.sleep(0)
-        yield from(event)
+        await event
         if self._next_frame >= len(self._data):
             raise spead2.Stopped('end of frame list')
         frame = Frame(self._next_frame, self._timestamps[self._next_frame], self._substreams)
