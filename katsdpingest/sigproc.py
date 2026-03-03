@@ -7,7 +7,7 @@ import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
 import katsdpsigproc.rfi.device
 from katsdpsigproc.abc import AbstractContext, AbstractCommandQueue
-from katdal.flags import CAL_RFI, CAM
+from katdal.flags import CAL_RFI, CAM, DATA_LOST
 
 from .utils import Range
 
@@ -196,12 +196,13 @@ class Prepare(accel.Operation):
 
 
 class PrepareFlagsTemplate:
-    """Generate initial per-visibility flags from CAM sensor data.
+    """Generate initial per-visibility flags from CAM sensor and vis data.
 
     Given a collection of channel masks and a per-baseline index of which
     mask to apply, constructs per-visibility static flags. It also flags
     visibilities which are zero (since this is assumed to always be a sign
-    of a problem in the correlator).
+    of a problem in the correlator) and visibilities which are marked as
+    missing in the correlator.
 
     Parameters
     ----------
@@ -251,7 +252,7 @@ class PrepareFlagsTemplate:
             fn = cls(context, {
                 'block': block,
                 'vtx': vtx,
-                'vty': vty}).instantiate(queue, channels, baselines, masks, CAM)
+                'vty': vty}).instantiate(queue, channels, baselines, masks, CAM, DATA_LOST)
             fn.bind(flags=flags, channel_mask=channel_mask, channel_mask_idx=channel_mask_idx)
             return tune.make_measure(queue, fn)
         return tune.autotune(
@@ -261,8 +262,10 @@ class PrepareFlagsTemplate:
             vty=[1, 2, 3, 4])
 
     def instantiate(self, command_queue: AbstractCommandQueue,
-                    channels: int, baselines: int, masks: int, zero_flag: int) -> 'PrepareFlags':
-        return PrepareFlags(self, command_queue, channels, baselines, masks, zero_flag)
+                    channels: int, baselines: int, masks: int,
+                    zero_flag: int, missing_flag: int) -> 'PrepareFlags':
+        return PrepareFlags(self, command_queue, channels, baselines, masks,
+                            zero_flag, missing_flag)
 
 
 class PrepareFlags(accel.Operation):
@@ -293,16 +296,20 @@ class PrepareFlags(accel.Operation):
         Number of masks in **channel_masks**
     zero_flag
         Flag value to merge in to flags for zero visibilities
+    missing_flag
+        Flag value to merge in to flags for visibilities marked as missing
     """
     def __init__(self, template: PrepareFlagsTemplate,
                  command_queue: AbstractCommandQueue,
-                 channels: int, baselines: int, masks: int, zero_flag: int) -> None:
+                 channels: int, baselines: int, masks: int,
+                 zero_flag: int, missing_flag: int) -> None:
         super().__init__(command_queue)
         self.template = template
         self.channels = channels
         self.baselines = baselines
         self.masks = masks
         self.zero_flag = zero_flag
+        self.missing_flag = missing_flag
         tilex = template.block * template.vtx
         tiley = template.block * template.vty
 
@@ -341,7 +348,8 @@ class PrepareFlags(accel.Operation):
                 np.int32(vis.padded_shape[1]),
                 np.int32(channel_mask.padded_shape[1]),
                 np.uint32(self.masks - 1),
-                np.uint8(self.zero_flag)
+                np.uint8(self.zero_flag),
+                np.uint8(self.missing_flag)
             ],
             global_size=(xblocks * block, yblocks * block),
             local_size=(block, block))
@@ -351,7 +359,8 @@ class PrepareFlags(accel.Operation):
             'channels': self.channels,
             'baselines': self.baselines,
             'masks': self.masks,
-            'zero_flag': self.zero_flag
+            'zero_flag': self.zero_flag,
+            'missing_flag': self.missing_flag
         }
 
 
@@ -1438,7 +1447,7 @@ class IngestOperation(accel.OperationSequence):
         self.prepare = template.prepare.instantiate(
             command_queue, channels, cbf_baselines, baselines)
         self.prepare_flags = template.prepare_flags.instantiate(
-            command_queue, channels, baselines, masks, CAM)
+            command_queue, channels, baselines, masks, CAM, DATA_LOST)
         self.init_weights = template.init_weights.instantiate(
             command_queue, (baselines, kept_channels))
         self.zero_spec = Zero(command_queue, kept_channels, baselines)
