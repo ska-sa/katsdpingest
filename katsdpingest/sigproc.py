@@ -196,13 +196,13 @@ class Prepare(accel.Operation):
 
 
 class PrepareFlagsTemplate:
-    """Generate initial per-visibility flags from CAM sensor and vis data.
+    """Generate initial per-visibility flags from CAM sensors and vis data.
 
     Given a collection of channel masks and a per-baseline index of which
     mask to apply, constructs per-visibility static flags. It also flags
     visibilities which are zero (since this is assumed to always be a sign
     of a problem in the correlator) and visibilities which are marked as
-    missing in the correlator.
+    missing in the correlator, zeroing them afterwards.
 
     Parameters
     ----------
@@ -274,7 +274,7 @@ class PrepareFlags(accel.Operation):
     .. rubric:: Slots
 
     **vis** : channels × baselines, complex64
-        Input visibilities (output from :class:`Prepare`)
+        Input visibilities (output from :class:`Prepare`, *may be modified*)
     **flags** : channels × baselines, uint8
         Output channels
     **channel_mask** : masks × channels, uint8
