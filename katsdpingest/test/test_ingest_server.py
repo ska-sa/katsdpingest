@@ -21,7 +21,7 @@ import aiokatcp
 import katsdptelstate.aio
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
-from katdal.flags import CAM, STATIC
+from katdal.flags import CAM, STATIC, DATA_LOST
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
 import katpoint
@@ -149,7 +149,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         start_ts = 100000000
         interval = self.cbf_attr['n_accs'] * self.cbf_attr['ticks_between_spectra']
         n_dumps = 19
-        shape = (n_dumps, self.cbf_attr['n_chans'], len(self.cbf_attr['bls_ordering']), 2)
+        n_chans = self.cbf_attr['n_chans']
+        shape = (n_dumps, n_chans, len(self.cbf_attr['bls_ordering']), 2)
         rs = np.random.RandomState(seed=1)
         data = (rs.standard_normal(shape) * 1000).astype(np.int32)
         # Make autocorrelations real, and also set a fixed value. This gives
@@ -159,6 +160,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
             if a == b:
                 data[:, :, i, 0] = 1000
                 data[:, :, i, 1] = 0
+        # Make the last dump disappear, testing both the old and new way interleaved
+        data[-1, 0::2, :, 0] = 0
+        data[-1, 0::2, :, 1] = 0
+        data[-1, 1::2, :, 0] = -2 ** 31
+        data[-1, 1::2, :, 1] = 1
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
 
@@ -359,13 +365,21 @@ class TestIngestDeviceServer(asynctest.TestCase):
         channel_mask[820:840] = True     # Merge in band mask
         channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
         flags[:] = channel_data_suspect * np.uint8(CAM)
+        # Flag missing data (old MK style)
+        old_missing = (self._data[:, :, inv_permutation] == 0).all(axis=-1)
+        old_missing = np.logical_or.reduceat(old_missing, batch_edges, axis=0)
+        flags[old_missing] |= np.uint8(CAM)
+        # Flag missing data (new MK+ style)
+        new_missing = self._data[:, :, inv_permutation, 0] == -2**31
+        new_missing = np.logical_or.reduceat(new_missing, batch_edges, axis=0)
+        flags[new_missing] |= np.uint8(DATA_LOST)
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):
                 # data suspect sensor is True
-                flags[:, :, i] |= CAM
+                flags[:, :, i] |= np.uint8(CAM)
             if a == 'm090v' or b == 'm090v':
                 # input_data_suspect is True
-                flags[:, :, i] |= CAM
+                flags[:, :, i] |= np.uint8(CAM)
             flags[:, :, i] |= channel_mask * np.uint8(STATIC)
             if a[:-1] != b[:-1]:
                 # RFI model, which doesn't apply to auto-correlations
