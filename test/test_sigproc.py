@@ -2,13 +2,15 @@
 
 """Simple test and benchmark of the GPU ingest components"""
 
-import katsdpsigproc.rfi.device as rfi
+import argparse
+
 import katsdpsigproc.accel as accel
+import katsdpsigproc.rfi.device as rfi
+import numpy as np
+from katdal.flags import CAM, STATIC
+
 import katsdpingest.sigproc as sp
 from katsdpingest.utils import Range
-from katdal.flags import STATIC, CAM
-import numpy as np
-import argparse
 
 
 def add_random_flags(flags, flag_value, probability=0.1):
