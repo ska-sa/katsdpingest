@@ -1,7 +1,9 @@
-ARG KATSDPDOCKERBASE_REGISTRY=127.0.0.1:5000
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build AS build
 
+#ARG KATSDPDOCKERBASE_REGISTRY=127.0.0.1:5000
+ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
+
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build:focaluvpip AS build
 
 # Enable Python 3 venv
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
@@ -9,8 +11,9 @@ ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 # Install Python dependencies
 COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 #RUN install_pinned.py -r /tmp/install/requirements.txt
-RUN uv pip compile /tmp/install/requirements.txt -o /tmp/install/lock.txt
-RUN uv pip sync /tmp/install/lock.txt --strict
+RUN uv pip compile /tmp/install/requirements.txt \
+      -o /tmp/install/requirements.lock && \
+    uv pip sync /tmp/install/requirements.lock --strict
 
 # Install the current package
 COPY --chown=kat:kat . /tmp/install/katsdpingest
@@ -19,7 +22,7 @@ RUN cd /tmp/install/katsdpingest && \
 
 #######################################################################
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime:focaluvpip
 LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
