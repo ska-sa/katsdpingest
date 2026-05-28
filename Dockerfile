@@ -1,9 +1,7 @@
-
-
 #ARG KATSDPDOCKERBASE_REGISTRY=127.0.0.1:5000
 ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build:focaluvpip AS build
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-build:focaluvpip as build
 
 # Enable Python 3 venv
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
