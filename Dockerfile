@@ -20,7 +20,7 @@ RUN cd /tmp/install/katsdpingest && \
 
 #######################################################################
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-gpu-runtime:focaluvpip
+FROM $KATSDPDOCKERBASE_REGISTRY/base-gpu-runtime:focaluvpip
 LABEL maintainer="sdpdev+katsdpingest@ska.ac.za"
 
 COPY --chown=kat:kat --from=build /home/kat/ve3 /home/kat/ve3
