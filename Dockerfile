@@ -9,6 +9,7 @@ ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 # Install Python dependencies
 COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 #RUN install_pinned.py -r /tmp/install/requirements.txt
+# Replace custom install_pinned.py script with uv pip
 RUN uv pip compile /tmp/install/requirements.txt \
       -o /tmp/install/requirements.lock && \
     uv pip sync /tmp/install/requirements.lock --strict
