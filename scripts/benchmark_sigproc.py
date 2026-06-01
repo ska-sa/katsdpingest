@@ -117,7 +117,7 @@ def main():
     parser.add_argument('--server-id', type=int, default=None,
                         help='index of this server amongst parallel servers (1-based)')
     parser.add_argument('--input-int-time', default=0.5, type=float,
-                        help='seconds between input CBF dumps')    
+                        help='seconds between input CBF dumps')
     parser.add_argument('--output-int-time', default=2.0, type=float,
                         help='seconds between output SDP dumps')
     parser.add_argument('--sd-int-time', default=2.0, type=float,
