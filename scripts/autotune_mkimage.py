@@ -37,7 +37,9 @@ def untar_cache(tardata):
 
 
 def _api_version_tuple(cli):
-    version = getattr(cli, '_version', '') or ''
+    version = getattr(cli, '_version', None)
+    if version is None:
+        return ()
     try:
         return tuple(int(part) for part in version.split('.'))
     except ValueError:
