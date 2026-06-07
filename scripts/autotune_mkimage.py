@@ -36,6 +36,16 @@ def untar_cache(tardata):
             return f.read()
 
 
+def _api_version_tuple(cli):
+    version = getattr(cli, '_version', None)
+    if version is None:
+        return ()
+    try:
+        return tuple(int(part) for part in version.split('.'))
+    except ValueError:
+        return ()
+
+
 def tune(cli, base_image, skip, init_tar=None):
     """Run a throwaway container to do the autotuning, and extract the result."""
     command = ['ingest_autotune.py'] if not skip else ['/bin/true']
@@ -45,14 +55,26 @@ def tune(cli, base_image, skip, init_tar=None):
                    'cp /tmp/tuning.db $HOME/.cache/katsdpsigproc && ' + command[0]]
     # If we're running inside a Docker container, expose the same devices
     # to our child container.
-    environment = {
-        'NVIDIA_VISIBLE_DEVICES': os.environ.get('NVIDIA_VISIBLE_DEVICES', 'all')
+    visible_devices = os.environ.get('NVIDIA_VISIBLE_DEVICES', 'all')
+    environment = {'NVIDIA_VISIBLE_DEVICES': visible_devices}
+    create_kwargs = {
+        'image': base_image,
+        'command': command,
+        'environment': environment
     }
-    container = cli.create_container(
-        image=base_image,
-        command=command,
-        environment=environment,
-        runtime='nvidia')
+    if _api_version_tuple(cli) >= (1, 40):
+        if visible_devices == 'all':
+            request = {'Driver': 'nvidia', 'Count': -1, 'Capabilities': [['gpu']]}
+        else:
+            request = {
+                'Driver': 'nvidia',
+                'DeviceIDs': [device for device in visible_devices.split(',') if device],
+                'Capabilities': [['gpu']]
+            }
+        create_kwargs['host_config'] = {'Runtime': 'nvidia', 'DeviceRequests': [request]}
+    else:
+        create_kwargs['runtime'] = 'nvidia'
+    container = cli.create_container(**create_kwargs)
     try:
         if container['Warnings']:
             print(container['Warnings'], file=sys.stderr)
@@ -118,9 +140,9 @@ def main():
             client_cert=(os.path.expanduser('~/.docker/cert.pem'),
                          os.path.expanduser('~/.docker/key.pem')),
             verify=os.path.expanduser('~/.docker/ca.pem'))
-        cli = APIClient(args.host, tls=tls_config)
+        cli = APIClient(args.host, version='auto', tls=tls_config)
     else:
-        cli = APIClient(args.host)
+        cli = APIClient(args.host, version='auto')
 
     if args.copy_from is not None:
         copy_base = args.copy_from
