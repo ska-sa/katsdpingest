@@ -11,7 +11,7 @@ setup(
     author="MeerKAT SDP Team",
     author_email="sdpdev+katsdpingest@ska.ac.za",
     packages=find_packages(),
-    package_data={'': ['ingest_kernels/*.mako']},
+    package_data={"katsdpingest": ['ingest_kernels/*.mako']},
     include_package_data=True,
     scripts=[
         "scripts/ingest.py",
