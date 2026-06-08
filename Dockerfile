@@ -12,6 +12,9 @@ COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 # Replace custom install_pinned.py script with uv 
 RUN uv pip compile /tmp/install/requirements.txt \
       -o /tmp/install/requirements.lock && \
+    uv pip install --no-deps -c /tmp/install/requirements.lock numpy && \
+    uv pip install --no-cache --no-deps --no-binary pycuda --no-build-isolation \
+      -c /tmp/install/requirements.lock pycuda && \
     uv pip install --no-deps -r /tmp/install/requirements.lock && \
     uv pip check
 
