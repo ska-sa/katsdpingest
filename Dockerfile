@@ -12,7 +12,8 @@ COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 # Replace custom install_pinned.py script with uv 
 RUN uv pip compile /tmp/install/requirements.txt \
       -o /tmp/install/requirements.lock && \
-    uv pip sync /tmp/install/requirements.lock --strict
+    uv pip install --no-deps -r /tmp/install/requirements.lock && \
+    uv pip check
 
 # Install the current package
 COPY --chown=kat:kat . /tmp/install/katsdpingest
