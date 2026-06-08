@@ -18,9 +18,12 @@ RUN uv pip compile /tmp/install/requirements.txt \
 COPY --chown=kat:kat . /tmp/install/katsdpingest
 #RUN cd /tmp/install/katsdpingest && \
 #    python ./setup.py clean && pip install --no-deps . && pip check
-
-RUN uv pip install --no-deps /tmp/install/katsdpingest && \
+RUN cd /tmp/install/katsdpingest && \
+    python ./setup.py clean && \
+    uv pip install --no-deps . && \
     uv pip check
+#RUN uv pip install --no-deps /tmp/install/katsdpingest && \
+#    uv pip check
 
 #######################################################################
 
