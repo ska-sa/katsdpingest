@@ -12,6 +12,9 @@ fi
 IMAGE="$DOCKER_REGISTRY/katsdpingest_$GPU:$LABEL"
 BASE_IMAGE="$DOCKER_REGISTRY/katsdpingest:$LABEL"
 COPY_FROM="$DOCKER_REGISTRY/katsdpingest_$GPU:latest"
+if ! command -v uv >/dev/null 2>&1; then
+    python -m pip install uv==0.8.4
+fi
 LOCK_FILE="$(mktemp)"
 trap 'rm -f "$LOCK_FILE"' EXIT
 uv pip compile requirements-autotune.txt -o "$LOCK_FILE"
