@@ -10,9 +10,16 @@ ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 #RUN install_pinned.py -r /tmp/install/requirements.txt
 # Replace custom install_pinned.py script with uv 
+#RUN uv pip compile /tmp/install/requirements.txt \
+#      -o /tmp/install/requirements.lock && \
+#    uv pip sync /tmp/install/requirements.lock --strict
 RUN uv pip compile /tmp/install/requirements.txt \
       -o /tmp/install/requirements.lock && \
-    uv pip sync /tmp/install/requirements.lock --strict
+    uv pip install --no-deps -c /tmp/install/requirements.lock numpy && \
+    uv pip install --no-cache --no-deps --no-binary pycuda --no-build-isolation \
+      -c /tmp/install/requirements.lock pycuda && \
+    uv pip install --no-deps -r /tmp/install/requirements.lock && \
+    uv pip check
 
 # Install the current package
 COPY --chown=kat:kat . /tmp/install/katsdpingest
