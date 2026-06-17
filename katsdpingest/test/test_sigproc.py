@@ -18,7 +18,6 @@ from katsdpingest.utils import Range
 UNFLAGGED_BIT = 128
 FLAG_SCALE = np.float32(2) ** -64
 FLAG_SCALE_INV = np.float32(2) ** 64
-NAN = np.complex64(np.nan + 1j * np.nan)
 
 
 def random_vis(rs, shape):
@@ -77,7 +76,6 @@ class TestPrepare:
 
         assert_equal((out_baselines, channels), vis_out.shape)
         expected_vis = np.zeros_like(vis_out)
-        expected_vis[:, :channels_missing_data] = NAN
         scale = np.float32(1 / n_accs)
         for i in range(channels_missing_data, channels):
             for j in range(in_baselines):
@@ -86,6 +84,8 @@ class TestPrepare:
                 if row >= 0:
                     expected_vis[row, i] = value
         np.testing.assert_equal(expected_vis, vis_out)
+        missing_reals_are_negative = np.signbit(vis_out[:, :channels_missing_data].real)
+        np.testing.assert_equal(missing_reals_are_negative, True)
 
     @device_test
     @force_autotune
@@ -104,9 +104,9 @@ class TestPrepareFlags:
         masks = 17
         rs = np.random.RandomState(seed=1)
         vis = random_vis(rs, (channels, baselines))
-        # Create some zero and marked visibilities to ensure they're flagged
-        vis[rs.rand(channels, baselines) < 0.3] = 0
-        vis[rs.rand(channels, baselines) < 0.1] = NAN
+        # Create some zero and missing visibilities to ensure they're flagged
+        vis[rs.rand(channels, baselines) < 0.3] = 0.0
+        vis[rs.rand(channels, baselines) < 0.1] = -0.0
         channel_mask = random_flags(rs, (masks, channels), 7, 0.1)
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
@@ -118,15 +118,11 @@ class TestPrepareFlags:
         fn.buffer('channel_mask_idx').set(queue, channel_mask_idx)
         fn()
         flags = fn.buffer('flags').get(queue)
-        vis_out = fn.buffer('vis').get(queue)
 
         expected = channel_mask[channel_mask_idx, :].T
         expected = expected | np.where(vis == 0, 2**6, 0)
-        expected = expected | np.where(np.isnan(vis), 2**7, 0)
+        expected = expected | np.where((vis == 0) & np.signbit(vis.real), 2**7, 0)
         np.testing.assert_equal(expected, flags)
-        expected_vis = vis.copy()
-        expected_vis[np.isnan(vis)] = 0 + 0j
-        np.testing.assert_equal(expected_vis, vis_out)
 
 
 class TestMergeFlags:

@@ -149,8 +149,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         start_ts = 100000000
         interval = self.cbf_attr['n_accs'] * self.cbf_attr['ticks_between_spectra']
         n_dumps = 19
-        n_chans = self.cbf_attr['n_chans']
-        shape = (n_dumps, n_chans, len(self.cbf_attr['bls_ordering']), 2)
+        shape = (n_dumps, self.cbf_attr['n_chans'], len(self.cbf_attr['bls_ordering']), 2)
         rs = np.random.RandomState(seed=1)
         data = (rs.standard_normal(shape) * 1000).astype(np.int32)
         # Make autocorrelations real, and also set a fixed value. This gives
@@ -338,6 +337,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         """
         # Convert to complex64 from pairs of real and imag int
         vis = (self._data[..., 0] + self._data[..., 1] * 1j).astype(np.complex64)
+        # Expect any missing visibilities to be zero
+        vis[self._data[..., 0] == -2**31] = 0.0
         # Scaling
         vis /= self.cbf_attr['n_accs']
         # Time averaging
@@ -369,9 +370,10 @@ class TestIngestDeviceServer(asynctest.TestCase):
         old_missing = (self._data[:, :, inv_permutation] == 0).all(axis=-1)
         old_missing = np.logical_or.reduceat(old_missing, batch_edges, axis=0)
         flags[old_missing] |= np.uint8(CAM)
-        # Flag missing data (new MK+ style)
+        # Flag missing data (new MK+ style, also zero in the end...)
         new_missing = self._data[:, :, inv_permutation, 0] == -2**31
         new_missing = np.logical_or.reduceat(new_missing, batch_edges, axis=0)
+        flags[new_missing] |= np.uint8(CAM)
         flags[new_missing] |= np.uint8(DATA_LOST)
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):

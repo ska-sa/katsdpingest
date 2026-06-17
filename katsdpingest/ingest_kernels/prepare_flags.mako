@@ -6,7 +6,7 @@
 
 KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     GLOBAL uchar * RESTRICT flags,
-    GLOBAL float2 * RESTRICT vis,
+    const GLOBAL float2 * RESTRICT vis,
     const GLOBAL uchar * RESTRICT channel_mask,
     const GLOBAL uint * RESTRICT channel_mask_idx,
     int flags_stride,
@@ -30,22 +30,16 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
 
     // Write flags back to global memory in channel-major order
     <%transpose:transpose_store coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
-        int flags_addr = ${r} * flags_stride + ${c};
-        int vis_addr = ${r} * vis_stride + ${c};
+        int addr = ${r} * flags_stride + ${c};
         uchar f = local_flags.arr[${lr}][${lc}];
-        float2 v = vis[vis_addr];
-        // Flag zero visibilities
-        if (v.x == 0.0f && v.y == 0.0f)
-            f |= zero_flag;
-        // Flag missing visibilities and zero them afterwards
-        else if (isnan(v.x) || isnan(v.y))
+        float2 v = vis[${r} * vis_stride + ${c}];
+        if (v.x == 0 && v.y == 0)
         {
-            f |= missing_flag;
-            float2 zero_vis;
-            zero_vis.x = 0.0f;
-            zero_vis.y = 0.0f;
-            vis[vis_addr] = zero_vis;
+            f |= zero_flag;
+            // This indicates that the GPU CBF stream had missing data
+            if (signbit(v.x))
+                f |= missing_flag;
         }
-        flags[flags_addr] = f;
+        flags[addr] = f;
     </%transpose:transpose_store>
 }

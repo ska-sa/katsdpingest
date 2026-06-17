@@ -36,7 +36,7 @@ class Zero(accel.Operation):
 class PrepareTemplate:
     """Handles first-stage data processing on a compute device:
 
-    - Conversion to floating point
+    - Conversion to floating point (zeroing the GPU CBF's missing data markers)
     - Scaling
     - Transposition
     - Baseline reordering
@@ -201,8 +201,7 @@ class PrepareFlagsTemplate:
     Given a collection of channel masks and a per-baseline index of which
     mask to apply, constructs per-visibility static flags. It also flags
     visibilities which are zero (since this is assumed to always be a sign
-    of a problem in the correlator) and visibilities which are marked as
-    missing in the correlator, zeroing them afterwards.
+    of a problem in the correlator).
 
     Parameters
     ----------
@@ -274,7 +273,7 @@ class PrepareFlags(accel.Operation):
     .. rubric:: Slots
 
     **vis** : channels × baselines, complex64
-        Input visibilities (output from :class:`Prepare`, *may be modified*)
+        Input visibilities (output from :class:`Prepare`)
     **flags** : channels × baselines, uint8
         Output channels
     **channel_mask** : masks × channels, uint8
