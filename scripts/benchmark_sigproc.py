@@ -103,42 +103,42 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument_group('Data size setup')
-    parser.add_argument('--input-antennas', '-a', type=int, default=7,
+    dgroup = parser.add_argument_group('Data size setup')
+    dgroup.add_argument('--input-antennas', '-a', type=int, default=7,
                         help='total number of antennas in CBF input stream')
-    parser.add_argument('--output-antennas', type=int, default=None,
+    dgroup.add_argument('--output-antennas', type=int, default=None,
                         help='number of antennas in SDP output products (keeps all by default)')
-    parser.add_argument('--cbf-channels', '-c', type=int, default=1024,
+    dgroup.add_argument('--cbf-channels', '-c', type=int, default=1024,
                         help='number of frequency channels in CBF input stream')
-    parser.add_argument('--servers', type=int, default=1,
+    dgroup.add_argument('--servers', type=int, default=1,
                         help='number of intended parallel ingest servers (only simulate one)')
 
-    parser.add_argument_group('Parameters')
-    parser.add_argument('--server-id', type=int, default=None,
+    pgroup = parser.add_argument_group('Parameters')
+    pgroup.add_argument('--server-id', type=int, default=None,
                         help='index of this server amongst parallel servers (1-based)')
-    parser.add_argument('--input-int-time', default=0.5, type=float,
+    pgroup.add_argument('--input-int-time', default=0.5, type=float,
                         help='seconds between input CBF dumps')
-    parser.add_argument('--output-int-time', default=2.0, type=float,
+    pgroup.add_argument('--output-int-time', default=2.0, type=float,
                         help='seconds between output SDP dumps')
-    parser.add_argument('--sd-int-time', default=2.0, type=float,
+    pgroup.add_argument('--sd-int-time', default=2.0, type=float,
                         help='seconds between signal display updates')
-    parser.add_argument('--continuum-factor', '-F', type=int, default=16,
+    pgroup.add_argument('--continuum-factor', '-F', type=int, default=16,
                         help='number of input CBF channels per continuum output SDP channel')
-    parser.add_argument('--sd-continuum-factor', type=int, default=128,
+    pgroup.add_argument('--sd-continuum-factor', type=int, default=128,
                         help='number of input CBF channels per signal display channel')
-    parser.add_argument('--guard-channels', '-B', type=int, default=64,
+    pgroup.add_argument('--guard-channels', '-B', type=int, default=64,
                         help='number of extra input channels on either side used by flagger')
-    parser.add_argument('--flagger-width', '-w', type=int, default=13,
+    pgroup.add_argument('--flagger-width', '-w', type=int, default=13,
                         help='median filter kernel size in ingest RFI flagger (must be odd)')
-    parser.add_argument('--flagger-sigma', type=float, default=11.0,
+    pgroup.add_argument('--flagger-sigma', type=float, default=11.0,
                         help='threshold for detecting RFI in ingest RFI flagger')
-    parser.add_argument('--excise', action='store_true',
+    pgroup.add_argument('--excise', action='store_true',
                         help='enable excision of flagged data')
-    parser.add_argument('--continuum', action='store_true',
+    pgroup.add_argument('--continuum', action='store_true',
                         help='enable continuum output')
-    parser.add_argument('--repeat', '-r', type=int, default=None,
+    pgroup.add_argument('--repeat', '-r', type=int, default=None,
                         help='number of input CBF dumps to process (default is 2 SDP dumps)')
-    parser.add_argument('--no-transfer', '-N', action='store_true',
+    pgroup.add_argument('--no-transfer', '-N', action='store_true',
                         help='skip data transfers')
 
     args = parser.parse_args()
