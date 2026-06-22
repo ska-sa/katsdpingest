@@ -18,6 +18,7 @@ from katsdpingest.utils import Range
 UNFLAGGED_BIT = 128
 FLAG_SCALE = np.float32(2) ** -64
 FLAG_SCALE_INV = np.float32(2) ** 64
+INT_MIN = np.iinfo(np.int32).min
 
 
 def random_vis(rs, shape):
@@ -60,7 +61,7 @@ class TestPrepare:
         rs = np.random.RandomState(seed=1)
         vis_in = rs.random_integers(-1000, 1000, (channels, in_baselines, 2)).astype(np.int32)
         # Mark the data in the first few channels as missing
-        vis_in[:channels_missing_data, :, 0] = -2 ** 31
+        vis_in[:channels_missing_data, :, 0] = INT_MIN
         vis_in[:channels_missing_data, :, 1] = 1
         permutation = rs.permutation(in_baselines).astype(np.int16)
         permutation[permutation >= out_baselines] = -1

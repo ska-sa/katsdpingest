@@ -36,6 +36,9 @@ from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
 
 
+INT_MIN = np.iinfo(np.int32).min
+
+
 class MockReceiver:
     """Replacement for :class:`katsdpingest.receiver.Receiver`.
 
@@ -162,7 +165,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         # Make the last dump disappear, testing both the old and new way interleaved
         data[-1, 0::2, :, 0] = 0
         data[-1, 0::2, :, 1] = 0
-        data[-1, 1::2, :, 0] = -2 ** 31
+        data[-1, 1::2, :, 0] = INT_MIN
         data[-1, 1::2, :, 1] = 1
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
@@ -338,7 +341,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         # Convert to complex64 from pairs of real and imag int
         vis = (self._data[..., 0] + self._data[..., 1] * 1j).astype(np.complex64)
         # Expect any missing visibilities to be zero
-        vis[self._data[..., 0] == -2**31] = 0.0
+        vis[self._data[..., 0] == INT_MIN] = 0.0
         # Scaling
         vis /= self.cbf_attr['n_accs']
         # Time averaging
@@ -371,7 +374,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         old_missing = np.logical_or.reduceat(old_missing, batch_edges, axis=0)
         flags[old_missing] |= np.uint8(CAM)
         # Flag missing data (new MK+ style, also zero in the end...)
-        new_missing = self._data[:, :, inv_permutation, 0] == -2**31
+        new_missing = self._data[:, :, inv_permutation, 0] == INT_MIN
         new_missing = np.logical_or.reduceat(new_missing, batch_edges, axis=0)
         flags[new_missing] |= np.uint8(CAM)
         flags[new_missing] |= np.uint8(DATA_LOST)

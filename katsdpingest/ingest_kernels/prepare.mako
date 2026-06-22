@@ -20,7 +20,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
     /* Load values into shared memory, applying the type conversion and
      * scaling. The input array is padded, so no range checks are needed.
      *
-     * The GPU CBF indicates missing data by setting the real int32 value to -2**31.
+     * The GPU CBF indicates missing data by setting the real int32 value to INT_MIN.
      * Convert these to negative zero floats instead. This treats missing visibilities
      * as zeros like in the old CBF, while still allowing them to be flagged
      * differently in prepare_flags by checking their sign bits.
@@ -28,7 +28,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare(
     <%transpose:transpose_load coords="coords" block="${block}" vtx="${vtx}" vty="${vty}" args="r, c, lr, lc">
         int2 in_value = vis_in[${r} * vis_in_stride + ${c}];
         float2 scaled_value;
-        if (in_value.x == -1 << 31)
+        if (in_value.x == INT_MIN)
         {
             scaled_value.x = -0.0f;
             scaled_value.y = 0.0f;
