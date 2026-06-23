@@ -89,10 +89,12 @@ def tune(cli, base_image, skip, init_tar=None):
         except (Exception, KeyboardInterrupt):
             cli.stop(container_id, timeout=2)
             raise
-        if result['StatusCode'] == 0:
+        status_code = result.get('StatusCode', 'unknown')
+        error_msg = result.get('Error', 'see log messages for more info')
+        if status_code == 0:
             return get_cache(cli, container_id)
         else:
-            msg = 'Autotuning failed with status {0[Error]} ({0[StatusCode]})'.format(result)
+            msg = f'Autotuning failed with status {status_code} ({error_msg})'
             raise RuntimeError(msg)
     finally:
         cli.remove_container(container_id)
