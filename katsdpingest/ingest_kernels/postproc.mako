@@ -60,7 +60,7 @@ KERNEL REQD_WORK_GROUP_SIZE(${wgsx}, ${wgsy}, 1) void postproc(
         GLOBAL float *wptr = &weights[addr];
         float w = *wptr;
         GLOBAL unsigned char *fptr = &flags[addr];
-        unsigned char f = *fptr;
+        unsigned char __attribute__((unused)) f = *fptr;  // only for continuum or excise
 % if continuum:
         cv.x += v.x;
         cv.y += v.y;

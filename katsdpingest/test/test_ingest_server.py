@@ -21,7 +21,7 @@ import aiokatcp
 import katsdptelstate.aio
 from katsdptelstate.endpoint import Endpoint
 from katsdpsigproc.test.test_accel import device_test
-from katdal.flags import CAM, STATIC
+from katdal.flags import CAM, STATIC, DATA_LOST
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
 import katpoint
@@ -34,6 +34,9 @@ from katsdpingest.ingest_session import ChannelRanges, BaselineOrdering, SystemA
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 from katsdpingest.receiver import Frame
 from katsdpingest.sender import Data
+
+
+INT_MIN = np.iinfo(np.int32).min
 
 
 class MockReceiver:
@@ -159,6 +162,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
             if a == b:
                 data[:, :, i, 0] = 1000
                 data[:, :, i, 1] = 0
+        # Make the last dump disappear, testing both the old and new way interleaved
+        data[-1, 0::2, :, 0] = 0
+        data[-1, 0::2, :, 1] = 0
+        data[-1, 1::2, :, 0] = INT_MIN
+        data[-1, 1::2, :, 1] = 1
         timestamps = (np.arange(n_dumps) * interval + start_ts).astype(np.uint64)
         return data, timestamps
 
@@ -332,6 +340,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         """
         # Convert to complex64 from pairs of real and imag int
         vis = (self._data[..., 0] + self._data[..., 1] * 1j).astype(np.complex64)
+        # Expect any missing visibilities to be zero
+        vis[self._data[..., 0] == INT_MIN] = 0.0
         # Scaling
         vis /= self.cbf_attr['n_accs']
         # Time averaging
@@ -359,13 +369,22 @@ class TestIngestDeviceServer(asynctest.TestCase):
         channel_mask[820:840] = True     # Merge in band mask
         channel_data_suspect = self.fake_channel_data_suspect()[np.newaxis, :, np.newaxis]
         flags[:] = channel_data_suspect * np.uint8(CAM)
+        # Flag missing data (old MK style)
+        old_missing = (self._data[:, :, inv_permutation] == 0).all(axis=-1)
+        old_missing = np.logical_or.reduceat(old_missing, batch_edges, axis=0)
+        flags[old_missing] |= np.uint8(CAM)
+        # Flag missing data (new MK+ style, also zero in the end...)
+        new_missing = self._data[:, :, inv_permutation, 0] == INT_MIN
+        new_missing = np.logical_or.reduceat(new_missing, batch_edges, axis=0)
+        flags[new_missing] |= np.uint8(CAM)
+        flags[new_missing] |= np.uint8(DATA_LOST)
         for i, (a, b) in enumerate(bls.sdp_bls_ordering):
             if a.startswith('m091') or b.startswith('m091'):
                 # data suspect sensor is True
-                flags[:, :, i] |= CAM
+                flags[:, :, i] |= np.uint8(CAM)
             if a == 'm090v' or b == 'm090v':
                 # input_data_suspect is True
-                flags[:, :, i] |= CAM
+                flags[:, :, i] |= np.uint8(CAM)
             flags[:, :, i] |= channel_mask * np.uint8(STATIC)
             if a[:-1] != b[:-1]:
                 # RFI model, which doesn't apply to auto-correlations

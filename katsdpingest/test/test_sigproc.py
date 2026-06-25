@@ -8,7 +8,7 @@ from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
-from katdal.flags import INGEST_RFI, CAL_RFI, CAM
+from katdal.flags import INGEST_RFI, CAL_RFI, CAM, DATA_LOST
 from nose.tools import assert_equal, assert_raises
 
 from katsdpingest import sigproc
@@ -18,6 +18,7 @@ from katsdpingest.utils import Range
 UNFLAGGED_BIT = 128
 FLAG_SCALE = np.float32(2) ** -64
 FLAG_SCALE_INV = np.float32(2) ** 64
+INT_MIN = np.iinfo(np.int32).min
 
 
 def random_vis(rs, shape):
@@ -52,12 +53,16 @@ class TestPrepare:
     def test_prepare(self, context, queue):
         """Basic test of data preparation"""
         channels = 73
+        channels_missing_data = 5
         in_baselines = 99
         out_baselines = 91
         n_accs = 11
 
         rs = np.random.RandomState(seed=1)
         vis_in = rs.random_integers(-1000, 1000, (channels, in_baselines, 2)).astype(np.int32)
+        # Mark the data in the first few channels as missing
+        vis_in[:channels_missing_data, :, 0] = INT_MIN
+        vis_in[:channels_missing_data, :, 1] = 1
         permutation = rs.permutation(in_baselines).astype(np.int16)
         permutation[permutation >= out_baselines] = -1
 
@@ -73,13 +78,15 @@ class TestPrepare:
         assert_equal((out_baselines, channels), vis_out.shape)
         expected_vis = np.zeros_like(vis_out)
         scale = np.float32(1 / n_accs)
-        for i in range(channels):
+        for i in range(channels_missing_data, channels):
             for j in range(in_baselines):
                 value = (vis_in[i, j, 0] + 1j * vis_in[i, j, 1]) * scale
                 row = permutation[j]
                 if row >= 0:
                     expected_vis[row, i] = value
         np.testing.assert_equal(expected_vis, vis_out)
+        missing_reals_are_negative = np.signbit(vis_out[:, :channels_missing_data].real)
+        np.testing.assert_equal(missing_reals_are_negative, True)
 
     @device_test
     @force_autotune
@@ -98,13 +105,14 @@ class TestPrepareFlags:
         masks = 17
         rs = np.random.RandomState(seed=1)
         vis = random_vis(rs, (channels, baselines))
-        # Create some zero visibilities to ensure they're flagged
-        vis[rs.rand(channels, baselines) < 0.3] = 0
+        # Create some zero and missing visibilities to ensure they're flagged
+        vis[rs.rand(channels, baselines) < 0.3] = 0.0
+        vis[rs.rand(channels, baselines) < 0.1] = -0.0
         channel_mask = random_flags(rs, (masks, channels), 7, 0.1)
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
         template = sigproc.PrepareFlagsTemplate(context)
-        fn = template.instantiate(queue, channels, baselines, masks, 2**7)
+        fn = template.instantiate(queue, channels, baselines, masks, 2**6, 2**7)
         fn.ensure_all_bound()
         fn.buffer('vis').set(queue, vis)
         fn.buffer('channel_mask').set(queue, channel_mask)
@@ -113,7 +121,8 @@ class TestPrepareFlags:
         flags = fn.buffer('flags').get(queue)
 
         expected = channel_mask[channel_mask_idx, :].T
-        expected = expected | np.where(vis == 0, 2**7, 0)
+        expected = expected | np.where(vis == 0, 2**6, 0)
+        expected = expected | np.where((vis == 0) & np.signbit(vis.real), 2**7, 0)
         np.testing.assert_equal(expected, flags)
 
 
@@ -480,7 +489,7 @@ class TestIngestOperation:
             ('ingest:prepare_flags', {
                 'baselines': 192, 'channels': 128,
                 'class': 'katsdpingest.sigproc.PrepareFlags',
-                'masks': 3, 'zero_flag': CAM
+                'masks': 3, 'zero_flag': CAM, 'missing_flag': DATA_LOST
             }),
             ('ingest:init_weights', {
                 'class': 'katsdpsigproc.fill.Fill', 'shape': (192, 80),

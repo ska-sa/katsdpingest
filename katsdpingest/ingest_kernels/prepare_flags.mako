@@ -13,7 +13,8 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
     int vis_stride,
     int channel_mask_stride,
     uint max_mask,
-    uchar zero_flag)
+    uchar zero_flag,
+    uchar missing_flag)
 {
     LOCAL_DECL transpose_flags local_flags;
     transpose_coords coords;
@@ -33,7 +34,12 @@ KERNEL REQD_WORK_GROUP_SIZE(${block}, ${block}, 1) void prepare_flags(
         uchar f = local_flags.arr[${lr}][${lc}];
         float2 v = vis[${r} * vis_stride + ${c}];
         if (v.x == 0 && v.y == 0)
+        {
             f |= zero_flag;
+            // This indicates that the GPU CBF stream had missing data
+            if (signbit(v.x))
+                f |= missing_flag;
+        }
         flags[addr] = f;
     </%transpose:transpose_store>
 }
