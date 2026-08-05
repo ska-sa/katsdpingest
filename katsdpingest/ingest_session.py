@@ -517,6 +517,15 @@ class SystemAttrs:
     async def _get_band_mask_model(fetcher: katsdpmodels.fetch.aiohttp.TelescopeStateFetcher,
                                    telstate_cbf: katsdptelstate.aio.TelescopeState) \
             -> Optional[katsdpmodels.band_mask.BandMask]:
+        # Try to detect narrowband + cbfplus-proxy (MeerKAT+) and skip band mask
+        bandwidth = await telstate_cbf['bandwidth'] * u.Hz
+        api_version = await telstate_cbf.get('cbf_api_version', 'data-cbf-proxy-0.1')
+        if bandwidth <= 107.0 * u.MHz and api_version.startswith('data-cbfplus-proxy'):
+            logger.info('Skipping band mask for narrowband (%.1f MHz) with MK+ correlator',
+                        bandwidth)
+            return None
+
+        # Normal band mask fetching for wide-band or non-MK+ narrow-band
         band_mask_model_key = telstate_cbf.join('model', 'band_mask', 'fixed')
         try:
             band_mask_model = await fetcher.get(band_mask_model_key,
