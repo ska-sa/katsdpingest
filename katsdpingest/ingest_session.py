@@ -528,12 +528,10 @@ class SystemAttrs:
 
         # Try to detect narrowband + cbfplus-proxy (MeerKAT+) and skip band mask
         try:
-            # these telstate accesses are awaitable
             bandwidth = await fetcher.telstate['bandwidth']
             api_version = await fetcher.telstate['cbf_api_version']
             bandwidth_mhz = (bandwidth * u.Hz).to(u.MHz).value
-            if bandwidth_mhz <= 107.0 and isinstance(api_version, str) \
-                    and api_version.startswith('data-cbfplus-proxy'):
+            if bandwidth_mhz <= 107.0 and api_version.startswith('data-cbfplus-proxy'):
                 logger.info('Skipping band mask for narrowband (%.1f MHz) with MK+ correlator',
                             bandwidth_mhz)
                 return None
