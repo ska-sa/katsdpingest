@@ -1,8 +1,8 @@
 # coding: utf-8
 
+import importlib.resources
 from typing import List, Tuple, Iterable, Mapping, Callable, Optional, Generator, Any
 
-import pkg_resources
 import numpy as np
 from katsdpsigproc import accel, tune, fill, transpose, percentile, maskedsum, reduce
 import katsdpsigproc.rfi.device
@@ -10,6 +10,9 @@ from katsdpsigproc.abc import AbstractContext, AbstractCommandQueue
 from katdal.flags import CAL_RFI, CAM, DATA_LOST
 
 from .utils import Range
+
+
+PACKAGE_PATH = importlib.resources.files('katsdpingest')
 
 
 class Zero(accel.Operation):
@@ -69,7 +72,7 @@ class PrepareTemplate:
         program = accel.build(
             context, 'ingest_kernels/prepare.mako',
             {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('prepare')
 
     @classmethod
@@ -228,7 +231,7 @@ class PrepareFlagsTemplate:
         program = accel.build(
             context, 'ingest_kernels/prepare_flags.mako',
             {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('prepare_flags')
 
     @classmethod
@@ -397,7 +400,7 @@ class MergeFlagsTemplate:
         program = accel.build(
             context, 'ingest_kernels/merge_flags.mako',
             {'block': self.block, 'vtx': self.vtx, 'vty': self.vty},
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('merge_flags')
 
     @classmethod
@@ -526,7 +529,7 @@ class CountFlagsTemplate:
         program = accel.build(
             context, 'ingest_kernels/count_flags.mako',
             {'wgs': self.wgs},
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('count_flags')
 
     @classmethod
@@ -676,7 +679,7 @@ class AccumTemplate:
                 'excise': self.excise,
                 'outputs': self.outputs
             },
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('accum')
 
     @classmethod
@@ -884,7 +887,7 @@ class PostprocTemplate:
                 'excise': self.excise,
                 'continuum': self.continuum
             },
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
         self.kernel = program.get_kernel('postproc')
 
     @classmethod
@@ -1046,7 +1049,7 @@ class CompressWeightsTemplate:
         self.program = accel.build(
             context, 'ingest_kernels/compress_weights.mako',
             {'wgsx': self.wgsx, 'wgsy': self.wgsy},
-            extra_dirs=[pkg_resources.resource_filename(__name__, '')])
+            extra_dirs=[PACKAGE_PATH])
 
     @classmethod
     @tune.autotuner(test={'wgsx': 16, 'wgsy': 16})
