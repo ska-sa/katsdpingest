@@ -355,7 +355,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             + 0.5 * (await self._telstate['sdp_l0_int_time'])
         # Baseline permutation
         bls = BaselineOrdering(self.cbf_attr['bls_ordering'], self.user_args.antenna_mask)
-        inv_permutation = np.empty(len(bls.sdp_bls_ordering), np.int)
+        inv_permutation = np.empty(len(bls.sdp_bls_ordering), int)
         for i, p in enumerate(bls.permutation):
             if p != -1:
                 inv_permutation[p] = i
