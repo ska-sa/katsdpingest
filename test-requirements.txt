@@ -3,4 +3,5 @@
 async-timeout
 asynctest
 coverage
-nose
+pytest
+pytest-cov

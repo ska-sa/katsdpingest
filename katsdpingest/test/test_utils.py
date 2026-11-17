@@ -1,7 +1,8 @@
 """Tests for the util module."""
+
+import pytest
+
 from katsdpingest.utils import Range
-from nose.tools import (assert_equal, assert_raises,
-                        assert_true, assert_false, assert_in, assert_not_in)
 
 
 class TestRange:
@@ -87,11 +88,15 @@ class TestRange:
 
     def test_relative_to(self):
         assert Range(3, 5) == Range(8, 10).relative_to(Range(5, 10))
-        assert_raises(ValueError, Range(8, 10).relative_to, Range(5, 9))
+        with pytest.raises(ValueError):
+            Range(8, 10).relative_to(Range(5, 9))
 
     def test_split(self):
         assert Range(14, 16) == Range(10, 20).split(5, 2)
         assert Range(0, 0) == Range(10, 10).split(5, 2)
-        assert_raises(ValueError, Range(10, 20).split, 6, 3)
-        assert_raises(ValueError, Range(10, 20).split, 5, -2)
-        assert_raises(ValueError, Range(10, 20).split, 5, 5)
+        with pytest.raises(ValueError):
+            Range(10, 20).split(6, 3)
+        with pytest.raises(ValueError):
+            Range(10, 20).split(5, -2)
+        with pytest.raises(ValueError):
+            Range(10, 20).split(5, 5)

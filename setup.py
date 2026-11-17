@@ -2,7 +2,13 @@
 from setuptools import setup, find_packages
 
 
-tests_require = ['nose', 'asynctest', 'async_timeout', 'katsdpsigproc[test]']
+tests_require = [
+    'pytest',
+    'pytest-cov',
+    'asynctest',
+    'async_timeout',
+    'katsdpsigproc[test]',
+]
 
 
 setup(

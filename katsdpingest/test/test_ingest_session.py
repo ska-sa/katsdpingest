@@ -2,13 +2,9 @@
 
 import logging
 import re
-from unittest import mock
+from unittest import mock, TestCase
 
 import numpy as np
-from nose.tools import (
-    assert_equal, assert_is, assert_regex, assert_is_none, assert_is_not_none,
-    assert_logs, assert_raises, assert_true
-)
 import asynctest
 from katsdpsigproc.test.test_accel import device_test
 import katsdptelstate.aio
@@ -16,9 +12,14 @@ import katsdpmodels.fetch.aiohttp
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
 import katpoint
+import pytest
 
 from katsdpingest import ingest_session
 from katsdpingest.utils import Range, cbf_telstate_view
+
+
+# XXX Drop-in replacement for nose.tools.assert_logs; consider `caplog` in future
+assert_logs = TestCase().assertLogs
 
 
 def fake_cbf_attr(n_antennas, n_xengs=4):
@@ -260,7 +261,7 @@ class TestSensorHistory:
 
     def test_query_out_of_order(self) -> None:
         self.sh.get(5.0)
-        with assert_raises(ValueError):
+        with pytest.raises(ValueError):
             self.sh.get(4.0)
 
 

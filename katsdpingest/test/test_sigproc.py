@@ -9,7 +9,7 @@ import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
 from katsdpsigproc.test.test_accel import device_test, force_autotune
 from katdal.flags import INGEST_RFI, CAL_RFI, CAM
-from nose.tools import assert_equal, assert_raises
+import pytest
 
 from katsdpingest import sigproc
 from katsdpingest.utils import Range
@@ -317,7 +317,8 @@ class TestPostproc:
         template = mock.sentinel.template
         template.continuum = True
         mock.sentinel.command_queue.context = mock.sentinel.context
-        assert_raises(ValueError, sigproc.Postproc, template, mock.sentinel.command_queue, 12, 8, 8)
+        with pytest.raises(ValueError):
+            sigproc.Postproc(template, mock.sentinel.command_queue, 12, 8, 8)
 
     def _test_postproc(self, context, queue, excise, continuum):
         channels = 1024

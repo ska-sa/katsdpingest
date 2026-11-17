@@ -10,13 +10,13 @@ import spead2.send
 import spead2.recv.asyncio
 import asynctest
 import async_timeout
+import pytest
 
 from katsdpingest.receiver import Receiver
 from katsdpingest.sigproc import Range
 from katsdpingest.test.test_ingest_session import fake_cbf_attr
 import katsdptelstate.endpoint
 from katsdptelstate.endpoint import Endpoint
-from nose.tools import assert_equal, assert_is_none, assert_raises
 
 
 class TestReceiver(asynctest.TestCase):
@@ -86,7 +86,7 @@ class TestReceiver(asynctest.TestCase):
             tx.send_heap(ig.get_end())
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
-        with assert_raises(spead2.Stopped):
+        with pytest.raises(spead2.Stopped):
             async with async_timeout.timeout(30):
                 await data_future
 
@@ -141,7 +141,7 @@ class TestReceiver(asynctest.TestCase):
             assert self.n_xengs == len(frame.items)
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
-        with assert_raises(spead2.Stopped):
+        with pytest.raises(spead2.Stopped):
             async with async_timeout.timeout(3):
                 await self.rx.get()
         await send_future
@@ -196,7 +196,7 @@ class TestReceiver(asynctest.TestCase):
                         assert frame.items[i] is None
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
-            with assert_raises(spead2.Stopped):
+            with pytest.raises(spead2.Stopped):
                 async with async_timeout.timeout(3):
                     await self.rx.get()
         finally:
