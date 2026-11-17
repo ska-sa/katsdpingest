@@ -26,7 +26,7 @@ class TestReceiver(asynctest.TestCase):
         def add_udp_reader(rx, multicast_group, port, *args, **kwargs):
             endpoint = Endpoint(multicast_group, port)
             tx = self._streams[endpoint]
-            rx.add_inproc_reader(tx.queue)
+            rx.add_inproc_reader(tx.queues[0])
 
         patcher = mock.patch.object(
             spead2.recv.asyncio.Stream, 'add_udp_reader', add_udp_reader)
