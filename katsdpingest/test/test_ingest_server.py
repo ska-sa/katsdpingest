@@ -11,8 +11,7 @@ from typing import List, Dict, Any
 import asynctest
 import async_timeout
 import numpy as np
-from nose.tools import (assert_in, assert_is_not_none, assert_is_instance,
-                        assert_true, assert_equal, assert_almost_equal, assert_raises_regex)
+import pytest
 
 import spead2
 import spead2.recv
@@ -328,7 +327,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
     async def assert_request_fails(self, msg_re, name, *args):
         """Assert that a request fails, and test the error message against
         a regular expression."""
-        with assert_raises_regex(aiokatcp.FailReply, msg_re):
+        with pytest.raises(aiokatcp.FailReply, match=msg_re):
             async with async_timeout.timeout(15):
                 await self._client.request(name, *args)
 
