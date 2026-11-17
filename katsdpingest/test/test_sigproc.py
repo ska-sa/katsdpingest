@@ -7,7 +7,6 @@ import numpy as np
 from katsdpsigproc import tune
 import katsdpsigproc.rfi.device as rfi
 import katsdpsigproc.rfi.host as rfi_host
-from katsdpsigproc.test.test_accel import device_test, force_autotune
 from katdal.flags import INGEST_RFI, CAL_RFI, CAM
 import pytest
 
@@ -48,8 +47,7 @@ def random_flags(rs, shape, bits, p):
 class TestPrepare:
     """Test :class:`katsdpingest.sigproc.Prepare`"""
 
-    @device_test
-    def test_prepare(self, context, queue):
+    def test_prepare(self, context, command_queue):
         """Basic test of data preparation"""
         channels = 73
         in_baselines = 99
@@ -62,13 +60,13 @@ class TestPrepare:
         permutation[permutation >= out_baselines] = -1
 
         template = sigproc.PrepareTemplate(context)
-        prepare = template.instantiate(queue, channels, in_baselines, out_baselines)
+        prepare = template.instantiate(command_queue, channels, in_baselines, out_baselines)
         prepare.ensure_all_bound()
-        prepare.buffer('vis_in').set(queue, vis_in)
-        prepare.buffer('permutation').set(queue, permutation)
+        prepare.buffer('vis_in').set(command_queue, vis_in)
+        prepare.buffer('permutation').set(command_queue, permutation)
         prepare.n_accs = n_accs
         prepare()
-        vis_out = prepare.buffer('vis_out').get(queue)
+        vis_out = prepare.buffer('vis_out').get(command_queue)
 
         assert (out_baselines, channels) == vis_out.shape
         expected_vis = np.zeros_like(vis_out)
@@ -81,17 +79,15 @@ class TestPrepare:
                     expected_vis[row, i] = value
         np.testing.assert_equal(expected_vis, vis_out)
 
-    @device_test
-    @force_autotune
-    def test_autotune(self, context, queue):
+    @pytest.mark.force_autotune
+    def test_autotune(self, context, command_queue):
         sigproc.PrepareTemplate(context)
 
 
 class TestPrepareFlags:
     """Test :class:`katsdpingest.sigproc.PrepareFlags`"""
 
-    @device_test
-    def test_random(self, context, queue):
+    def test_random(self, context, command_queue):
         """Basic test using random data"""
         channels = 643
         baselines = 497
@@ -104,13 +100,13 @@ class TestPrepareFlags:
         channel_mask_idx = rs.randint(0, masks, baselines).astype(np.uint32)
 
         template = sigproc.PrepareFlagsTemplate(context)
-        fn = template.instantiate(queue, channels, baselines, masks, 2**7)
+        fn = template.instantiate(command_queue, channels, baselines, masks, 2**7)
         fn.ensure_all_bound()
-        fn.buffer('vis').set(queue, vis)
-        fn.buffer('channel_mask').set(queue, channel_mask)
-        fn.buffer('channel_mask_idx').set(queue, channel_mask_idx)
+        fn.buffer('vis').set(command_queue, vis)
+        fn.buffer('channel_mask').set(command_queue, channel_mask)
+        fn.buffer('channel_mask_idx').set(command_queue, channel_mask_idx)
         fn()
-        flags = fn.buffer('flags').get(queue)
+        flags = fn.buffer('flags').get(command_queue)
 
         expected = channel_mask[channel_mask_idx, :].T
         expected = expected | np.where(vis == 0, 2**7, 0)
@@ -120,8 +116,7 @@ class TestPrepareFlags:
 class TestMergeFlags:
     """Test :class:`katsdpingest.sigproc.MergeFlags`"""
 
-    @device_test
-    def test_random(self, context, queue):
+    def test_random(self, context, command_queue):
         """Basic test using random data"""
         channels = 643
         baselines = 497
@@ -131,13 +126,13 @@ class TestMergeFlags:
         baseline_flags = random_flags(rs, (baselines,), 8, 0.2)
 
         template = sigproc.MergeFlagsTemplate(context)
-        fn = template.instantiate(queue, channels, baselines)
+        fn = template.instantiate(command_queue, channels, baselines)
         fn.ensure_all_bound()
-        fn.buffer('flags_in').set(queue, flags_in)
-        fn.buffer('flags_out').set(queue, flags_out)
-        fn.buffer('baseline_flags').set(queue, baseline_flags)
+        fn.buffer('flags_in').set(command_queue, flags_in)
+        fn.buffer('flags_out').set(command_queue, flags_out)
+        fn.buffer('baseline_flags').set(command_queue, baseline_flags)
         fn()
-        output = fn.buffer('flags_out').get(queue)
+        output = fn.buffer('flags_out').get(command_queue)
 
         expected = flags_out | flags_in.T | baseline_flags[:, np.newaxis]
         np.testing.assert_equal(expected, output)
@@ -146,8 +141,7 @@ class TestMergeFlags:
 class TestCountFlags:
     """Test :class:`katsdpingest.sigproc.CountFlags`"""
 
-    @device_test
-    def test_random(self, context, queue):
+    def test_random(self, context, command_queue):
         """Basic test using random data"""
         channels = 1243
         channel_range = Range(64, 1235)
@@ -160,14 +154,14 @@ class TestCountFlags:
         orig_any_counts = rs.randint(0, 10000, size=baselines).astype(np.uint32)
 
         template = sigproc.CountFlagsTemplate(context)
-        fn = template.instantiate(queue, channels, channel_range, baselines, mask)
+        fn = template.instantiate(command_queue, channels, channel_range, baselines, mask)
         fn.ensure_all_bound()
-        fn.buffer('flags').set(queue, flags)
-        fn.buffer('counts').set(queue, orig_counts)
-        fn.buffer('any_counts').set(queue, orig_any_counts)
+        fn.buffer('flags').set(command_queue, flags)
+        fn.buffer('counts').set(command_queue, orig_counts)
+        fn.buffer('any_counts').set(command_queue, orig_any_counts)
         fn()
-        counts = fn.buffer('counts').get(queue)
-        any_counts = fn.buffer('any_counts').get(queue)
+        counts = fn.buffer('counts').get(command_queue)
+        any_counts = fn.buffer('any_counts').get(command_queue)
 
         assert (baselines, 8) == counts.shape
         expected = orig_counts[:]
@@ -182,9 +176,8 @@ class TestCountFlags:
         expected += np.count_nonzero(included_flags, axis=1).astype(np.uint32)
         np.testing.assert_equal(expected, any_counts)
 
-    @device_test
-    @force_autotune
-    def test_autotune(self, context, queue):
+    @pytest.mark.force_autotune
+    def test_autotune(self, context, command_queue):
         sigproc.CountFlagsTemplate(context)
 
 
@@ -214,24 +207,22 @@ class TestAccum:
             actual = fn.buffer(name).get(queue)
             np.testing.assert_equal(value, actual, err_msg=name + " does not match")
 
-    @device_test
-    def test_small_excise(self, context, queue):
+    def test_small_excise(self, context, command_queue):
         """Hand-coded test data, to test various cases, with excision"""
         expected = {
             'vis_out0':     np.array([[11+7j, (12-12j) * FLAG_SCALE, 6+8j]], dtype=np.complex64).T,
             'weights_out0': np.array([[3.5, 4.0 * FLAG_SCALE, 7.5]], dtype=np.float32).T,
             'flags_out0':   np.array([[1 | UNFLAGGED_BIT, 11, UNFLAGGED_BIT]], dtype=np.uint8).T
         }
-        self._test_small(context, queue, True, expected)
+        self._test_small(context, command_queue, True, expected)
 
-    @device_test
-    def test_small_no_excise(self, context, queue):
+    def test_small_no_excise(self, context, command_queue):
         expected = {
             'vis_out0':     np.array([[11+7j, 12-12j, 6+8j]], dtype=np.complex64).T,
             'weights_out0': np.array([[3.5, 4.0, 7.5]], dtype=np.float32).T,
             'flags_out0':   np.array([[1, 11, 0]], dtype=np.uint8).T
         }
-        self._test_small(context, queue, False, expected)
+        self._test_small(context, command_queue, False, expected)
 
     def _test_big(self, context, queue, excise):
         channels = 203
@@ -292,19 +283,16 @@ class TestAccum:
                 actual = fn.buffer(name + str(i)).get(queue)
                 np.testing.assert_allclose(value[i], actual, 1e-5)
 
-    @device_test
-    def test_big_excise(self, context, queue):
+    def test_big_excise(self, context, command_queue):
         """Test with large random data against a simple CPU version (with excision)"""
-        self._test_big(context, queue, True)
+        self._test_big(context, command_queue, True)
 
-    @device_test
-    def test_big_no_excise(self, context, queue):
+    def test_big_no_excise(self, context, command_queue):
         """Test with large random data against a simple CPU version (no excision)"""
-        self._test_big(context, queue, False)
+        self._test_big(context, command_queue, False)
 
-    @device_test
-    @force_autotune
-    def test_autotune(self, context, queue):
+    @pytest.mark.force_autotune
+    def test_autotune(self, context, command_queue):
         sigproc.AccumTemplate(context, 2, 1, False)
         sigproc.AccumTemplate(context, 2, 1, True)
 
@@ -386,24 +374,20 @@ class TestPostproc:
                                        rtol=1e-5)
             np.testing.assert_equal(cont_flags, fn.buffer('cont_flags').get(queue))
 
-    @device_test
-    def test_postproc(self, context, queue):
+    def test_postproc(self, context, command_queue):
         """Test with random data against a CPU implementation (with excision)"""
-        self._test_postproc(context, queue, True, True)
+        self._test_postproc(context, command_queue, True, True)
 
-    @device_test
-    def test_postproc_no_excise(self, context, queue):
+    def test_postproc_no_excise(self, context, command_queue):
         """Test with random data against a CPU implementation (no excision)"""
-        self._test_postproc(context, queue, False, True)
+        self._test_postproc(context, command_queue, False, True)
 
-    @device_test
-    def test_postproc_no_continuum(self, context, queue):
+    def test_postproc_no_continuum(self, context, command_queue):
         """Test with random data against a CPU implementation (no continuum)"""
-        self._test_postproc(context, queue, True, False)
+        self._test_postproc(context, command_queue, True, False)
 
-    @device_test
-    @force_autotune
-    def test_autotune(self, context, queue):
+    @pytest.mark.force_autotune
+    def test_autotune(self, context, command_queue):
         sigproc.PostprocTemplate(context, 128, False, True)
         sigproc.PostprocTemplate(context, 128, True, False)
         sigproc.PostprocTemplate(context, 128, True, True)
@@ -411,8 +395,7 @@ class TestPostproc:
 
 class TestCompressWeights:
     """Tests for :class:`katsdpingest.sigproc.CompressWeights`"""
-    @device_test
-    def test_simple(self, context, queue):
+    def test_simple(self, context, command_queue):
         """Test with random data against a CPU implementation"""
         channels = 123
         baselines = 235
@@ -420,24 +403,23 @@ class TestCompressWeights:
         weights_in = rs.uniform(0.01, 1000.0, (channels, baselines)).astype(np.float32)
 
         template = sigproc.CompressWeightsTemplate(context)
-        fn = template.instantiate(queue, channels, baselines)
+        fn = template.instantiate(command_queue, channels, baselines)
         fn.ensure_all_bound()
-        fn.buffer('weights_in').set(queue, weights_in)
-        fn.buffer('weights_out').zero(queue)
-        fn.buffer('weights_channel').zero(queue)
+        fn.buffer('weights_in').set(command_queue, weights_in)
+        fn.buffer('weights_out').zero(command_queue)
+        fn.buffer('weights_channel').zero(command_queue)
         fn()
 
         expected_channel = np.max(weights_in, axis=1) * np.float32(1.0 / 255.0)
         scale = np.reciprocal(expected_channel)[..., np.newaxis]
         expected_out = np.round(weights_in * scale).astype(np.uint8)
         np.testing.assert_allclose(expected_channel,
-                                   fn.buffer('weights_channel').get(queue),
+                                   fn.buffer('weights_channel').get(command_queue),
                                    rtol=1e-5)
-        np.testing.assert_equal(expected_out, fn.buffer('weights_out').get(queue))
+        np.testing.assert_equal(expected_out, fn.buffer('weights_out').get(command_queue))
 
-    @device_test
-    @force_autotune
-    def test_autotune(self, context, queue):
+    @pytest.mark.force_autotune
+    def test_autotune(self, context, command_queue):
         sigproc.CompressWeightsTemplate(context)
 
 
@@ -906,23 +888,19 @@ class TestIngestOperation:
             else:
                 np.testing.assert_equal(expected[name], actual[name], err_msg=err_msg)
 
-    @device_test
-    def test_random_excise(self, context, queue):
+    def test_random_excise(self, context, command_queue):
         """Test with random data against a CPU implementation (with excision)"""
-        self._test_random(context, queue, True, True)
+        self._test_random(context, command_queue, True, True)
 
-    @device_test
-    def test_random_no_excise(self, context, queue):
+    def test_random_no_excise(self, context, command_queue):
         """Test with random data against a CPU implementation (without excision)"""
-        self._test_random(context, queue, False, True)
+        self._test_random(context, command_queue, False, True)
 
-    @device_test
-    def test_random_no_continuum(self, context, queue):
+    def test_random_no_continuum(self, context, command_queue):
         """Test with random data against a CPU implementation (without continuum averaging)"""
-        self._test_random(context, queue, True, False)
+        self._test_random(context, command_queue, True, False)
 
-    @device_test
-    def test_zero_antenna(self, context, queue):
+    def test_zero_antenna(self, context, command_queue):
         """If all data for an antenna is zero, it must not cause NaNs in the output."""
         channels = 4
         dumps = 2
@@ -930,29 +908,29 @@ class TestIngestOperation:
         flagger_template = self._make_flagger_template(context)
         template = sigproc.IngestTemplate(context, flagger_template, [0, 2, 4], True, True)
         fn = template.instantiate(
-            queue, channels, Range(0, channels), Range(0, channels),
+            command_queue, channels, Range(0, channels), Range(0, channels),
             4, 4, 1, 2, 2, [(0, 1), (1, 2), (2, 4)],
             threshold_args={'n_sigma': 3.0})
         fn.ensure_all_bound()
         fn.n_accs = 1
-        fn.buffer('permutation').set(queue, np.array([0, 1, 2, 3], dtype=np.int16))
-        fn.buffer('timeseries_weights').set(queue, np.full(channels, 1 / channels, np.float32))
+        fn.buffer('permutation').set(command_queue, np.array([0, 1, 2, 3], dtype=np.int16))
+        fn.buffer('timeseries_weights').set(command_queue, np.full(channels, 1 / channels, np.float32))
 
         fn.start_sum()
         fn.start_sd_sum()
         for i in range(dumps):
-            fn.buffer('vis_in').zero(queue)
-            fn.buffer('channel_mask').zero(queue)
-            fn.buffer('channel_mask_idx').zero(queue)
-            fn.buffer('baseline_flags').zero(queue)
+            fn.buffer('vis_in').zero(command_queue)
+            fn.buffer('channel_mask').zero(command_queue)
+            fn.buffer('channel_mask_idx').zero(command_queue)
+            fn.buffer('baseline_flags').zero(command_queue)
             fn()
         fn.end_sum()
         fn.end_sd_sum()
 
-        spec_vis = fn.buffer('spec_vis').get(queue)
-        spec_flags = fn.buffer('spec_flags').get(queue)
-        cont_vis = fn.buffer('cont_vis').get(queue)
-        cont_flags = fn.buffer('cont_flags').get(queue)
+        spec_vis = fn.buffer('spec_vis').get(command_queue)
+        spec_flags = fn.buffer('spec_flags').get(command_queue)
+        cont_vis = fn.buffer('cont_vis').get(command_queue)
+        cont_flags = fn.buffer('cont_flags').get(command_queue)
         np.testing.assert_equal(0 + 0j, spec_vis)
         np.testing.assert_equal(CAM, spec_flags)
         np.testing.assert_equal(0 + 0j, cont_vis)
