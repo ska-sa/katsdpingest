@@ -102,8 +102,7 @@ class TestSystemAttrs(asynctest.TestCase):
                     ['m000', 'm001']
                 )
                 assert self.expected_cbf_attr == attrs.cbf_attr
-                assert ([katpoint.Antenna(self.values['m001_observer'])] ==
-                             attrs.antennas)
+                assert [katpoint.Antenna(self.values['m001_observer'])] == attrs.antennas
                 assert attrs.rfi_mask_model is not None
                 assert attrs.band_mask_model is not None
                 assert fetch.mock_calls == [
