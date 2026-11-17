@@ -11,12 +11,17 @@ ENV PATH="/home/kat/.local/bin:$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
 
 # Replace custom install_pinned.py script with uv 
+# numpy is installed first so pycuda can find its headers during
+# compilation, then installs everything else from the lock file
 RUN uv pip compile /tmp/install/requirements.txt \
-      -o /tmp/install/requirements.lock && \
-    uv pip install --no-deps -c /tmp/install/requirements.lock numpy && \
-    uv pip install --no-cache --no-deps --no-binary pycuda --no-build-isolation \
-      -c /tmp/install/requirements.lock pycuda && \
-    uv pip install --no-deps -r /tmp/install/requirements.lock && \
+        -c /home/kat/docker-base/base-requirements.lock \
+        -c /home/kat/docker-base/gpu-requirements.lock \
+        -o /tmp/install/requirements.lock && \
+    uv pip install --no-deps numpy && \
+    uv pip install --no-cache --no-deps --no-binary pycuda \
+        --no-build-isolation pycuda && \
+    uv pip install --no-deps \
+        -r /tmp/install/requirements.lock && \
     uv pip check
 
 # Install the current package
