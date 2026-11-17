@@ -19,7 +19,6 @@ import spead2.send
 import aiokatcp
 import katsdptelstate.aio
 from katsdptelstate.endpoint import Endpoint
-from katsdpsigproc.test.test_accel import device_test
 from katdal.flags import CAM, STATIC, DATA_LOST
 import katsdpmodels.rfi_mask
 import katsdpmodels.band_mask
@@ -199,7 +198,6 @@ class TestIngestDeviceServer(asynctest.TestCase):
         bad[650:750] = True
         return bad
 
-    @device_test
     async def setUp(self, context, command_queue) -> None:
         done_future = asyncio.Future()     # type: asyncio.Future[None]
         done_future.set_result(None)
