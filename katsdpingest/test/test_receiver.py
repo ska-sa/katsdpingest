@@ -87,7 +87,7 @@ class TestReceiver(asynctest.TestCase):
         # Check that we get the end-of-stream notification; using a timeout
         # to ensure that we don't hang if the test fails.
         with assert_raises(spead2.Stopped):
-            with async_timeout.timeout(30):
+            async with async_timeout.timeout(30):
                 await data_future
 
     def _make_data(self, n_frames):
@@ -142,7 +142,7 @@ class TestReceiver(asynctest.TestCase):
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
-            with async_timeout.timeout(3):
+            async with async_timeout.timeout(3):
                 await self.rx.get()
         await send_future
 
@@ -186,7 +186,7 @@ class TestReceiver(asynctest.TestCase):
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []),
                                (7, [1, 2, 3]), (8, []), (9, [1])]:
-                with async_timeout.timeout(3):
+                async with async_timeout.timeout(3):
                     frame = await self.rx.get()
                 assert_equal(indices[t], frame.idx)
                 assert_equal(timestamps[t], frame.timestamp)
@@ -197,7 +197,7 @@ class TestReceiver(asynctest.TestCase):
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
-                with async_timeout.timeout(3):
+                async with async_timeout.timeout(3):
                     await self.rx.get()
         finally:
             await send_future
