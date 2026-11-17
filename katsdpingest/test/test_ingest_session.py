@@ -101,17 +101,17 @@ class TestSystemAttrs(asynctest.TestCase):
                     telstate_cbf,
                     ['m000', 'm001']
                 )
-                assert_equal(self.expected_cbf_attr, attrs.cbf_attr)
-                assert_equal([katpoint.Antenna(self.values['m001_observer'])],
+                assert self.expected_cbf_attr == attrs.cbf_attr
+                assert ([katpoint.Antenna(self.values['m001_observer'])] ==
                              attrs.antennas)
-                assert_is_not_none(attrs.rfi_mask_model)
-                assert_is_not_none(attrs.band_mask_model)
-                assert_equal(fetch.mock_calls, [
+                assert attrs.rfi_mask_model is not None
+                assert attrs.band_mask_model is not None
+                assert fetch.mock_calls == [
                     mock.call(mock.ANY, 'https://test.invalid/models/rfi_mask/fixed/dummy.h5',
                               katsdpmodels.rfi_mask.RFIMask),
                     mock.call(mock.ANY, 'https://test.invalid/models/band_mask/fixed/dummy.h5',
                               katsdpmodels.band_mask.BandMask)
-                ])
+                ]
 
     async def test_no_models(self):
         await self.telstate.delete('sdp_model_base_url')
@@ -124,17 +124,17 @@ class TestSystemAttrs(asynctest.TestCase):
                     telstate_cbf,
                     ['m000', 'm001']
                 )
-        assert_regex(cm.output[0], re.compile('.*Failed to load rfi_mask model.*', re.M))
-        assert_regex(cm.output[1], re.compile('.*Failed to load band_mask model.*', re.M))
-        assert_is_none(attrs.rfi_mask_model)
-        assert_is_none(attrs.band_mask_model)
+        assert re.search(re.compile('.*Failed to load rfi_mask model.*', re.M),cm.output[0])
+        assert re.search(re.compile('.*Failed to load band_mask model.*', re.M),cm.output[1])
+        assert attrs.rfi_mask_model is None
+        assert attrs.band_mask_model is None
 
 
 class TestTimeAverage(asynctest.TestCase):
     def test_constructor(self):
         avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
-        assert_equal(3, avg.ratio)
-        assert_is(None, avg._start_idx)
+        assert 3 == avg.ratio
+        assert None is avg._start_idx
 
     async def test_add_index(self):
         avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
@@ -146,16 +146,16 @@ class TestTimeAverage(asynctest.TestCase):
         await avg.add_index(3)  # Skip first frame in the group
         avg.flush.assert_called_once_with(0)
         avg.flush.reset_mock()
-        assert_equal(3, avg._start_idx)
+        assert 3 == avg._start_idx
 
         await avg.add_index(12)  # Skip some whole groups
         avg.flush.assert_called_once_with(1)
         avg.flush.reset_mock()
-        assert_equal(12, avg._start_idx)
+        assert 12 == avg._start_idx
 
         await avg.finish()
         avg.flush.assert_called_once_with(4)
-        assert_is(None, avg._start_idx)
+        assert None is avg._start_idx
 
 
 def test_split_array():
@@ -185,10 +185,10 @@ def test_fast_unique():
         [0, 1, 0, 0, 1, 0, 1, 1]
     ], dtype=bool)
     comp, indices = ingest_session._fast_unique(a)
-    assert_equal(comp.shape, (3, 8))
-    assert_equal(indices.shape, (7,))
-    assert_true(np.all(0 <= indices))
-    assert_true(np.all(indices < len(comp)))
+    assert comp.shape == (3, 8)
+    assert indices.shape == (7,)
+    assert np.all(0 <= indices)
+    assert np.all(indices < len(comp))
     np.testing.assert_equal(comp[indices], a)
 
 
@@ -211,14 +211,14 @@ class TestTelstateReceiver(asynctest.TestCase):
                                                        telstates=[self.telstate],
                                                        l0_int_time=3.0)
             # Set first value
-            assert_equal(12345, await receiver._first_timestamp(12345))
+            assert 12345 == await receiver._first_timestamp(12345)
             # Try a different value, first value must stick
-            assert_equal(12345, await receiver._first_timestamp(54321))
+            assert 12345 == await receiver._first_timestamp(54321)
             # Set same value
-            assert_equal(12345, await receiver._first_timestamp(12345))
+            assert 12345 == await receiver._first_timestamp(12345)
             # Check the telstate keys
-            assert_equal(12345, await self.telstate['first_timestamp_adc'])
-            assert_equal(3087.75, await self.telstate['first_timestamp'])
+            assert 12345 == await self.telstate['first_timestamp_adc']
+            assert 3087.75 == await self.telstate['first_timestamp']
 
 
 class TestSensorHistory:
@@ -228,36 +228,36 @@ class TestSensorHistory:
     def test_simple(self) -> None:
         self.sh.add(4.0, 'hello')
         self.sh.add(6.0, 'world')
-        assert_equal(self.sh.get(4.0), 'hello')
-        assert_equal(self.sh.get(5.0), 'hello')
-        assert_equal(self.sh.get(6.0), 'world')
-        assert_equal(self.sh.get(7.0), 'world')
-        assert_equal(len(self.sh._data), 1, 'old data was not pruned')
+        assert self.sh.get(4.0) == 'hello'
+        assert self.sh.get(5.0) == 'hello'
+        assert self.sh.get(6.0) == 'world'
+        assert self.sh.get(7.0) == 'world'
+        assert len(self.sh._data) == 1, 'old data was not pruned'
 
     def test_query_empty(self) -> None:
-        assert_is_none(self.sh.get(4.0))
-        assert_equal(self.sh.get(5.0, 'default'), 'default')
+        assert self.sh.get(4.0) is None
+        assert self.sh.get(5.0, 'default') == 'default'
 
     def test_query_before_first(self) -> None:
         self.sh.add(5.0, 'hello')
-        assert_is_none(self.sh.get(4.0))
+        assert self.sh.get(4.0) is None
 
     def test_add_before_query(self) -> None:
         self.sh.get(5.0)
         with assert_logs(ingest_session.logger, logging.WARNING):
             self.sh.add(4.0, 'oops')
-        assert_equal(self.sh.get(5.0), 'oops')
+        assert self.sh.get(5.0) == 'oops'
 
     def test_add_out_of_order(self) -> None:
         self.sh.add(5.0, 'first')
         with assert_logs(ingest_session.logger, logging.WARNING):
             self.sh.add(4.0, 'second')
-        assert_is_none(self.sh.get(4))
+        assert self.sh.get(4) is None
 
     def test_replace_latest(self) -> None:
         self.sh.add(5.0, 'first')
         self.sh.add(5.0, 'second')
-        assert_equal(self.sh.get(5.0), 'second')
+        assert self.sh.get(5.0) == 'second'
 
     def test_query_out_of_order(self) -> None:
         self.sh.get(5.0)
@@ -276,10 +276,10 @@ class TestCBFIngest:
             threshold_args={'n_sigma': 11.0})
 
     def test_tune_next(self):
-        assert_equal(2, ingest_session.CBFIngest._tune_next(0, [2, 4, 8, 16]))
-        assert_equal(8, ingest_session.CBFIngest._tune_next(5, [2, 4, 8, 16]))
-        assert_equal(8, ingest_session.CBFIngest._tune_next(8, [2, 4, 8, 16]))
-        assert_equal(21, ingest_session.CBFIngest._tune_next(21, [2, 4, 8, 16]))
+        assert 2 == ingest_session.CBFIngest._tune_next(0, [2, 4, 8, 16])
+        assert 8 == ingest_session.CBFIngest._tune_next(5, [2, 4, 8, 16])
+        assert 8 == ingest_session.CBFIngest._tune_next(8, [2, 4, 8, 16])
+        assert 21 == ingest_session.CBFIngest._tune_next(21, [2, 4, 8, 16])
 
     def test_baseline_permutation(self):
         orig_ordering = np.array([

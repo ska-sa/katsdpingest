@@ -136,9 +136,9 @@ class TestReceiver(asynctest.TestCase):
         send_future = asyncio.ensure_future(self._send_in_order(xeng_raw, timestamps))
         for t in range(n_frames):
             frame = await asyncio.wait_for(self.rx.get(), 3)
-            assert_equal(indices[t], frame.idx)
-            assert_equal(timestamps[t], frame.timestamp)
-            assert_equal(self.n_xengs, len(frame.items))
+            assert indices[t] == frame.idx
+            assert timestamps[t] == frame.timestamp
+            assert self.n_xengs == len(frame.items)
             for i in range(self.n_xengs):
                 np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
         with assert_raises(spead2.Stopped):
@@ -188,12 +188,12 @@ class TestReceiver(asynctest.TestCase):
                                (7, [1, 2, 3]), (8, []), (9, [1])]:
                 async with async_timeout.timeout(3):
                     frame = await self.rx.get()
-                assert_equal(indices[t], frame.idx)
-                assert_equal(timestamps[t], frame.timestamp)
-                assert_equal(self.n_xengs, len(frame.items))
+                assert indices[t] == frame.idx
+                assert timestamps[t] == frame.timestamp
+                assert self.n_xengs == len(frame.items)
                 for i in range(self.n_xengs):
                     if i in missing:
-                        assert_is_none(frame.items[i])
+                        assert frame.items[i] is None
                     else:
                         np.testing.assert_equal(xeng_raw[t, i], frame.items[i])
             with assert_raises(spead2.Stopped):
