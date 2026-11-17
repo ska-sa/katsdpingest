@@ -363,7 +363,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         # Sanity check that we've constructed inv_permutation correctly
         np.testing.assert_array_equal(
             await self._telstate['sdp_l0_bls_ordering'],
-            self.cbf_attr['bls_ordering'][inv_permutation])
+            self.cbf_attr['bls_ordering'][inv_permutation]
+        )
         flags = np.empty(vis.shape, np.uint8)
         channel_mask = self.fake_channel_mask()
         channel_mask[820:840] = True     # Merge in band mask
@@ -524,10 +525,13 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('add-sdisp-ip', '127.0.0.3:8001')
         await self.make_request('capture-init', 'cb1')
         await self.make_request('capture-done')
-        assert ({Endpoint('127.0.0.2', 7149),
-                      Endpoint('127.0.0.3', 8000),
-                      Endpoint('127.0.0.4', 7149)} ==
-                     self._sd_tx.keys())
+        assert (
+            {
+                Endpoint('127.0.0.2', 7149),
+                Endpoint('127.0.0.3', 8000),
+                Endpoint('127.0.0.4', 7149),
+            } == self._sd_tx.keys()
+        )
         # We won't check the contents, since that is tested elsewhere. Just
         # check that all the streams got the expected number of heaps.
         for tx in self._sd_tx.values():
@@ -590,9 +594,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         """Test internal-log-level query with one parameter"""
         informs = await self.make_request('internal-log-level', 'aiokatcp.connection')
         assert 1 == len(informs)
-        assert (aiokatcp.Message.inform('internal-log-level', b'aiokatcp.connection',
-                                             b'NOTSET', mid=informs[0].mid) ==
-                     informs[0])
+        assert (
+            aiokatcp.Message.inform(
+                'internal-log-level',
+                b'aiokatcp.connection',
+                b'NOTSET',
+                mid=informs[0].mid
+            ) == informs[0]
+        )
 
     async def test_internal_log_level_query_one_missing(self):
         """Querying internal-log-level with a non-existent logger fails"""
@@ -605,4 +614,5 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
         assert logging.NOTSET == logging.getLogger('katcp.server').level
         await self.assert_request_fails(
-            'Unknown log level', 'internal-log-level', 'katcp.server', 'DUMMY')
+            'Unknown log level', 'internal-log-level', 'katcp.server', 'DUMMY'
+        )
