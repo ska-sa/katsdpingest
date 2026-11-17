@@ -222,7 +222,7 @@ class TestTelstateReceiver(asynctest.TestCase):
 
 
 class TestSensorHistory:
-    def setUp(self):
+    def setup_method(self):
         self.sh = ingest_session.SensorHistory('test')
 
     def test_simple(self) -> None:
