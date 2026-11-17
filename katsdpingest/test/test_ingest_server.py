@@ -321,7 +321,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         informs : list
             Informs returned with the reply
         """
-        with async_timeout.timeout(15):
+        async with async_timeout.timeout(15):
             reply, informs = await self._client.request(name, *args)
         return informs
 
@@ -329,7 +329,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         """Assert that a request fails, and test the error message against
         a regular expression."""
         with assert_raises_regex(aiokatcp.FailReply, msg_re):
-            with async_timeout.timeout(15):
+            async with async_timeout.timeout(15):
                 await self._client.request(name, *args)
 
     async def _get_expected(self):
@@ -554,7 +554,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         )
         sd_rx.add_inproc_reader(sd_tx.queues[0])
         heaps = []
-        with async_timeout.timeout(10):
+        async with async_timeout.timeout(10):
             for i in range(2):
                 heaps.append(await sd_rx.get())
         await self.make_request('drop-sdisp-ip', '127.0.0.2')
