@@ -75,7 +75,7 @@ class TestPrepare:
         prepare()
         vis_out = prepare.buffer('vis_out').get(queue)
 
-        assert_equal((out_baselines, channels), vis_out.shape)
+        assert (out_baselines, channels) == vis_out.shape
         expected_vis = np.zeros_like(vis_out)
         scale = np.float32(1 / n_accs)
         for i in range(channels_missing_data, channels):
@@ -178,7 +178,7 @@ class TestCountFlags:
         counts = fn.buffer('counts').get(queue)
         any_counts = fn.buffer('any_counts').get(queue)
 
-        assert_equal((baselines, 8), counts.shape)
+        assert (baselines, 8) == counts.shape
         expected = orig_counts[:]
         combined_flags = flags & mask
         included_flags = combined_flags[:, channel_range.asslice()]
@@ -186,7 +186,7 @@ class TestCountFlags:
             expected[:, i] += np.count_nonzero(included_flags & (1 << i), axis=1).astype(np.uint32)
         np.testing.assert_equal(expected, counts)
 
-        assert_equal((baselines,), any_counts.shape)
+        assert (baselines,) == any_counts.shape
         expected = orig_any_counts[:]
         expected += np.count_nonzero(included_flags, axis=1).astype(np.uint32)
         np.testing.assert_equal(expected, any_counts)
@@ -593,7 +593,7 @@ class TestIngestOperation:
             })
         ]
         self.maxDiff = None
-        assert_equal(expected, fn.descriptions())
+        assert expected == fn.descriptions()
 
     def finalise_host(self, vis, flags, weights, excise):
         """Does the final steps of run_host_basic, for either the continuum or spectral

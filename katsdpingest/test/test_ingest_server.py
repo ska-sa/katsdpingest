@@ -104,7 +104,7 @@ class DeepCopyMock(mock.MagicMock):
 
 def decode_heap_ig(heap):
     ig = spead2.ItemGroup()
-    assert_is_not_none(heap)
+    assert heap is not None
     ig.update(heap)
     return ig
 
@@ -143,7 +143,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             raise KeyError('VisSenderSet created with unrecognised endpoints')
 
     def _get_sd_tx(self, thread_pool, endpoints, config):
-        assert_equal(len(endpoints), 1)
+        assert len(endpoints) == 1
         tx = spead2.send.asyncio.InprocStream(thread_pool, [spead2.InprocQueue()])
         self._sd_tx[Endpoint(*endpoints[0])] = tx
         return tx
@@ -405,15 +405,15 @@ class TestIngestDeviceServer(asynctest.TestCase):
         tx.start.assert_called_once_with()
         tx.stop.assert_called_once_with()
         calls = tx.send.mock_calls
-        assert_equal(len(expected_vis), len(calls))
+        assert len(expected_vis) == len(calls)
         for i, (vis, flags, ts, call) in enumerate(
                 zip(expected_vis, expected_flags, expected_ts, calls)):
             data, idx, ts_rel = call[1]
-            assert_is_instance(data, Data)
+            assert isinstance(data, Data)
             np.testing.assert_allclose(vis, data.vis[send_slice], rtol=1e-5, atol=1e-6)
             np.testing.assert_array_equal(flags, data.flags[send_slice])
-            assert_equal(i, idx)
-            assert_almost_equal(ts, ts_rel)
+            assert i == idx
+            assert ts == pytest.approx(ts_rel, abs=1e-7)
 
     async def test_init_telstate(self):
         """Test the output metadata in telstate"""
@@ -430,17 +430,17 @@ class TestIngestDeviceServer(asynctest.TestCase):
         bls_ordering.sort()
         for prefix in ['sdp_l0', 'sdp_l0_continuum']:
             factor = 1 if prefix == 'sdp_l0' else self.user_args.continuum_factor
-            assert_equal(1280 // factor, await get_ts('n_chans'))
-            assert_equal((await get_ts('n_chans')) // 4, await get_ts('n_chans_per_substream'))
-            assert_equal(len(bls_ordering), await get_ts('n_bls'))
-            assert_equal(bls_ordering, sorted((await get_ts('bls_ordering')).tolist()))
-            assert_equal(self.cbf_attr['sync_time'], await get_ts('sync_time'))
-            assert_equal(267500000.0, await get_ts('bandwidth'))
-            assert_equal(8 * self.cbf_attr['int_time'], await get_ts('int_time'))
-            assert_equal((464, 1744), await get_ts('channel_range'))
-        assert_equal(1086718750.0, await self._telstate['sdp_l0_center_freq'])
+            assert 1280 // factor == await get_ts('n_chans')
+            assert (await get_ts('n_chans')) // 4 == await get_ts('n_chans_per_substream')
+            assert len(bls_ordering) == await get_ts('n_bls')
+            assert bls_ordering == sorted((await get_ts('bls_ordering')).tolist())
+            assert self.cbf_attr['sync_time'] == await get_ts('sync_time')
+            assert 267500000.0 == await get_ts('bandwidth')
+            assert 8 * self.cbf_attr['int_time'] == await get_ts('int_time')
+            assert (464, 1744) == await get_ts('channel_range')
+        assert 1086718750.0 == await self._telstate['sdp_l0_center_freq']
         # Offset by 7.5 channels to identify the centre of a continuum channel
-        assert_equal(1088286132.8125, await self._telstate['sdp_l0_continuum_center_freq'])
+        assert 1088286132.8125 == await self._telstate['sdp_l0_continuum_center_freq']
 
     async def test_capture(self):
         """Test the core data capture process."""
@@ -454,8 +454,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
 
         # This server sends channels 784:1104 to L0 and 896:1152 to sdisp.
         # Aligning to the sd_continuum_factor (128) gives computed = 768:1152.
-        assert_equal(Range(784, 1104), self.channel_ranges.output)
-        assert_equal(Range(896, 1152), self.channel_ranges.sd_output)
+        assert Range(784, 1104) == self.channel_ranges.output
+        assert Range(896, 1152) == self.channel_ranges.sd_output
         send_range = Range(16, 336)
         self._VisSenderSet.assert_any_call(
             mock.ANY, self.user_args.l0_spectral_spead[1:2], '127.0.0.2',
@@ -474,7 +474,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self._channel_average_flags(expected_output_flags, self.user_args.continuum_factor),
             expected_ts, send_range.asslice())
 
-        assert_equal([Endpoint('127.0.0.2', 7149)], list(self._sd_tx.keys()))
+        assert [Endpoint('127.0.0.2', 7149)] == list(self._sd_tx.keys())
         sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
         expected_sd_vis = self._channel_average(
             expected_vis[:, self.channel_ranges.sd_output.asslice(), :],
@@ -484,9 +484,9 @@ class TestIngestDeviceServer(asynctest.TestCase):
             self.user_args.sd_continuum_factor)
         heaps = get_heaps(sd_tx)
         # First heap should be start-of-stream marker
-        assert_true(heaps[0].is_start_of_stream())
+        assert heaps[0].is_start_of_stream()
         # Following heaps should contain averaged visibility data
-        assert_equal(len(expected_sd_vis), len(heaps) - 2)
+        assert len(expected_sd_vis) == len(heaps) - 2
         for i, heap in enumerate(heaps[1:-1]):
             ig = decode_heap_ig(heap)
             vis = ig['sd_blmxdata'].value
@@ -496,7 +496,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
             np.testing.assert_allclose(expected_sd_vis[i], vis, rtol=1e-5, atol=1e-6)
             np.testing.assert_array_equal(expected_sd_flags[i], flags)
         # Final call must send a stop
-        assert_true(heaps[-1].is_end_of_stream())
+        assert heaps[-1].is_end_of_stream()
 
     async def test_done_when_not_capturing(self):
         """Calling capture-stop when not capturing fails"""
@@ -510,11 +510,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
 
     async def test_enable_disable_debug(self):
         """?enable-debug and ?disable-debug change the log level of session logger"""
-        assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
+        assert logging.NOTSET == logging.getLogger('katsdpingest.ingest_session').level
         await self.make_request('enable-debug')
-        assert_equal(logging.DEBUG, logging.getLogger('katsdpingest.ingest_session').level)
+        assert logging.DEBUG == logging.getLogger('katsdpingest.ingest_session').level
         await self.make_request('disable-debug')
-        assert_equal(logging.NOTSET, logging.getLogger('katsdpingest.ingest_session').level)
+        assert logging.NOTSET == logging.getLogger('katsdpingest.ingest_session').level
 
     async def test_add_sdisp_ip(self):
         """Add additional addresses with add-sdisp-ip."""
@@ -524,14 +524,14 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('add-sdisp-ip', '127.0.0.3:8001')
         await self.make_request('capture-init', 'cb1')
         await self.make_request('capture-done')
-        assert_equal({Endpoint('127.0.0.2', 7149),
+        assert ({Endpoint('127.0.0.2', 7149),
                       Endpoint('127.0.0.3', 8000),
-                      Endpoint('127.0.0.4', 7149)},
+                      Endpoint('127.0.0.4', 7149)} ==
                      self._sd_tx.keys())
         # We won't check the contents, since that is tested elsewhere. Just
         # check that all the streams got the expected number of heaps.
         for tx in self._sd_tx.values():
-            assert_equal(5, len(get_heaps(tx)))
+            assert 5 == len(get_heaps(tx))
 
     async def test_drop_sdisp_ip_not_capturing(self):
         """Dropping a sdisp IP when not capturing sends no data at all."""
@@ -539,7 +539,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
         await self.make_request('capture-init', 'cb1')
         await self.make_request('capture-done')
         sd_tx = self._sd_tx[Endpoint('127.0.0.2', 7149)]
-        assert_equal([], get_heaps(sd_tx))
+        assert [] == get_heaps(sd_tx)
 
     async def test_drop_sdisp_ip_capturing(self):
         """Dropping a sdisp IP when capturing sends a stop heap."""
@@ -566,11 +566,11 @@ class TestIngestDeviceServer(asynctest.TestCase):
                 heaps.append(await sd_rx.get())
             except spead2.Stopped:
                 break
-        assert_equal(3, len(heaps))     # start, one data, and stop heaps
-        assert_true(heaps[0].is_start_of_stream())
+        assert 3 == len(heaps)     # start, one data, and stop heaps
+        assert heaps[0].is_start_of_stream()
         ig = decode_heap_ig(heaps[1])
-        assert_in('sd_blmxdata', ig)
-        assert_true(heaps[2].is_end_of_stream())
+        assert 'sd_blmxdata' in ig
+        assert heaps[2].is_end_of_stream()
 
     async def test_drop_sdisp_ip_missing(self):
         """Dropping an unregistered IP address fails"""
@@ -583,15 +583,15 @@ class TestIngestDeviceServer(asynctest.TestCase):
         for inform in informs:
             levels[inform.arguments[0]] = inform.arguments[1]
         # Check that some known logger appears in the list
-        assert_in(b'aiokatcp.connection', levels)
-        assert_equal(b'NOTSET', levels[b'aiokatcp.connection'])
+        assert b'aiokatcp.connection' in levels
+        assert b'NOTSET' == levels[b'aiokatcp.connection']
 
     async def test_internal_log_level_query_one(self):
         """Test internal-log-level query with one parameter"""
         informs = await self.make_request('internal-log-level', 'aiokatcp.connection')
-        assert_equal(1, len(informs))
-        assert_equal(aiokatcp.Message.inform('internal-log-level', b'aiokatcp.connection',
-                                             b'NOTSET', mid=informs[0].mid),
+        assert 1 == len(informs)
+        assert (aiokatcp.Message.inform('internal-log-level', b'aiokatcp.connection',
+                                             b'NOTSET', mid=informs[0].mid) ==
                      informs[0])
 
     async def test_internal_log_level_query_one_missing(self):
@@ -601,8 +601,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
     async def test_internal_log_level_set(self):
         """Set a logger level via internal-log-level"""
         await self.make_request('internal-log-level', 'katcp.server', 'INFO')
-        assert_equal(logging.INFO, logging.getLogger('katcp.server').level)
+        assert logging.INFO == logging.getLogger('katcp.server').level
         await self.make_request('internal-log-level', 'katcp.server', 'NOTSET')
-        assert_equal(logging.NOTSET, logging.getLogger('katcp.server').level)
+        assert logging.NOTSET == logging.getLogger('katcp.server').level
         await self.assert_request_fails(
             'Unknown log level', 'internal-log-level', 'katcp.server', 'DUMMY')
