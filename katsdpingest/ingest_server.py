@@ -3,7 +3,7 @@
 import time
 import logging
 import argparse
-from typing import List, Dict, Mapping, Any, cast   # noqa: F401
+from typing import List, Dict, Mapping, Any, cast, Optional   # noqa: F401
 
 import aiokatcp
 from aiokatcp import FailReply, SensorSampler
@@ -164,8 +164,12 @@ class IngestDeviceServer(aiokatcp.DeviceServer):
         self.cbf_ingest.enable_debug(False)
         return "Debug logging disabled."
 
-    async def request_internal_log_level(self, ctx,
-                                         component: str = None, level: str = None) -> None:
+    async def request_internal_log_level(
+        self,
+        ctx,
+        component: Optional[str] = None,
+        level: Optional[str] = None,
+    ) -> None:
         """
         Set the log level of an internal component to the specified value.
         ?internal-log-level <component> <level>

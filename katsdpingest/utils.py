@@ -1,7 +1,7 @@
 """Miscellaneous ingest utilities"""
 
 import logging
-from typing import TypeVar, Tuple
+from typing import TypeVar, Tuple, Optional
 
 import katsdptelstate.aio
 import aiokatcp
@@ -190,7 +190,7 @@ class Sensor(aiokatcp.Sensor[_T]):
     explicit timestamp.
     """
     def set_value(self, value: _T, status: aiokatcp.Sensor.Status = None,
-                  timestamp: float = None) -> None:
+                  timestamp: Optional[float] = None) -> None:
         if status is None:
             status = self.status_func(value)
         if value != self.value or status != self.status:

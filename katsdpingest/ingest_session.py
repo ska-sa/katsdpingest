@@ -401,7 +401,7 @@ class BaselineOrdering:
 
     def __init__(self,
                  cbf_bls_ordering: List[Tuple[str, str]],
-                 antenna_mask: Iterable[str] = None) -> None:
+                 antenna_mask: Optional[Iterable[str]] = None) -> None:
         def keep(baseline: Tuple[str, str]) -> bool:
             ant1 = baseline[0][:-1]
             ant2 = baseline[1][:-1]

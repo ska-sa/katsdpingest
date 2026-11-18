@@ -1,6 +1,7 @@
 # coding: utf-8
 
 import importlib.resources
+import pathlib
 from typing import List, Tuple, Iterable, Mapping, Callable, Optional, Generator, Any
 
 import numpy as np
@@ -13,6 +14,9 @@ from .utils import Range
 
 
 PACKAGE_PATH = importlib.resources.files('katsdpingest')
+# Keep mypy happy by forcing resource path to be an actual Path (it usually is)
+if not isinstance(PACKAGE_PATH, pathlib.Path):
+    raise RuntimeError(f"katsdpingest is not installed on the filesystem: {PACKAGE_PATH!r}")
 
 
 class Zero(accel.Operation):

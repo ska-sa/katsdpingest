@@ -123,8 +123,8 @@ class TestSystemAttrs:
                     telstate_cbf,
                     ['m000', 'm001']
                 )
-        assert re.search(re.compile('.*Failed to load rfi_mask model.*', re.M),cm.output[0])
-        assert re.search(re.compile('.*Failed to load band_mask model.*', re.M),cm.output[1])
+        assert re.search(re.compile('.*Failed to load rfi_mask model.*', re.M), cm.output[0])
+        assert re.search(re.compile('.*Failed to load band_mask model.*', re.M), cm.output[1])
         assert attrs.rfi_mask_model is None
         assert attrs.band_mask_model is None
 
