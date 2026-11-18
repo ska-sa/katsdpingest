@@ -274,6 +274,7 @@ class TestIngestDeviceServer:
             tx.send = DeepCopyMock()
             tx.send.return_value = done_future
             tx.sub_channels = len(self.channel_ranges.output)
+            tx.size = 1
         self._tx['continuum'].sub_channels //= self.channel_ranges.cont_factor
         self._VisSenderSet = mocker.patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
