@@ -16,7 +16,7 @@
  */
 DEVICE_FN float flush_zero(float x)
 {
-    return fabsf(x) < 2e-9f ? 0.0f : x;
+    return fabs(x) < 2e-9f ? 0.0f : x;
 }
 
 DEVICE_FN float2 flush_zero2(float2 vis)
