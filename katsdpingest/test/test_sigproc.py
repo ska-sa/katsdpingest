@@ -914,7 +914,9 @@ class TestIngestOperation:
         fn.ensure_all_bound()
         fn.n_accs = 1
         fn.buffer('permutation').set(command_queue, np.array([0, 1, 2, 3], dtype=np.int16))
-        fn.buffer('timeseries_weights').set(command_queue, np.full(channels, 1 / channels, np.float32))
+        fn.buffer('timeseries_weights').set(
+            command_queue, np.full(channels, 1 / channels, np.float32)
+        )
 
         fn.start_sum()
         fn.start_sd_sum()

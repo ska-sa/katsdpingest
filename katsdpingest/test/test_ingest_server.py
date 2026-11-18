@@ -6,7 +6,7 @@ import asyncio
 import copy
 import concurrent.futures
 from unittest import mock
-from typing import List, Dict, Any
+from typing import List, Dict, Any   # noqa: F401
 
 import async_timeout
 import numpy as np
@@ -280,8 +280,10 @@ class TestIngestDeviceServer:
         self._sd_tx: Dict[Endpoint, spead2.send.asyncio.InprocStream] = {}
         self._UdpStream = mocker.patch('spead2.send.asyncio.UdpStream',
                                        side_effect=self._get_sd_tx)
-        mocker.patch('katsdpservices.get_interface_address',
-                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
+        mocker.patch(
+            'katsdpservices.get_interface_address',
+            side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None
+        )
         self._server = IngestDeviceServer(
             user_args, self._telstate_cbf, self.channel_ranges, self.system_attrs, context,
             host=user_args.host, port=user_args.port)
