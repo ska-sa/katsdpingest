@@ -5,7 +5,6 @@ import re
 from unittest import mock, TestCase
 
 import numpy as np
-import asynctest
 import katsdptelstate.aio
 import katsdpmodels.fetch.aiohttp
 import katsdpmodels.rfi_mask
@@ -51,8 +50,9 @@ def fake_cbf_attr(n_antennas, n_xengs=4):
     return cbf_attr
 
 
-class TestSystemAttrs(asynctest.TestCase):
-    async def setUp(self):
+class TestSystemAttrs:
+    @pytest.fixture(autouse=True)
+    async def _setup(self):
         self.values = {
             'i0_bandwidth': 856000000.0,
             'i0_sync_time': 1234567890.0,
@@ -94,7 +94,7 @@ class TestSystemAttrs(asynctest.TestCase):
     async def test(self):
         telstate_cbf = await cbf_telstate_view(self.telstate,
                                                'i1_baseline_correlation_products')
-        with asynctest.patch('katsdpmodels.fetch.aiohttp.Fetcher.get', autospec=True) as fetch:
+        with mock.patch('katsdpmodels.fetch.aiohttp.Fetcher.get', autospec=True) as fetch:
             async with katsdpmodels.fetch.aiohttp.TelescopeStateFetcher(self.telstate) as fetcher:
                 attrs = await ingest_session.SystemAttrs.create(
                     fetcher,
@@ -129,14 +129,14 @@ class TestSystemAttrs(asynctest.TestCase):
         assert attrs.band_mask_model is None
 
 
-class TestTimeAverage(asynctest.TestCase):
+class TestTimeAverage:
     def test_constructor(self):
-        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
+        avg = ingest_session._TimeAverage(3, mock.AsyncMock(name='flush'))
         assert 3 == avg.ratio
         assert None is avg._start_idx
 
     async def test_add_index(self):
-        avg = ingest_session._TimeAverage(3, asynctest.CoroutineMock(name='flush'))
+        avg = ingest_session._TimeAverage(3, mock.AsyncMock(name='flush'))
         await avg.add_index(0)
         await avg.add_index(2)
         await avg.add_index(1)  # Test time reordering
@@ -191,8 +191,8 @@ def test_fast_unique():
     np.testing.assert_equal(comp[indices], a)
 
 
-class TestTelstateReceiver(asynctest.TestCase):
-    def setUp(self):
+class TestTelstateReceiver:
+    def setup_method(self):
         self.telstate = katsdptelstate.aio.TelescopeState()
 
     async def test_first_timestamp(self):

@@ -4,8 +4,9 @@ from setuptools import setup, find_packages
 
 tests_require = [
     'pytest',
+    'pytest-asyncio',
     'pytest-cov',
-    'asynctest',
+    'pytest-mock',
     'async_timeout',
     'katsdpsigproc[test]',
 ]
