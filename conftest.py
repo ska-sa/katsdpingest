@@ -14,5 +14,24 @@
 # limitations under the License.
 ################################################################################
 
+from contextlib import ExitStack, AsyncExitStack
+
+import pytest
+
+
 # Get context and command_queue fixtures and force_autotune mark
 pytest_plugins = ["katsdpsigproc.pytest_plugin"]
+
+
+@pytest.fixture
+def stack():
+    """Clean up after yourself, synchronously."""
+    with ExitStack() as s:
+        yield s              # keeps the stack open during the test
+
+
+@pytest.fixture
+async def async_stack():
+    """Clean up after yourself, asynchronously."""
+    async with AsyncExitStack() as s:
+        yield s              # keeps the stack open during the test

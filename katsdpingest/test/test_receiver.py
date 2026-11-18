@@ -8,7 +8,6 @@ import numpy as np
 import spead2
 import spead2.send
 import spead2.recv.asyncio
-import asynctest
 import async_timeout
 import pytest
 
@@ -19,8 +18,9 @@ import katsdptelstate.endpoint
 from katsdptelstate.endpoint import Endpoint
 
 
-class TestReceiver(asynctest.TestCase):
-    def setUp(self):
+class TestReceiver:
+    @pytest.fixture(autouse=True)
+    async def _setup(self, stack, mocker):
         self._streams = {}    # Dict[Endpoint, spead2.send.InprocStream]
 
         def add_udp_reader(rx, multicast_group, port, *args, **kwargs):
@@ -28,11 +28,7 @@ class TestReceiver(asynctest.TestCase):
             tx = self._streams[endpoint]
             rx.add_inproc_reader(tx.queues[0])
 
-        patcher = mock.patch.object(
-            spead2.recv.asyncio.Stream, 'add_udp_reader', add_udp_reader)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
+        mocker.patch.object(spead2.recv.asyncio.Stream, 'add_udp_reader', add_udp_reader)
         self.n_streams = 2
         endpoints = katsdptelstate.endpoint.endpoint_list_parser(7148)(
             '239.0.0.1+{}'.format(self.n_streams - 1))
@@ -46,9 +42,7 @@ class TestReceiver(asynctest.TestCase):
                    for endpoint in endpoints]
         self._streams = dict(zip(endpoints, self.tx))
         for tx in self.tx:
-            # asyncio.iscoroutinefunction doesn't like pybind11 functions, so
-            # we have to hide it inside a lambda.
-            self.addCleanup(lambda: tx.queues[0].stop())
+            stack.callback(tx.queues[0].stop)
         self.rx = Receiver(endpoints, '127.0.0.1', False, self.n_streams, 32 * 1024**2,
                            Range(0, self.n_chans), self.n_chans,
                            sensors, self.cbf_attr, active_frames=3)
@@ -81,7 +75,7 @@ class TestReceiver(asynctest.TestCase):
 
     async def test_stop(self):
         """The receiver must stop once all streams stop"""
-        data_future = self.loop.create_task(self.rx.get())
+        data_future = asyncio.create_task(self.rx.get())
         for ig, tx in zip(self.tx_ig, self.tx):
             tx.send_heap(ig.get_end())
         # Check that we get the end-of-stream notification; using a timeout
@@ -182,7 +176,7 @@ class TestReceiver(asynctest.TestCase):
         """Test various edge behaviour for out-of-order data"""
         n_frames = 10
         xeng_raw, indices, timestamps = self._make_data(n_frames)
-        send_future = self.loop.create_task(self._send_out_of_order(xeng_raw, timestamps))
+        send_future = asyncio.create_task(self._send_out_of_order(xeng_raw, timestamps))
         try:
             for t, missing in [(0, []), (1, []), (2, [0, 1, 3]), (6, []),
                                (7, [1, 2, 3]), (8, []), (9, [1])]:

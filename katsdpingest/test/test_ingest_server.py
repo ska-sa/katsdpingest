@@ -8,7 +8,6 @@ import concurrent.futures
 from unittest import mock
 from typing import List, Dict, Any
 
-import asynctest
 import async_timeout
 import numpy as np
 import pytest
@@ -114,19 +113,13 @@ def get_heaps(tx):
     return list(rx)
 
 
-class TestIngestDeviceServer(asynctest.TestCase):
+class TestIngestDeviceServer:
     """Tests for :class:`katsdpingest.ingest_server.IngestDeviceServer.
 
     This does not test all the intricacies of flagging, timeseries masking,
     lost data and so on. It is intended to check that the katcp commands
     function and that the correct channels are sent to the correct places.
     """
-
-    def _patch(self, *args, **kwargs):
-        patcher = mock.patch(*args, **kwargs)
-        mock_obj = patcher.start()
-        self.addCleanup(patcher.stop)
-        return mock_obj
 
     def _get_tx(self, thread_pool, endpoints, interface_address, flavour,
                 int_time, channel_range, channel0, all_channels, baselines):
@@ -190,7 +183,8 @@ class TestIngestDeviceServer(asynctest.TestCase):
         bad[650:750] = True
         return bad
 
-    async def setUp(self, context, command_queue) -> None:
+    @pytest.fixture(autouse=True)
+    async def _setup(self, context, command_queue, async_stack, mocker) -> None:
         done_future = asyncio.Future()     # type: asyncio.Future[None]
         done_future.set_result(None)
         self._patchers = []                              # type: List[Any]
@@ -229,7 +223,9 @@ class TestIngestDeviceServer(asynctest.TestCase):
             port=7147,
             name='sdp.ingest.1'
         )
-        self.loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=8))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        asyncio.get_running_loop().set_default_executor(executor)
+        async_stack.callback(executor.shutdown)
         self.cbf_attr = fake_cbf_attr(4, n_xengs=n_xengs)
         # Put them in at the beginning of time, to ensure they apply to every dump
         await self._telstate.set('i0_baseline_correlation_products_src_streams',
@@ -266,7 +262,7 @@ class TestIngestDeviceServer(asynctest.TestCase):
 
         self._data, self._timestamps = self._create_data()
         self._pauses = None
-        self._Receiver = self._patch(
+        self._Receiver = mocker.patch(
             'katsdpingest.ingest_session.TelstateReceiver',
             side_effect=lambda *args, **kwargs:
                 MockReceiver(self._data, self._timestamps, *args,     # type: ignore
@@ -279,21 +275,21 @@ class TestIngestDeviceServer(asynctest.TestCase):
             tx.send.return_value = done_future
             tx.sub_channels = len(self.channel_ranges.output)
         self._tx['continuum'].sub_channels //= self.channel_ranges.cont_factor
-        self._VisSenderSet = self._patch(
+        self._VisSenderSet = mocker.patch(
             'katsdpingest.sender.VisSenderSet', side_effect=self._get_tx)
         self._sd_tx: Dict[Endpoint, spead2.send.asyncio.InprocStream] = {}
-        self._UdpStream = self._patch('spead2.send.asyncio.UdpStream',
-                                      side_effect=self._get_sd_tx)
-        self._patch('katsdpservices.get_interface_address',
-                    side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
+        self._UdpStream = mocker.patch('spead2.send.asyncio.UdpStream',
+                                       side_effect=self._get_sd_tx)
+        mocker.patch('katsdpservices.get_interface_address',
+                     side_effect=lambda interface: '127.0.0.' + interface[-1] if interface else None)
         self._server = IngestDeviceServer(
             user_args, self._telstate_cbf, self.channel_ranges, self.system_attrs, context,
             host=user_args.host, port=user_args.port)
         await self._server.start()
-        self.addCleanup(self._server.stop)
+        async_stack.push_async_callback(self._server.stop)
         self._client = await aiokatcp.Client.connect(user_args.host, user_args.port)
-        self.addCleanup(self._client.wait_closed)
-        self.addCleanup(self._client.close)
+        async_stack.push_async_callback(self._client.wait_closed)
+        async_stack.callback(self._client.close)
 
     async def make_request(self, name: str, *args) -> List[aiokatcp.Message]:
         """Issue a request to the server, timing out if it takes too long.

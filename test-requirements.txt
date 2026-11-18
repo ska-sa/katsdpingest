@@ -1,7 +1,8 @@
 -c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-build/base-requirements.txt
 
 async-timeout
-asynctest
 coverage
 pytest
+pytest-asyncio==1.5.0
 pytest-cov
+pytest-mock==3.17.0
