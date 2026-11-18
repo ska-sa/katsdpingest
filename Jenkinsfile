@@ -13,12 +13,12 @@ katsdp.setDependencies([
     'ska-sa/katpoint/master'])
 
 catchError {
-    katsdp.stagePrepare(timeout: [time: 60, unit: 'MINUTES'])
-    katsdp.stageNosetestsGpu(cuda: true, opencl: true)
-    katsdp.stageFlake8()
-    katsdp.stageMypy()
-    katsdp.stageMakeDocker(venv: true)
-
+    katsdp.standardBuild(
+        cuda: true,
+        opencl: true,
+        prepare_timeout: [time: 60, unit: 'MINUTES'],
+        docker_venv: true
+    )
     stage('katsdpingest/autotuning') {
         if (katsdp.notYetFailed()) {
             katsdp.simpleNode(label: 'cuda-A30', timeout: [time: 60, unit: 'MINUTES']) {
