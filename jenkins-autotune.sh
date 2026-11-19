@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -e -x
 if [ "$#" -ne 1 ]; then
     echo "Usage: jenkins-autotune.sh <gpu-tag>" 1>&2
     exit 1
@@ -12,7 +12,7 @@ fi
 IMAGE="$DOCKER_REGISTRY/katsdpingest_$GPU:$LABEL"
 BASE_IMAGE="$DOCKER_REGISTRY/katsdpingest:$LABEL"
 COPY_FROM="$DOCKER_REGISTRY/katsdpingest_$GPU:latest"
-install_pinned.py -r requirements-autotune.txt
+uv pip install -r requirements.txt -r requirements-autotune.txt
 docker pull "$BASE_IMAGE"
 docker pull "$COPY_FROM"
 trap "docker rmi $IMAGE" EXIT
