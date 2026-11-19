@@ -50,7 +50,7 @@ def tune(cli, base_image, skip, init_tar=None):
     """Run a throwaway container to do the autotuning, and extract the result."""
     command = ['ingest_autotune.py'] if not skip else ['/bin/true']
     if init_tar is not None:
-        command = ['sh', '-c',
+        command = ['sh', '-xc',
                    'mkdir -p $HOME/.cache/katsdpsigproc && '
                    'cp /tmp/tuning.db $HOME/.cache/katsdpsigproc && ' + command[0]]
     # If we're running inside a Docker container, expose the same devices
@@ -89,13 +89,16 @@ def tune(cli, base_image, skip, init_tar=None):
         except (Exception, KeyboardInterrupt):
             cli.stop(container_id, timeout=2)
             raise
-        status_code = result.get('StatusCode', 'unknown')
-        error_msg = result.get('Error', 'see log messages for more info')
-        if status_code == 0:
+        # Safely check for an internal Docker wait error (will be None if omitted)
+        wait_error = result.get('Error')
+        if wait_error:
+            raise RuntimeError(f"Docker wait error: {wait_error.get('Message')}")
+        # Check the actual container exit code
+        exit_code = result.get('StatusCode')
+        if exit_code == 0:
             return get_cache(cli, container_id)
         else:
-            msg = f'Autotuning failed with status {status_code} ({error_msg})'
-            raise RuntimeError(msg)
+            raise RuntimeError(f'Autotuning failed with exit code {exit_code}')
     finally:
         cli.remove_container(container_id)
 
