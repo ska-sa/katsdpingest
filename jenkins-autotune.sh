@@ -12,7 +12,7 @@ fi
 IMAGE="$DOCKER_REGISTRY/katsdpingest_$GPU:$LABEL"
 BASE_IMAGE="$DOCKER_REGISTRY/katsdpingest:$LABEL"
 COPY_FROM="$DOCKER_REGISTRY/katsdpingest_$GPU:latest"
-install_pinned.py -r requirements-autotune.txt
+uv pip install -r requirements-autotune.txt
 docker pull "$BASE_IMAGE"
 docker pull "$COPY_FROM"
 trap "docker rmi $IMAGE" EXIT
