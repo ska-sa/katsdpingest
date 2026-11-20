@@ -8,113 +8,91 @@ import sys
 import os
 import os.path
 import tempfile
-import shutil
 import tarfile
 import io
-import contextlib
-from textwrap import dedent
+from typing import Optional
 
 import docker
-from docker import APIClient
+from docker.types import DeviceRequest
+from docker.models.containers import Container
 
 
-DOCKERFILE = dedent('''\
-    FROM {base}
-    COPY --chown=kat:kat tuning.db /home/kat/.cache/katsdpsigproc/
-''')
+CACHE_DIR = '/home/kat/.cache/katsdpsigproc/'
+DB_FILE = 'tuning.db'
+
+DOCKERFILE = """\
+FROM {base}
+""" + f"""\
+COPY --chown=kat:kat {DB_FILE} {CACHE_DIR}
+"""
 
 
-def get_cache(cli, container_id):
-    data, _ = cli.get_archive(container_id, '/home/kat/.cache/katsdpsigproc/tuning.db')
-    tardata = b''.join(data)
+def get_cache(container: Container) -> bytes:
+    bits, _ = container.get_archive(CACHE_DIR + DB_FILE)
+    tardata = b''.join(bits)
     return tardata
 
 
-def untar_cache(tardata):
+def untar_cache(tardata: bytes) -> bytes:
     with tarfile.open(fileobj=io.BytesIO(tardata)) as tar:
-        with contextlib.closing(tar.extractfile('tuning.db')) as f:
+        f = tar.extractfile(DB_FILE)
+        if f is None:
+            raise RuntimeError(f"{DB_FILE} in archive is not a regular file")
+        with f:
             return f.read()
 
 
-def _api_version_tuple(cli):
-    version = getattr(cli, '_version', None)
-    if version is None:
-        return ()
-    try:
-        return tuple(int(part) for part in version.split('.'))
-    except ValueError:
-        return ()
-
-
-def tune(cli, base_image, skip, init_tar=None):
+def tune(
+    client: docker.DockerClient,
+    base_image: str,
+    skip: bool,
+    init_tar: Optional[bytes] = None,
+) -> bytes:
     """Run a throwaway container to do the autotuning, and extract the result."""
     command = ['ingest_autotune.py'] if not skip else ['/bin/true']
     if init_tar is not None:
         command = ['sh', '-xc',
-                   'mkdir -p $HOME/.cache/katsdpsigproc && '
-                   'cp /tmp/tuning.db $HOME/.cache/katsdpsigproc && ' + command[0]]
-    # If we're running inside a Docker container, expose the same devices
-    # to our child container.
-    visible_devices = os.environ.get('NVIDIA_VISIBLE_DEVICES', 'all')
-    environment = {'NVIDIA_VISIBLE_DEVICES': visible_devices}
-    create_kwargs = {
-        'image': base_image,
-        'command': command,
-        'environment': environment
-    }
-    if _api_version_tuple(cli) >= (1, 40):
-        if visible_devices == 'all':
-            request = {'Driver': 'nvidia', 'Count': -1, 'Capabilities': [['gpu']]}
-        else:
-            request = {
-                'Driver': 'nvidia',
-                'DeviceIDs': [device for device in visible_devices.split(',') if device],
-                'Capabilities': [['gpu']]
-            }
-        create_kwargs['host_config'] = {'Runtime': 'nvidia', 'DeviceRequests': [request]}
-    else:
-        create_kwargs['runtime'] = 'nvidia'
-    container = cli.create_container(**create_kwargs)
+                   f'mkdir -p {CACHE_DIR} && '
+                   f'cp /tmp/{DB_FILE} {CACHE_DIR} && {command[0]}']
+    # Request every GPU on the Docker host that runs the container.
+    # This is the API equivalent of `docker run --gpus all`.
+    gpus = DeviceRequest(count=-1, capabilities=[['gpu']])
+    container = client.containers.create(base_image, command, device_requests=[gpus])
     try:
-        if container['Warnings']:
-            print(container['Warnings'], file=sys.stderr)
-        container_id = container['Id']
         if init_tar is not None:
-            cli.put_archive(container_id, '/tmp', init_tar)
-        cli.start(container_id)
+            container.put_archive('/tmp', init_tar)
+        container.start()
         try:
-            for line in cli.logs(container_id, True, True, True):
-                sys.stdout.buffer.write(line)
-            result = cli.wait(container_id)
+            for chunk in container.logs(stdout=True, stderr=True, stream=True, follow=True):
+                sys.stdout.buffer.write(chunk)
+            sys.stdout.flush()
+            result = container.wait()
         except (Exception, KeyboardInterrupt):
-            cli.stop(container_id, timeout=2)
+            container.stop(timeout=2)
             raise
-        # Safely check for an internal Docker wait error (will be None if omitted)
-        wait_error = result.get('Error')
-        if wait_error:
+        if wait_error := result.get('Error'):
             raise RuntimeError(f"Docker wait error: {wait_error.get('Message')}")
-        # Check the actual container exit code
         exit_code = result.get('StatusCode')
-        if exit_code == 0:
-            return get_cache(cli, container_id)
-        else:
+        if exit_code != 0:
             raise RuntimeError(f'Autotuning failed with exit code {exit_code}')
+        return get_cache(container)
     finally:
-        cli.remove_container(container_id)
+        container.remove(force=True)
 
 
-def build(cli, image, base_image, tuning):
-    tmpdir = tempfile.mkdtemp()
-    try:
+def build(client: docker.DockerClient, image: str, base_image: str, tuning: bytes) -> None:
+    """Build a new `image` that adds `tuning` database to `base_image`."""
+    with tempfile.TemporaryDirectory() as tmpdir:
         with open(os.path.join(tmpdir, 'Dockerfile'), 'w') as f:
             f.write(DOCKERFILE.format(base=base_image))
-        with open(os.path.join(tmpdir, 'tuning.db'), 'wb') as f:
+        with open(os.path.join(tmpdir, DB_FILE), 'wb') as f:
             f.write(tuning)
-        for line in cli.build(path=tmpdir, rm=True, tag=image, decode=True):
-            if 'stream' in line:
-                sys.stdout.write(line['stream'])
-    finally:
-        shutil.rmtree(tmpdir)
+        for chunk in client.api.build(path=tmpdir, tag=image, rm=True, forcerm=True, decode=True):
+            if 'stream' in chunk:
+                sys.stdout.write(chunk['stream'])
+                sys.stdout.flush()
+            elif 'error' in chunk:
+                raise RuntimeError(f"Docker build failed: {chunk['error'].strip()}")
 
 
 def main():
@@ -130,24 +108,9 @@ def main():
     parser.add_argument(
         '--skip', action='store_true',
         help='Only copy, do not run tuning check afterwards')
-    parser.add_argument(
-        '--host', '-H', type=str, default='unix:///var/run/docker.sock',
-        help='Docker host')
-    parser.add_argument(
-        '--tls', action='store_true',
-        help='Use TLS to connect to Docker daemon')
     args = parser.parse_args()
     if args.skip and not args.copy and args.copy_from is None:
         parser.error('Cannot use --skip without --copy or --copy-from')
-
-    if args.tls:
-        tls_config = docker.tls.TLSConfig(
-            client_cert=(os.path.expanduser('~/.docker/cert.pem'),
-                         os.path.expanduser('~/.docker/key.pem')),
-            verify=os.path.expanduser('~/.docker/ca.pem'))
-        cli = APIClient(args.host, version='auto', tls=tls_config)
-    else:
-        cli = APIClient(args.host, version='auto')
 
     if args.copy_from is not None:
         copy_base = args.copy_from
@@ -156,6 +119,7 @@ def main():
     else:
         copy_base = None
 
+    cli = docker.from_env()
     init_tar = tune(cli, copy_base, True) if copy_base is not None else None
     tuned = untar_cache(tune(cli, args.base_image, args.skip, init_tar))
     build(cli, args.image, args.base_image, tuned)
