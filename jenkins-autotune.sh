@@ -16,7 +16,7 @@ uv pip install -r requirements.txt -r requirements-autotune.txt
 docker pull "$BASE_IMAGE"
 docker pull "$COPY_FROM"
 trap "docker rmi $IMAGE" EXIT
-scripts/autotune_mkimage.py -H $DOCKER_HOST --tls --copy --copy-from "$COPY_FROM" "$IMAGE" "$BASE_IMAGE"
+scripts/autotune_mkimage.py --copy-from "$COPY_FROM" "$IMAGE" "$BASE_IMAGE"
 docker push "$IMAGE"
 
 if [ -n "$DOCKER_REGISTRY2" ]; then

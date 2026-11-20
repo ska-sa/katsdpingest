@@ -24,6 +24,7 @@ setup(
         "scripts/ingest.py",
         "scripts/ingest_autotune.py"
     ],
+    python_requires='>=3.9',
     setup_requires=['katversion'],
     install_requires=[
         'aiokatcp>=0.7.0',   # Need 0.7 for auto_strategy
