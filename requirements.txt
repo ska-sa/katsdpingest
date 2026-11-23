@@ -2,9 +2,7 @@
 -r https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/uvpipjammy/docker-base-gpu-build/requirements.txt
 
 aiokatcp
-hiredis                 # Speeds up katsdptelstate
 numpy
-pycuda
 spead2
 
 # TODO: eventually switch to using a release of katdal, once the enhanced
@@ -12,6 +10,6 @@ spead2
 katdal @ git+https://github.com/ska-sa/katdal
 katpoint @ git+https://github.com/ska-sa/katpoint
 katsdpmodels[aiohttp] @ git+https://github.com/ska-sa/katsdpmodels
-katsdpsigproc @ git+https://github.com/ska-sa/katsdpsigproc@uvpipjammy
+katsdpsigproc[CUDA,OpenCL] @ git+https://github.com/ska-sa/katsdpsigproc@uvpipjammy
 katsdpservices[argparse,aiomonitor] @ git+https://github.com/ska-sa/katsdpservices
 katsdptelstate[aio] @ git+https://github.com/ska-sa/katsdptelstate
