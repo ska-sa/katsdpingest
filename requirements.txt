@@ -1,5 +1,5 @@
--r https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/uvpipjammy/docker-base-build/base-requirements.txt
--r https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/uvpipjammy/docker-base-gpu-build/requirements.txt
+-c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/uvpipjammy/docker-base-build/base-requirements.txt
+-c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/uvpipjammy/docker-base-gpu-build/requirements.txt
 
 aiokatcp
 numpy
