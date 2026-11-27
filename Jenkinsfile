@@ -1,6 +1,6 @@
 #!groovy
 
-@Library('katsdpjenkins') _
+@Library('katsdpjenkins@install_pinned_ng') _
 katsdp.killOldJobs()
 
 katsdp.setDependencies([
