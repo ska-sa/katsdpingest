@@ -4,7 +4,7 @@
 katsdp.killOldJobs()
 
 katsdp.setDependencies([
-    'ska-sa/katsdpsigproc/uvpipjammy',
+    'ska-sa/katsdpsigproc/install_pinned_ng',
     'ska-sa/katsdpdockerbase/master',
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master',
@@ -17,7 +17,8 @@ catchError {
         cuda: true,
         opencl: true,
         prepare_timeout: [time: 60, unit: 'MINUTES'],
-        docker_venv: true
+        docker_venv: true,
+        katsdpdockerbase_ref: 'refs/heads/install_pinned_ng'
     )
     stage('katsdpingest/autotuning') {
         if (katsdp.notYetFailed()) {
